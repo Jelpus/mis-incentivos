@@ -11,7 +11,7 @@ type LoginPanelProps = {
 
 export function LoginPanel({ showBackLink = false, onBack }: LoginPanelProps) {
   return (
-    <section className="flex min-h-dvh bg-[#fcfcfc] px-6 py-8 sm:px-10 lg:px-12">
+    <section className="flex h-dvh bg-[#fcfcfc] px-6 py-8 sm:px-10 lg:px-12">
       <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-between enter-fade-up">
         <div>
           {showBackLink ? (
@@ -20,7 +20,7 @@ export function LoginPanel({ showBackLink = false, onBack }: LoginPanelProps) {
               onClick={onBack}
               className="mb-5 inline-flex items-center gap-2 text-sm text-[#445f95] transition hover:text-[#002068]"
             >
-              <span aria-hidden="true">←</span>
+              <span aria-hidden="true">&lt;-</span>
               Volver
             </button>
           ) : null}
@@ -82,3 +82,4 @@ export function LoginPanel({ showBackLink = false, onBack }: LoginPanelProps) {
     </section>
   );
 }
+

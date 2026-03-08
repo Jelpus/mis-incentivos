@@ -45,14 +45,20 @@ export function MagicLinkForm() {
         body: JSON.stringify({ email: normalized }),
       });
 
-      const payload = (await response.json()) as {
-        message?: string;
-        error?: string;
-      };
+      const rawPayload = await response.text();
+      let payload: { message?: string; error?: string } = {};
+
+      if (rawPayload) {
+        try {
+          payload = JSON.parse(rawPayload) as { message?: string; error?: string };
+        } catch {
+          payload = {};
+        }
+      }
 
       if (!response.ok) {
         setStatus("error");
-        setMessage(payload.error ?? "No se pudo iniciar sesion.");
+        setMessage(payload.error ?? `No se pudo iniciar sesion (HTTP ${response.status}).`);
         return;
       }
 

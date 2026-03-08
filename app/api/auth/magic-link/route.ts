@@ -1,9 +1,19 @@
 import { NextResponse } from "next/server";
 import { isAllowedEmailDomain, normalizeEmail } from "@/lib/auth/email-domain";
+import { createClient } from "@/lib/supabase/server";
 
 type MagicLinkPayload = {
   email?: string;
 };
+
+function getBaseUrl() {
+  const siteUrl =
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    process.env.NEXT_PUBLIC_VERCEL_URL ||
+    "http://localhost:3000";
+
+  return siteUrl.startsWith("http") ? siteUrl : `https://${siteUrl}`;
+}
 
 export async function POST(request: Request) {
   let payload: MagicLinkPayload;
@@ -22,7 +32,7 @@ export async function POST(request: Request) {
 
   if (!email || !email.includes("@")) {
     return NextResponse.json(
-      { error: "Ingresa un correo valido." },
+      { error: "Ingresa un correo válido." },
       { status: 400 },
     );
   }
@@ -34,42 +44,30 @@ export async function POST(request: Request) {
     );
   }
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const supabase = await createClient();
+  const baseUrl = getBaseUrl();
 
-  if (!supabaseUrl || !supabaseAnonKey) {
-    return NextResponse.json(
-      { error: "Configuracion de autenticacion incompleta." },
-      { status: 500 },
-    );
-  }
-
-  const response = await fetch(`${supabaseUrl}/auth/v1/otp`, {
-    method: "POST",
-    headers: {
-      apikey: supabaseAnonKey,
-      Authorization: `Bearer ${supabaseAnonKey}`,
-      "Content-Type": "application/json",
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      shouldCreateUser: true,
+      emailRedirectTo: `${baseUrl}/auth/confirm?next=/`,
     },
-    body: JSON.stringify({
-      email,
-      create_user: false,
-    }),
   });
 
-  if (!response.ok) {
+  if (error) {
     return NextResponse.json(
       {
         error:
-          "No fue posible enviar el magic link. Verifica que tu usuario este habilitado.",
+          "No fue posible enviar el enlace de acceso. Verifica que tu usuario esté habilitado.",
       },
-      { status: response.status },
+      { status: 400 },
     );
   }
 
   return NextResponse.json({
     success: true,
     message:
-      "Te enviamos un magic link a tu correo. Revisa tu bandeja y continua desde ese enlace.",
+      "Te enviamos un enlace a tu correo. Revisa tu bandeja y continúa desde ese enlace.",
   });
 }

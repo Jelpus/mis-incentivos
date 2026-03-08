@@ -11,9 +11,9 @@ export function MobileAuthFlow() {
 
   return (
     <section className="lg:hidden">
-      <div className="min-h-dvh w-full overflow-hidden p-20">
+      <div className="h-dvh w-full overflow-hidden">
         <div
-          className={`flex min-h-dvh w-[200%] transition-transform duration-500 ease-out ${
+          className={`flex h-full w-[200%] transition-transform duration-500 ease-out ${
             step === "login" ? "-translate-x-1/2" : "translate-x-0"
           }`}
         >

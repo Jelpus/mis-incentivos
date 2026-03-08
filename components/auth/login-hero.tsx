@@ -81,18 +81,18 @@ export function LoginHero({ mobileMode = false, onAccess }: LoginHeroProps) {
       className={`relative flex items-start overflow-hidden bg-white ${
         mobileMode
           ? "min-h-dvh border-b border-[#dfdfdf] px-6 pb-10 pt-8 sm:px-10 sm:pt-12"
-          : "min-h-dvh border-r border-[#dfdfdf] px-14 pb-16 pt-14"
+          : "h-dvh border-r border-[#dfdfdf] px-10 pb-8 pt-7 xl:px-14 xl:pb-10 xl:pt-9"
       }`}
     >
-      <div className="pointer-events-none absolute -right-56 bottom-[-28%] hidden h-[68rem] w-[68rem] rounded-full bg-[#ff9f1c] float-slow sm:block" />
-      <div className="pointer-events-none absolute -right-36 bottom-[-30%] hidden h-[44rem] w-[44rem] rounded-full bg-[#ff5661] float-slower sm:block" />
-      <div className="pointer-events-none absolute -right-20 bottom-[-8%] hidden h-[30rem] w-[20rem] rounded-[44%_56%_34%_66%/40%_40%_60%_60%] bg-[#002068] float-slow sm:block" />
-      <div className="pointer-events-none absolute right-[17rem] bottom-[-24rem] hidden h-[35rem] w-[30rem] rounded-[58%_42%_65%_35%/62%_62%_38%_38%] bg-[#ff8d35] float-slower sm:block" />
+      <div className="pointer-events-none absolute right-[-22%] bottom-[-30%] hidden aspect-square w-[clamp(20rem,46vw,44rem)] rounded-full bg-[#ff9f1c] float-slow sm:block" />
+      <div className="pointer-events-none absolute right-[-15%] bottom-[-26%] hidden aspect-square w-[clamp(15rem,30vw,28rem)] rounded-full bg-[#ff5661] float-slower sm:block" />
+      <div className="pointer-events-none absolute right-[-7%] bottom-[-9%] hidden h-[clamp(13rem,26vw,23rem)] w-[clamp(9rem,16vw,16rem)] rounded-[44%_56%_34%_66%/40%_40%_60%_60%] bg-[#002068] float-slow sm:block" />
+      <div className="pointer-events-none absolute right-[20%] bottom-[-38%] hidden h-[clamp(14rem,30vw,24rem)] w-[clamp(11rem,24vw,20rem)] rounded-[58%_42%_65%_35%/62%_62%_38%_38%] bg-[#ff8d35] float-slower sm:block" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_14%_18%,rgba(0,32,104,0.06),transparent_28%)]" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_45%_75%,rgba(231,74,34,0.05),transparent_34%)]" />
 
-      <div className="relative z-10 grid w-full max-w-[108ch] gap-8 enter-fade-up sm:gap-10">
-        <div className="flex items-center pb-15">
+      <div className="relative z-10 flex h-full w-full max-w-[108ch] flex-col gap-4 enter-fade-up sm:gap-6">
+        <div className="flex items-center pb-4">
           <Image
             src="/novartis_color.svg"
             alt="Novartis"
@@ -103,8 +103,8 @@ export function LoginHero({ mobileMode = false, onAccess }: LoginHeroProps) {
           />
         </div>
 
-        <div className="grid gap-5 sm:gap-7">
-          <h1 className="text-balance max-w-[10ch] text-[#002b7f]">
+        <div className="grid gap-4 sm:gap-7">
+          <h1 className="text-balance max-w-[10ch] text-[clamp(1.95rem,3vw+1.2vh,4.2rem)] font-semibold leading-[0.95] tracking-[-0.02em] text-[#002b7f]">
             Tu impacto,
             <br />
             mas claro
@@ -113,12 +113,12 @@ export function LoginHero({ mobileMode = false, onAccess }: LoginHeroProps) {
               que nunca.
             </span>
           </h1>
-          <p className="max-w-[49ch] text-sm leading-6 text-[#2b3f6e] sm:text-base sm:leading-7">
-            La nueva plataforma de incentivos de Novartis. Mas rapida, segura e
-            intuitiva. Disenada para darte transparencia total sobre tu desempeno.
+          <p className="max-w-[49ch] text-[clamp(0.92rem,0.45vw+0.55rem,1.02rem)] leading-[1.55] text-[#2b3f6e]">
+            La nueva plataforma de incentivos de Novartis. Más clara, rápida, segura e intuitiva.
+            Diseñada para darte transparencia total sobre tu desempeño.
           </p>
-          <p className="max-w-[45ch] text-sm leading-6 text-[#445f95]">
-            Tu exito impulsa nuestra mision. Juntos, reimaginamos la medicina.
+          <p className="max-w-[45ch] text-[clamp(0.88rem,0.35vw+0.52rem,0.96rem)] leading-[1.5] text-[#445f95]">
+            <strong>Tu éxito </strong> es nuestra prioridad. Impulsa nuestra misión. Juntos, reimaginamos la medicina.
           </p>
 
           {mobileMode ? (
@@ -129,32 +129,34 @@ export function LoginHero({ mobileMode = false, onAccess }: LoginHeroProps) {
                 className="focus-ring inline-flex items-center gap-2 rounded-md bg-[#002068] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#14347d]"
               >
                 Acceder
-                <span aria-hidden="true">→</span>
+                <span aria-hidden="true">-&gt;</span>
               </button>
             </div>
           ) : null}
         </div>
 
         <div
-          className={`gap-5 md:grid md:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3 ${
-            mobileMode ? "hidden lg:grid" : "hidden md:grid"
+          className={`gap-3 px-1 md:grid md:grid-cols-3 xl:gap-4 xl:px-2 ${
+            mobileMode ? "hidden lg:grid" : "mt-auto hidden md:grid"
           }`}
         >
           {keyMessages.map((item) => (
             <article
               key={item.title}
-              className="group relative overflow-hidden rounded-[1.45rem] border border-[#d8e3f8] bg-white/80 p-6 shadow-[0_12px_30px_rgba(0,32,104,0.08)] backdrop-blur-md transition hover:-translate-y-0.5 hover:shadow-[0_16px_34px_rgba(0,32,104,0.12)]"
+              className="group relative overflow-hidden rounded-[1.2rem] border border-[#d8e3f8] bg-white/80 p-3.5 xl:p-4 shadow-[0_10px_24px_rgba(0,32,104,0.08)] backdrop-blur-md transition hover:-translate-y-0.5 hover:shadow-[0_14px_28px_rgba(0,32,104,0.12)]"
             >
               <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-[#eef3ff] opacity-95 transition group-hover:scale-110" />
 
               <div className="relative z-10">
-                <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl border border-[#d5e1ff] bg-white text-[#002b7f] shadow-[0_6px_16px_rgba(0,43,127,0.1)]">
+                <div className="mb-2.5 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#d5e1ff] bg-white text-[#002b7f] shadow-[0_5px_12px_rgba(0,43,127,0.1)]">
                   <MessageIcon type={item.icon} />
                 </div>
-                <p className="text-lg font-semibold leading-tight text-[#002b7f]">
+                <p className="text-[0.96rem] font-semibold leading-tight text-[#002b7f] xl:text-[1rem]">
                   {item.title}
                 </p>
-                <p className="mt-2.5 text-base leading-7 text-[#3b507d]">{item.text}</p>
+                <p className="mt-1.5 text-[0.83rem] leading-5 text-[#3b507d] xl:text-[0.86rem]">
+                  {item.text}
+                </p>
               </div>
             </article>
           ))}
@@ -163,3 +165,4 @@ export function LoginHero({ mobileMode = false, onAccess }: LoginHeroProps) {
     </section>
   );
 }
+
