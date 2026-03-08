@@ -87,8 +87,6 @@ export function MagicLinkForm() {
         />
       </div>
 
-      <p className="text-xs leading-5 text-[#667085]">{helperText}</p>
-
       {status !== "idle" ? (
         <p
           className={`rounded-lg px-3 py-2 text-sm ${
