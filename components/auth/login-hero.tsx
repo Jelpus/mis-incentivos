@@ -79,23 +79,29 @@ function MessageIcon({ type }: { type: string }) {
 }
 
 export function LoginHero({ mobileMode = false, onAccess }: LoginHeroProps) {
+  const sectionClasses = mobileMode
+    ? "min-h-dvh border-b border-[#dfdfdf] px-6 py-8 sm:px-10 sm:py-12"
+    : "h-dvh border-r border-[#dfdfdf] px-10 py-10 xl:px-14 xl:py-12";
+
+  const contentClasses = mobileMode
+    ? "relative z-10 flex w-full max-w-[108ch] flex-col gap-5 enter-fade-up sm:gap-7"
+    : "relative z-10 flex h-full w-full max-w-[108ch] flex-col justify-center gap-7 enter-fade-up";
+
+  const cardsClasses = mobileMode
+    ? "hidden gap-3 px-1 lg:grid md:grid-cols-3 xl:gap-4 xl:px-2"
+    : "hidden gap-3 px-1 md:grid md:grid-cols-3 xl:gap-4 xl:px-2";
+
   return (
-    <section
-      className={`relative flex items-start overflow-hidden bg-white ${
-        mobileMode
-          ? "min-h-dvh border-b border-[#dfdfdf] px-6 pb-10 pt-8 sm:px-10 sm:pt-12"
-          : "h-dvh border-r border-[#dfdfdf] px-10 pb-8 pt-7 xl:px-14 xl:pb-10 xl:pt-9"
-      }`}
-    >
-      <div className="pointer-events-none absolute right-[-22%] bottom-[-30%] hidden aspect-square w-[clamp(20rem,46vw,44rem)] rounded-full bg-[#ff9f1c] float-slow sm:block" />
-      <div className="pointer-events-none absolute right-[-15%] bottom-[-26%] hidden aspect-square w-[clamp(15rem,30vw,28rem)] rounded-full bg-[#ff5661] float-slower sm:block" />
-      <div className="pointer-events-none absolute right-[-7%] bottom-[-9%] hidden h-[clamp(13rem,26vw,23rem)] w-[clamp(9rem,16vw,16rem)] rounded-[44%_56%_34%_66%/40%_40%_60%_60%] bg-[#002068] float-slow sm:block" />
-      <div className="pointer-events-none absolute right-[20%] bottom-[-38%] hidden h-[clamp(14rem,30vw,24rem)] w-[clamp(11rem,24vw,20rem)] rounded-[58%_42%_65%_35%/62%_62%_38%_38%] bg-[#ff8d35] float-slower sm:block" />
+    <section className={`relative flex items-center overflow-hidden bg-white ${sectionClasses}`}>
+      <div className="pointer-events-none absolute right-[-22%] bottom-[-30%] hidden aspect-square w-[clamp(40rem,46vw,44rem)] rounded-full bg-[#ff9f1c]/55 float-slow sm:block" />
+      <div className="pointer-events-none absolute right-[-15%] bottom-[-26%] hidden aspect-square w-[clamp(15rem,30vw,28rem)] rounded-full bg-[#ff5661]/80 float-slower sm:block" />
+      <div className="pointer-events-none absolute right-[-10%] bottom-[10%] hidden h-[clamp(13rem,26vw,23rem)] w-[clamp(9rem,16vw,16rem)] rounded-[44%_56%_34%_66%/40%_40%_60%_60%] bg-[#002068]/60 float-slow sm:block" />
+      <div className="pointer-events-none absolute right-[20%] bottom-[-38%] hidden h-[clamp(14rem,30vw,24rem)] w-[clamp(11rem,24vw,20rem)] rounded-[58%_42%_65%_35%/62%_62%_38%_38%] bg-[#ff8d35]/40 float-slower sm:block" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_14%_18%,rgba(0,32,104,0.06),transparent_28%)]" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_45%_75%,rgba(231,74,34,0.05),transparent_34%)]" />
 
-      <div className="relative z-10 flex h-full w-full max-w-[108ch] flex-col gap-4 enter-fade-up sm:gap-6">
-        <div className="flex items-center pb-4">
+      <div className={contentClasses}>
+        <div className="flex items-center pb-2 sm:pb-3">
           <Image
             src="/novartis_color.svg"
             alt="Novartis"
@@ -106,7 +112,7 @@ export function LoginHero({ mobileMode = false, onAccess }: LoginHeroProps) {
           />
         </div>
 
-        <div className="grid gap-4 sm:gap-7">
+        <div className="grid max-w-[64ch] gap-4 sm:gap-6">
           <h1 className="text-balance max-w-[10ch] text-[clamp(1.95rem,3vw+1.2vh,4.2rem)] font-semibold leading-[0.95] tracking-[-0.02em] text-[#002b7f]">
             Tu impacto,
             <br />
@@ -138,11 +144,7 @@ export function LoginHero({ mobileMode = false, onAccess }: LoginHeroProps) {
           ) : null}
         </div>
 
-        <div
-          className={`gap-3 px-1 md:grid md:grid-cols-3 xl:gap-4 xl:px-2 ${
-            mobileMode ? "hidden lg:grid" : "mt-auto hidden md:grid"
-          }`}
-        >
+        <div className={cardsClasses}>
           {keyMessages.map((item) => (
             <article
               key={item.title}
