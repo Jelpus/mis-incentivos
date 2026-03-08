@@ -10,18 +10,21 @@ type LoginHeroProps = {
 const keyMessages = [
   {
     icon: "clarity",
-    title: "Transparencia total",
-    text: "Entiende cada variable de tu calculo y maximiza tu potencial.",
+    title: "Transparencia",
+    text: "Visualiza tu incentivo con claridad.",
+    tone: "bg-[#002b7f]",
   },
   {
     icon: "empowerment",
-    title: "Empoderamiento",
-    text: "Toma el control de tu rendimiento con datos claros y accionables.",
+    title: "Control",
+    text: "Sigue tu avance en tiempo real.",
+    tone: "bg-[#ff5c37]",
   },
   {
     icon: "security",
-    title: "Seguridad y rapidez",
-    text: "Una experiencia mas segura, intuitiva y enfocada en resultados.",
+    title: "Seguridad",
+    text: "Acceso rapido y protegido.",
+    tone: "bg-[#ff8d35]",
   },
 ];
 
@@ -107,7 +110,7 @@ export function LoginHero({ mobileMode = false, onAccess }: LoginHeroProps) {
           <h1 className="text-balance max-w-[10ch] text-[clamp(1.95rem,3vw+1.2vh,4.2rem)] font-semibold leading-[0.95] tracking-[-0.02em] text-[#002b7f]">
             Tu impacto,
             <br />
-            mas claro
+            más claro
             <br />
             <span className="bg-[linear-gradient(90deg,#ff4f67_0%,#ff5c37_48%,#ff6f00_100%)] bg-clip-text text-transparent">
               que nunca.
@@ -149,12 +152,16 @@ export function LoginHero({ mobileMode = false, onAccess }: LoginHeroProps) {
 
               <div className="relative z-10">
                 <div className="mb-2.5 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#d5e1ff] bg-white text-[#002b7f] shadow-[0_5px_12px_rgba(0,43,127,0.1)]">
-                  <MessageIcon type={item.icon} />
+                  <span
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-white ${item.tone}`}
+                  >
+                    <MessageIcon type={item.icon} />
+                  </span>
                 </div>
-                <p className="text-[0.96rem] font-semibold leading-tight text-[#002b7f] xl:text-[1rem]">
+                <p className="text-[0.9rem] font-semibold leading-tight text-[#002b7f] xl:text-[0.96rem]">
                   {item.title}
                 </p>
-                <p className="mt-1.5 text-[0.83rem] leading-5 text-[#3b507d] xl:text-[0.86rem]">
+                <p className="mt-1 text-[0.78rem] leading-5 text-[#3b507d] xl:text-[0.82rem]">
                   {item.text}
                 </p>
               </div>
@@ -165,4 +172,3 @@ export function LoginHero({ mobileMode = false, onAccess }: LoginHeroProps) {
     </section>
   );
 }
-
