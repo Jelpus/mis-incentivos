@@ -2,6 +2,7 @@ import { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { AppShell } from "@/components/app-shell/app-shell";
+import { LastLoginSessionPing } from "@/components/auth/last-login-session-ping";
 
 export default async function AdminLayout({ children }: { children: ReactNode }) {
   const { user, role, isActive } = await getCurrentAuthContext();
@@ -16,6 +17,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
 
   return (
     <AppShell role={role} userEmail={user.email}>
+      <LastLoginSessionPing userId={user.id} />
       {children}
     </AppShell>
   );

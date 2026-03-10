@@ -14,12 +14,24 @@ export default function AdminPage() {
           Vista base creada. Aqui puedes montar gestion de usuarios, incentivos y
           configuracion global.
         </p>
-        <div className="mt-6">
+        <div className="mt-6 flex flex-wrap gap-3">
           <Link
             href="/admin/control-acceso"
             className="focus-ring inline-flex items-center rounded-lg border border-[#c8d6f5] bg-[#f2f7ff] px-4 py-2 text-sm font-medium text-[#1d4ed8] transition hover:bg-[#eaf2ff]"
           >
             Ir a Control de acceso
+          </Link>
+          <Link
+            href="/admin/status"
+            className="focus-ring inline-flex items-center rounded-lg border border-[#c8d6f5] bg-[#f2f7ff] px-4 py-2 text-sm font-medium text-[#1d4ed8] transition hover:bg-[#eaf2ff]"
+          >
+            Ir a Sales Force Status
+          </Link>
+          <Link
+            href="/admin/incentive-rules"
+            className="focus-ring inline-flex items-center rounded-lg border border-[#c8d6f5] bg-[#f2f7ff] px-4 py-2 text-sm font-medium text-[#1d4ed8] transition hover:bg-[#eaf2ff]"
+          >
+            Ir a Reglas TeamID
           </Link>
         </div>
       </div>

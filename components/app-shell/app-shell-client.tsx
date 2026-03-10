@@ -22,6 +22,7 @@ type AppShellClientProps = {
 
 function getTitle(pathname: string) {
   if (pathname.startsWith("/admin/control-acceso")) return "Control de acceso";
+  if (pathname.startsWith("/admin/incentive-rules")) return "Reglas de incentivos";
   if (pathname.startsWith("/admin")) return "Panel de administracion";
   if (pathname.startsWith("/perfil")) return "Mi perfil";
   if (pathname.startsWith("/mi-cuenta")) return "Mi cuenta";
@@ -32,6 +33,8 @@ function getNavItems(role: ProfileRole | null): NavItem[] {
   if (role === "admin" || role === "super_admin") {
     return [
       { href: "/admin/control-acceso", label: "Control acceso", short: "CA" },
+      { href: "/admin/status", label: "Sales Force Status", short: "ST" },
+      { href: "/admin/incentive-rules", label: "Pay Components TeamID", short: "PC" },
       { href: "/perfil", label: "Mi perfil", short: "MP" },
     ];
   }
