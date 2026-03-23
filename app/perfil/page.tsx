@@ -7,25 +7,32 @@ import { getCurrentAuthContext } from "@/lib/auth/current-user";
 export default async function PerfilPage() {
   const supabase = await createClient();
   const adminClient = createAdminClient();
-  const { role } = await getCurrentAuthContext();
+  const {
+    role,
+    user: contextUser,
+    effectiveUserId,
+    effectiveEmail,
+    isImpersonating,
+  } = await getCurrentAuthContext();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) {
+  if (!user || !contextUser) {
     redirect("/");
   }
 
   const profileReader = adminClient ?? supabase;
+  const profileUserId = effectiveUserId ?? user.id;
 
   const { data: profile } = await profileReader
     .from("profiles")
     .select("email, first_name, last_name, picture_url, global_role, is_active")
-    .eq("user_id", user.id)
+    .eq("user_id", profileUserId)
     .maybeSingle();
 
   const initialProfile = {
-    email: profile?.email ?? user.email ?? "",
+    email: profile?.email ?? effectiveEmail ?? user.email ?? "",
     firstName: profile?.first_name ?? "",
     lastName: profile?.last_name ?? "",
     pictureUrl: profile?.picture_url ?? "",
@@ -43,11 +50,12 @@ export default async function PerfilPage() {
           Mi perfil
         </h1>
         <p className="mt-3 text-sm text-[#4b5f86]">
-          Puedes editar tu foto, nombre y apellido. El correo y el rol son solo
-          lectura.
+          {isImpersonating
+            ? "Modo debug activo. Estas viendo el perfil en solo lectura."
+            : "Puedes editar tu foto, nombre y apellido. El correo y el rol son solo lectura."}
         </p>
         <div className="mt-6">
-          <ProfileForm initialProfile={initialProfile} />
+          <ProfileForm initialProfile={initialProfile} readOnlyMode={isImpersonating} />
         </div>
       </div>
     </section>

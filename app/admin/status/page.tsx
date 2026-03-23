@@ -4,9 +4,7 @@ import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { getStatusPageData } from "@/lib/admin/status/get-status-page-data";
 import { ClonePeriodCard } from "@/components/admin/clone-period-card";
 import { MassImportUploadCard } from "@/components/admin/mass-import-upload-card";
-import { ManagerStatusCurrentTable } from "@/components/admin/manager-status-current-table";
-import { StatusPeriodPicker } from "@/components/admin/status-period-picker";
-import { StatusCurrentTable } from "@/components/admin/status-current-table";
+import { StatusCurrentCollapsible } from "@/components/admin/status-current-collapsible";
 
 type AdminRole = "admin" | "super_admin";
 
@@ -66,10 +64,6 @@ export default async function StatusPage({ searchParams }: PageProps) {
     cloneContext,
   } = await getStatusPageData(selectedPeriodInput);
 
-  const managerTotal = managers.length;
-  const managerActive = managers.filter((row) => row.is_active).length;
-  const managerInactive = Math.max(managerTotal - managerActive, 0);
-  const managerVacant = managers.filter((row) => row.is_vacant).length;
 
   return (
     <main className="min-h-screen bg-neutral-50">
@@ -184,77 +178,19 @@ export default async function StatusPage({ searchParams }: PageProps) {
         </section>
 
         {/* TABLE */}
-
-        <section className="rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm">
-
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-
-            <div>
-              <h2 className="text-lg font-semibold text-neutral-950">
-                Status actual
-              </h2>
-
-              <p className="mt-1 text-sm text-neutral-600">
-                Catálogos vigentes para managers (SVM) y representantes (SVA).
-              </p>
-            </div>
-
-            <StatusPeriodPicker value={periodMonth.slice(0, 7)} />
-
-          </div>
-
-          <div className="mt-6">
-            <h3 className="text-base font-semibold text-neutral-900">
-              Managers (SVM)
-            </h3>
-            <div className="mt-2 flex flex-wrap gap-2 text-xs font-medium">
-              <span className="rounded-full bg-neutral-100 px-3 py-1 text-neutral-700">
-                Total: {managerTotal}
-              </span>
-              <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">
-                Activos: {managerActive}
-              </span>
-              <span className="rounded-full bg-neutral-100 px-3 py-1 text-neutral-700">
-                Inactivos: {managerInactive}
-              </span>
-              <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">
-                Vacantes: {managerVacant}
-              </span>
-            </div>
-          </div>
-
-          <ManagerStatusCurrentTable rows={managers} periodMonth={periodMonth} />
-
-          <div className="mt-8">
-            <h3 className="text-base font-semibold text-neutral-900">
-              Representantes (SVA)
-            </h3>
-            <div className="mt-2 flex flex-wrap gap-2 text-xs font-medium">
-              <span className="rounded-full bg-neutral-100 px-3 py-1 text-neutral-700">
-                Total: {totalRows}
-              </span>
-              <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">
-                Activos: {activeRows}
-              </span>
-              <span className="rounded-full bg-neutral-100 px-3 py-1 text-neutral-700">
-                Inactivos: {inactiveRows}
-              </span>
-              <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">
-                Vacantes: {vacantRows}
-              </span>
-              {latestAvailablePeriodMonth ? (
-                <span className="rounded-full bg-blue-50 px-3 py-1 text-blue-700">
-                  Último período disponible: {formatPeriodLabel(latestAvailablePeriodMonth)}
-                </span>
-              ) : null}
-            </div>
-          </div>
-
-          <StatusCurrentTable rows={rows} periodMonth={periodMonth} />
-
-        </section>
+        <StatusCurrentCollapsible
+          rows={rows}
+          managers={managers}
+          periodMonth={periodMonth}
+          latestAvailablePeriodMonth={latestAvailablePeriodMonth}
+          totalRows={totalRows}
+          activeRows={activeRows}
+          inactiveRows={inactiveRows}
+          vacantRows={vacantRows}
+        />
 
       </div>
     </main>
   );
 }
+

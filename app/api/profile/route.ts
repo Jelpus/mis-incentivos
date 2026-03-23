@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getCurrentAuthContext } from "@/lib/auth/current-user";
 
 type ProfileUpdatePayload = {
   firstName?: string;
@@ -30,21 +31,19 @@ function sanitizePictureUrl(value: unknown) {
 export async function GET() {
   const supabase = await createClient();
   const adminClient = createAdminClient();
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
+  const { user, isActive, effectiveUserId, effectiveEmail } = await getCurrentAuthContext();
 
-  if (userError || !user) {
+  if (!user || isActive === false) {
     return NextResponse.json({ error: "No autenticado." }, { status: 401 });
   }
 
   const profileReader = adminClient ?? supabase;
+  const profileUserId = effectiveUserId ?? user.id;
 
   const { data: profile, error } = await profileReader
     .from("profiles")
     .select("email, first_name, last_name, picture_url, global_role, is_active")
-    .eq("user_id", user.id)
+    .eq("user_id", profileUserId)
     .maybeSingle();
 
   if (error) {
@@ -56,7 +55,7 @@ export async function GET() {
 
   return NextResponse.json({
     profile: {
-      email: profile?.email ?? user.email ?? "",
+      email: profile?.email ?? effectiveEmail ?? user.email ?? "",
       firstName: profile?.first_name ?? "",
       lastName: profile?.last_name ?? "",
       pictureUrl: profile?.picture_url ?? "",
@@ -80,13 +79,17 @@ export async function PATCH(request: Request) {
 
   const supabase = await createClient();
   const adminClient = createAdminClient();
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
+  const { user, isActive, isImpersonating } = await getCurrentAuthContext();
 
-  if (userError || !user) {
+  if (!user || isActive === false) {
     return NextResponse.json({ error: "No autenticado." }, { status: 401 });
+  }
+
+  if (isImpersonating) {
+    return NextResponse.json(
+      { error: "Modo debug activo. Sal del modo debug para editar tu perfil." },
+      { status: 403 },
+    );
   }
 
   const firstName = sanitizeText(payload.firstName, 80);

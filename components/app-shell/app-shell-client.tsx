@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { ReactNode, useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import clsx from "clsx";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { ProfileRole } from "@/lib/auth/current-user";
@@ -14,40 +14,93 @@ type NavItem = {
   short: string;
 };
 
+type NavGroup = {
+  title: string;
+  items: NavItem[];
+  subBlocks?: Array<{
+    title: string;
+    items: NavItem[];
+  }>;
+};
+
 type AppShellClientProps = {
   role: ProfileRole | null;
   userEmail?: string;
+  impersonation?: {
+    userId: string;
+    email: string | null;
+    globalRole: ProfileRole | null;
+    isActive: boolean;
+  } | null;
   children: ReactNode;
 };
 
 function getTitle(pathname: string) {
   if (pathname.startsWith("/admin/control-acceso")) return "Control de acceso";
+  if (pathname.startsWith("/admin/curvas-de-pago")) return "Curvas de pago";
   if (pathname.startsWith("/admin/incentive-rules")) return "Reglas de incentivos";
+  if (pathname.startsWith("/admin/data-sources")) return "Fuentes de datos";
   if (pathname.startsWith("/admin")) return "Panel de administracion";
   if (pathname.startsWith("/perfil")) return "Mi perfil";
   if (pathname.startsWith("/mi-cuenta")) return "Mi cuenta";
   return "Panel";
 }
 
-function getNavItems(role: ProfileRole | null): NavItem[] {
+function getNavGroups(role: ProfileRole | null): NavGroup[] {
   if (role === "admin" || role === "super_admin") {
     return [
-      { href: "/admin/control-acceso", label: "Control acceso", short: "CA" },
-      { href: "/admin/status", label: "Sales Force Status", short: "ST" },
-      { href: "/admin/incentive-rules", label: "Pay Components TeamID", short: "PC" },
-      { href: "/perfil", label: "Mi perfil", short: "MP" },
+      {
+        title: "Detalles de cuenta",
+        items: [{ href: "/perfil", label: "Mi perfil", short: "MP" }],
+      },
+      {
+        title: "Calcular Incentivos",
+        items: [
+          { href: "/admin/status", label: "Sales Force Status", short: "ST" },
+          { href: "/admin/incentive-rules", label: "Pay Components TeamID", short: "PC" },
+          { href: "/admin/data-sources", label: "Data Sources", short: "DS" },
+        ],
+        subBlocks: [
+          {
+            title: "Configuraciones",
+            items: [{ href: "/admin/curvas-de-pago", label: "Curvas de Pago", short: "CP" }],
+          },
+        ],
+      },
+      {
+        title: "Configuracion",
+        items: [{ href: "/admin/control-acceso", label: "Control de Acceso", short: "CA" }],
+      },
     ];
   }
 
-  return [{ href: "/perfil", label: "Mi perfil", short: "MP" }];
+  return [
+    {
+      title: "Detalles de cuenta",
+      items: [{ href: "/perfil", label: "Mi perfil", short: "MP" }],
+    },
+  ];
 }
 
-export function AppShellClient({ role, userEmail, children }: AppShellClientProps) {
+export function AppShellClient({ role, userEmail, impersonation, children }: AppShellClientProps) {
+  const router = useRouter();
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const navItems = useMemo(() => getNavItems(role), [role]);
+  const [impersonationStopping, setImpersonationStopping] = useState(false);
+  const navGroups = useMemo(() => getNavGroups(role), [role]);
   const title = getTitle(pathname);
+
+  async function stopImpersonation() {
+    setImpersonationStopping(true);
+    try {
+      await fetch("/api/admin/debug/impersonation", { method: "DELETE" });
+      router.push("/admin/control-acceso");
+      router.refresh();
+    } finally {
+      setImpersonationStopping(false);
+    }
+  }
 
   return (
     <div className="min-h-dvh bg-[linear-gradient(180deg,#f5f8ff_0%,#f8fafc_100%)] text-[#0f172a]">
@@ -83,27 +136,86 @@ export function AppShellClient({ role, userEmail, children }: AppShellClientProp
             </button>
           </div>
 
-          <nav className="flex-1 space-y-2 px-3 py-4">
-            {navItems.map((item) => {
-              const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={clsx(
-                    "focus-ring flex h-10 items-center gap-3 rounded-lg border px-3 text-sm font-medium transition",
-                    active
-                      ? "border-[#c8dcff] bg-[#eaf2ff] text-[#002b7f]"
-                      : "border-transparent text-[#334155] hover:border-[#e2e8f0] hover:bg-[#f8fafc]",
-                  )}
-                >
-                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-[#f1f5ff] text-[11px] font-semibold text-[#1d4ed8]">
-                    {item.short}
-                  </span>
-                  <span className={clsx("truncate", collapsed && "hidden")}>{item.label}</span>
-                </Link>
-              );
-            })}
+          <nav className="flex-1 overflow-y-auto px-3 py-4">
+            <div className="space-y-4">
+              {navGroups.map((group) => (
+                <section key={group.title} className="space-y-2">
+                  <p
+                    className={clsx(
+                      "px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#64748b]",
+                      collapsed && "hidden",
+                    )}
+                  >
+                    {group.title}
+                  </p>
+                  <div className="space-y-2">
+                    {group.items.map((item) => {
+                      const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          className={clsx(
+                            "focus-ring flex h-10 items-center gap-3 rounded-lg border px-3 text-sm font-medium transition",
+                            active
+                              ? "border-[#c8dcff] bg-[#eaf2ff] text-[#002b7f]"
+                              : "border-transparent text-[#334155] hover:border-[#e2e8f0] hover:bg-[#f8fafc]",
+                          )}
+                        >
+                          <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-[#f1f5ff] text-[11px] font-semibold text-[#1d4ed8]">
+                            {item.short}
+                          </span>
+                          <span className={clsx("truncate", collapsed && "hidden")}>{item.label}</span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                  {group.subBlocks?.map((subBlock) => (
+                    <div
+                      key={`${group.title}-${subBlock.title}`}
+                      className={clsx(
+                        "ml-3 border-l border-[#e2e8f0] pl-3",
+                        collapsed && "ml-0 border-l-0 pl-0",
+                      )}
+                    >
+                      {!collapsed ? (
+                        <div className="mb-2">
+                          <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#94a3b8]">
+                            {subBlock.title}
+                          </p>
+                        </div>
+                      ) : null}
+                      <div className="space-y-2">
+                        {subBlock.items.map((item) => {
+                          const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                          return (
+                            <Link
+                              key={item.href}
+                              href={item.href}
+                              title={collapsed ? item.label : undefined}
+                              className={clsx(
+                                "focus-ring flex h-10 items-center gap-3 rounded-lg border px-3 text-sm font-medium transition",
+                                active
+                                  ? "border-[#c8dcff] bg-[#eaf2ff] text-[#002b7f]"
+                                  : collapsed
+                                    ? "border-transparent text-[#334155] hover:border-[#e2e8f0] hover:bg-[#f8fafc]"
+                                    : "border-transparent bg-[#f8fafc] text-[#334155] hover:border-[#e2e8f0] hover:bg-white",
+                              )}
+                            >
+                              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-[#f1f5ff] text-[11px] font-semibold text-[#1d4ed8]">
+                                {item.short}
+                              </span>
+                              <span className={clsx("truncate", collapsed && "hidden")}>{item.label}</span>
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                  <div className={clsx("border-t border-[#eef2fb]", collapsed && "hidden")} />
+                </section>
+              ))}
+            </div>
           </nav>
 
           <div className="border-t border-[#e8eefb] px-3 py-4">
@@ -115,6 +227,24 @@ export function AppShellClient({ role, userEmail, children }: AppShellClientProp
         </aside>
 
         <div className={clsx("flex min-h-dvh w-full flex-col", collapsed ? "md:pl-[5.5rem]" : "md:pl-[17rem]")}>
+          {impersonation ? (
+            <div className="border-b border-[#fedf89] bg-[#fffaeb] px-4 py-3 text-[#7a2e0e] sm:px-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs font-medium sm:text-sm">
+                  Debug activo como {impersonation.email ?? impersonation.userId} (rol{" "}
+                  {impersonation.globalRole ?? "sin-definir"}).
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void stopImpersonation()}
+                  disabled={impersonationStopping}
+                  className="focus-ring inline-flex h-9 items-center rounded-md border border-[#fdb022] bg-white px-3 text-xs font-semibold text-[#7a2e0e] transition hover:bg-[#fff7e5] disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {impersonationStopping ? "Saliendo..." : "Salir debug"}
+                </button>
+              </div>
+            </div>
+          ) : null}
           <header className="sticky top-0 z-30 border-b border-[#dbe6f9] bg-white/88 backdrop-blur-md">
             <div className="flex h-16 items-center justify-between px-4 sm:px-6">
               <div className="flex items-center gap-3">
@@ -168,28 +298,70 @@ export function AppShellClient({ role, userEmail, children }: AppShellClientProp
                 cerrar
               </button>
             </div>
-            <nav className="space-y-2">
-              {navItems.map((item) => {
-                const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={() => setMobileOpen(false)}
-                    className={clsx(
-                      "focus-ring flex h-10 items-center gap-3 rounded-lg border px-3 text-sm font-medium transition",
-                      active
-                        ? "border-[#c8dcff] bg-[#eaf2ff] text-[#002b7f]"
-                        : "border-transparent text-[#334155] hover:border-[#e2e8f0] hover:bg-[#f8fafc]",
-                    )}
-                  >
-                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-[#f1f5ff] text-[11px] font-semibold text-[#1d4ed8]">
-                      {item.short}
-                    </span>
-                    <span className="truncate">{item.label}</span>
-                  </Link>
-                );
-              })}
+            <nav className="space-y-4">
+              {navGroups.map((group) => (
+                <section key={group.title} className="space-y-2">
+                  <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#64748b]">
+                    {group.title}
+                  </p>
+                  <div className="space-y-2">
+                    {group.items.map((item) => {
+                      const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          onClick={() => setMobileOpen(false)}
+                          className={clsx(
+                            "focus-ring flex h-10 items-center gap-3 rounded-lg border px-3 text-sm font-medium transition",
+                            active
+                              ? "border-[#c8dcff] bg-[#eaf2ff] text-[#002b7f]"
+                              : "border-transparent text-[#334155] hover:border-[#e2e8f0] hover:bg-[#f8fafc]",
+                          )}
+                        >
+                          <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-[#f1f5ff] text-[11px] font-semibold text-[#1d4ed8]">
+                            {item.short}
+                          </span>
+                          <span className="truncate">{item.label}</span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                  {group.subBlocks?.map((subBlock) => (
+                    <div key={`${group.title}-${subBlock.title}`} className="ml-3 border-l border-[#e2e8f0] pl-3">
+                      <div className="mb-2">
+                        <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#94a3b8]">
+                          {subBlock.title}
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        {subBlock.items.map((item) => {
+                          const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                          return (
+                            <Link
+                              key={item.href}
+                              href={item.href}
+                              onClick={() => setMobileOpen(false)}
+                              className={clsx(
+                                "focus-ring flex h-10 items-center gap-3 rounded-lg border px-3 text-sm font-medium transition",
+                                active
+                                  ? "border-[#c8dcff] bg-[#eaf2ff] text-[#002b7f]"
+                                  : "border-transparent bg-[#f8fafc] text-[#334155] hover:border-[#e2e8f0] hover:bg-white",
+                              )}
+                            >
+                              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-[#f1f5ff] text-[11px] font-semibold text-[#1d4ed8]">
+                                {item.short}
+                              </span>
+                              <span className="truncate">{item.label}</span>
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="border-t border-[#eef2fb]" />
+                </section>
+              ))}
             </nav>
             <div className="mt-4 border-t border-[#e8eefb] pt-4">
               <p className="mb-2 truncate text-xs text-[#64748b]">{userEmail ?? "Usuario"}</p>

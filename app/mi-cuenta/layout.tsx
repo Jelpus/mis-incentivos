@@ -5,14 +5,15 @@ import { AppShell } from "@/components/app-shell/app-shell";
 import { LastLoginSessionPing } from "@/components/auth/last-login-session-ping";
 
 export default async function MiCuentaLayout({ children }: { children: ReactNode }) {
-  const { user, role, isActive } = await getCurrentAuthContext();
+  const auth = await getCurrentAuthContext();
+  const { user, role, isActive, effectiveEmail, impersonation } = auth;
 
   if (!user || isActive === false) {
     redirect("/");
   }
 
   return (
-    <AppShell role={role} userEmail={user.email}>
+    <AppShell role={role} userEmail={effectiveEmail ?? user.email} impersonation={impersonation}>
       <LastLoginSessionPing userId={user.id} />
       {children}
     </AppShell>

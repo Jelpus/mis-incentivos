@@ -14,6 +14,7 @@ type ProfileData = {
 
 type ProfileFormProps = {
   initialProfile: ProfileData;
+  readOnlyMode?: boolean;
 };
 
 type Status = "idle" | "saving" | "success" | "error";
@@ -31,7 +32,7 @@ function getInitials(firstName: string, lastName: string, email: string) {
   return (email[0] ?? "U").toUpperCase();
 }
 
-export function ProfileForm({ initialProfile }: ProfileFormProps) {
+export function ProfileForm({ initialProfile, readOnlyMode = false }: ProfileFormProps) {
   const [firstName, setFirstName] = useState(initialProfile.firstName);
   const [lastName, setLastName] = useState(initialProfile.lastName);
   const [pictureUrl, setPictureUrl] = useState(initialProfile.pictureUrl);
@@ -45,6 +46,7 @@ export function ProfileForm({ initialProfile }: ProfileFormProps) {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (readOnlyMode) return;
     setStatus("saving");
     setMessage("");
 
@@ -104,6 +106,7 @@ export function ProfileForm({ initialProfile }: ProfileFormProps) {
             value={firstName}
             onChange={(event) => setFirstName(event.target.value)}
             maxLength={80}
+            disabled={readOnlyMode}
             className="h-11 rounded-lg border border-[#d0d5dd] bg-white px-3 text-sm text-[#0f172a] focus:border-[#2563eb] focus:outline-none focus:ring-4 focus:ring-[#dbeafe]"
           />
         </div>
@@ -116,12 +119,13 @@ export function ProfileForm({ initialProfile }: ProfileFormProps) {
             value={lastName}
             onChange={(event) => setLastName(event.target.value)}
             maxLength={80}
+            disabled={readOnlyMode}
             className="h-11 rounded-lg border border-[#d0d5dd] bg-white px-3 text-sm text-[#0f172a] focus:border-[#2563eb] focus:outline-none focus:ring-4 focus:ring-[#dbeafe]"
           />
         </div>
       </div>
 
-      <AvatarUpload value={pictureUrl} onChange={setPictureUrl} />
+      {!readOnlyMode ? <AvatarUpload value={pictureUrl} onChange={setPictureUrl} /> : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-2">
@@ -143,13 +147,17 @@ export function ProfileForm({ initialProfile }: ProfileFormProps) {
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="submit"
-          disabled={status === "saving"}
-          className="focus-ring inline-flex h-11 items-center rounded-lg bg-[linear-gradient(90deg,#002068_0%,#1748a3_100%)] px-5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(0,32,104,0.22)] transition hover:-translate-y-0.5 hover:shadow-[0_12px_26px_rgba(0,32,104,0.28)] disabled:cursor-not-allowed disabled:opacity-70"
-        >
-          {status === "saving" ? "Guardando..." : "Guardar cambios"}
-        </button>
+        {!readOnlyMode ? (
+          <button
+            type="submit"
+            disabled={status === "saving"}
+            className="focus-ring inline-flex h-11 items-center rounded-lg bg-[linear-gradient(90deg,#002068_0%,#1748a3_100%)] px-5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(0,32,104,0.22)] transition hover:-translate-y-0.5 hover:shadow-[0_12px_26px_rgba(0,32,104,0.28)] disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {status === "saving" ? "Guardando..." : "Guardar cambios"}
+          </button>
+        ) : (
+          <p className="text-sm text-[#475569]">Solo lectura durante el modo debug.</p>
+        )}
         {status !== "idle" ? (
           <p
             className={

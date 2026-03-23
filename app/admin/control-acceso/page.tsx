@@ -1,9 +1,10 @@
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { InviteAdminForm } from "@/components/admin/invite-admin-form";
 import { AdminRolesPanel } from "@/components/admin/admin-roles-panel";
+import { ImpersonationDebugCard } from "@/components/admin/impersonation-debug-card";
 
 export default async function ControlAccesoPage() {
-  const { role } = await getCurrentAuthContext();
+  const { role, impersonation } = await getCurrentAuthContext();
   const currentRole = role === "super_admin" ? "super_admin" : "admin";
 
   return (
@@ -31,6 +32,10 @@ export default async function ControlAccesoPage() {
             </p>
             <AdminRolesPanel currentRole={currentRole} />
           </div>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-[#e3ebfa] bg-[#f8fbff] p-4 sm:p-5">
+          <ImpersonationDebugCard currentImpersonation={impersonation} />
         </div>
       </div>
     </section>

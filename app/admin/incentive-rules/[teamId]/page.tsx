@@ -4,7 +4,13 @@ import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { StatusPeriodPicker } from "@/components/admin/status-period-picker";
 import { TeamIncentiveRuleEditor } from "@/components/admin/team-incentive-rule-editor";
 import { getTeamRuleDetailData } from "@/lib/admin/incentive-rules/get-team-rule-detail-data";
+import { getPayCurvesListData } from "@/lib/admin/pay-curves/get-pay-curves-data";
 import { formatPeriodMonthForInput } from "@/lib/admin/incentive-rules/shared";
+import {
+  TEAM_RULE_FIELD_GUIDE,
+  TEAM_RULE_REFERENCE_VALUES,
+  createInitialTeamRuleDefinition,
+} from "@/lib/admin/incentive-rules/rule-catalog";
 
 type PageProps = {
   params: Promise<{
@@ -20,17 +26,12 @@ function buildDefaultRuleDefinition(
   teamId: string,
   periodMonth: string,
 ): string {
-  const base = currentDefinition ?? {
-    meta: {
-      team_id: teamId,
-      period_month: periodMonth,
-      model_name: "draft-v1",
-      description: "Estructura inicial de reglas por team y periodo.",
-    },
-    kpis: [],
-    gates: [],
-    payouts: [],
-  };
+  const base =
+    currentDefinition ??
+    createInitialTeamRuleDefinition({
+      teamId,
+      periodMonth,
+    });
 
   return JSON.stringify(base, null, 2);
 }
@@ -64,8 +65,21 @@ export default async function IncentiveRuleTeamDetailPage({
     teamId,
     periodMonthInput: selectedPeriodInput,
   });
+  const payCurvesData = await getPayCurvesListData();
+  const payCurveOptions = payCurvesData.ok
+    ? payCurvesData.rows
+        .filter((row) => !row.isHidden)
+        .map((row) => ({
+          id: row.id,
+          name: row.name,
+          code: row.code,
+        }))
+    : [];
 
   const periodInputValue = formatPeriodMonthForInput(data.periodMonth);
+  const availableStatusPeriodInputs = Array.from(
+    new Set(data.availableStatusPeriods.map((period) => formatPeriodMonthForInput(period))),
+  );
 
   return (
     <main className="min-h-screen bg-neutral-50">
@@ -102,7 +116,7 @@ export default async function IncentiveRuleTeamDetailPage({
                 Validacion contra status para evitar reglas huérfanas.
               </p>
             </div>
-            <StatusPeriodPicker value={periodInputValue} />
+            <StatusPeriodPicker value={periodInputValue} options={availableStatusPeriodInputs} />
           </div>
 
           <div className="grid gap-4 sm:grid-cols-4">
@@ -145,6 +159,7 @@ export default async function IncentiveRuleTeamDetailPage({
           <TeamIncentiveRuleEditor
             teamId={data.teamId}
             periodMonthInput={periodInputValue}
+            payCurveOptions={payCurveOptions}
             defaultRuleDefinition={buildDefaultRuleDefinition(
               (data.currentVersion?.rule_definition ?? null) as Record<string, unknown> | null,
               data.teamId,
@@ -152,6 +167,61 @@ export default async function IncentiveRuleTeamDetailPage({
             )}
           />
         ) : null}
+
+        <section className="rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-semibold text-neutral-950">Guia inicial de campos</h2>
+          <p className="mt-1 text-sm text-neutral-600">
+            Basado en el archivo de referencia Reglas_Team_ID.xlsx (NOV25ORIGINAL y SEP25).
+          </p>
+
+          <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+            <h3 className="text-sm font-semibold text-neutral-900">
+              Como funcionan las fuentes de informacion
+            </h3>
+            <p className="mt-1 text-sm text-neutral-700">
+              Cada evaluacion puede tener de 1 a N bloques de fuente. Cada bloque aporta 4
+              atributos: <code>file</code>, <code>fuente</code>, <code>molecula_producto</code> y{" "}
+              <code>metric</code>.
+            </p>
+            <p className="mt-1 text-sm text-neutral-700">
+              En JSON se guardan como arreglo <code>sources[]</code>. Para compatibilidad legacy,
+              tambien se mapean los primeros 3 bloques a <code>file1/fuente1/...</code>,
+              <code>file2/fuente2/...</code> y <code>file3/fuente3/...</code>.
+            </p>
+          </div>
+
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-neutral-200 text-left text-xs uppercase tracking-wide text-neutral-500">
+                  <th className="px-4 py-3">Campo</th>
+                  <th className="px-4 py-3">Tipo</th>
+                  <th className="px-4 py-3">Req.</th>
+                  <th className="px-4 py-3">Descripcion</th>
+                </tr>
+              </thead>
+              <tbody>
+                {TEAM_RULE_FIELD_GUIDE.map((field) => (
+                  <tr key={field.key} className="border-b border-neutral-100">
+                    <td className="px-4 py-3 font-mono text-xs text-neutral-900">{field.key}</td>
+                    <td className="px-4 py-3 text-neutral-700">{field.type}</td>
+                    <td className="px-4 py-3 text-neutral-700">{field.required ? "Si" : "No"}</td>
+                    <td className="px-4 py-3 text-neutral-700">{field.description}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {Object.entries(TEAM_RULE_REFERENCE_VALUES).map(([key, values]) => (
+              <div key={key} className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+                <p className="text-xs uppercase tracking-wide text-neutral-500">{key}</p>
+                <p className="mt-1 text-sm text-neutral-800">{values.join(" | ")}</p>
+              </div>
+            ))}
+          </div>
+        </section>
 
         <section className="rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm">
           <h2 className="text-lg font-semibold text-neutral-950">Historial de versiones</h2>
@@ -184,7 +254,9 @@ export default async function IncentiveRuleTeamDetailPage({
                           timeStyle: "short",
                         }).format(new Date(version.created_at))}
                       </td>
-                      <td className="px-4 py-3 text-neutral-700">{version.created_by ?? "-"}</td>
+                      <td className="px-4 py-3 text-neutral-700">
+                        {version.created_by_name ?? version.created_by ?? "-"}
+                      </td>
                       <td className="px-4 py-3 text-neutral-700">{version.change_note ?? "-"}</td>
                     </tr>
                   ))}
