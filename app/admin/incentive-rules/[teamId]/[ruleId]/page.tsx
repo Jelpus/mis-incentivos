@@ -1,6 +1,4 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { TeamIncentiveRuleEditor } from "@/components/admin/team-incentive-rule-editor";
 import { getTeamRuleDetailData } from "@/lib/admin/incentive-rules/get-team-rule-detail-data";
 import { getPayCurvesListData } from "@/lib/admin/pay-curves/get-pay-curves-data";
@@ -36,22 +34,7 @@ export default async function IncentiveRuleDetailRulePage({
   params,
   searchParams,
 }: PageProps) {
-  const { user, role, isActive } = await getCurrentAuthContext();
-
-  if (!user) {
-    redirect("/login");
-  }
-
-  if (isActive === false) {
-    redirect("/inactive");
-  }
-
-  const isSuperAdmin = role === "super_admin";
-  const isAdmin = role === "admin" || isSuperAdmin;
-
-  if (!isAdmin) {
-    redirect("/");
-  }
+  // Admin auth check already happens in app/admin/layout.tsx.
 
   const { teamId, ruleId } = await params;
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
@@ -114,7 +97,7 @@ export default async function IncentiveRuleDetailRulePage({
             payCurveOptions={payCurveOptions}
             focusRuleId={ruleId}
             defaultRuleDefinition={buildDefaultRuleDefinition(
-              (data.currentVersion?.rule_definition ?? null) as Record<string, unknown> | null,
+              data.currentRuleDefinition,
               data.teamId,
               data.periodMonth,
             )}

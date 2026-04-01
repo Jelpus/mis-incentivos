@@ -39,6 +39,18 @@ export default function AdminPage() {
           >
             Ir a Data Sources
           </Link>
+          <Link
+            href="/admin/source-ranking"
+            className="focus-ring inline-flex items-center rounded-lg border border-[#c8d6f5] bg-[#f2f7ff] px-4 py-2 text-sm font-medium text-[#1d4ed8] transition hover:bg-[#eaf2ff]"
+          >
+            Ir a Data Source Ranking
+          </Link>
+          <Link
+            href="/admin/calculo"
+            className="focus-ring inline-flex items-center rounded-lg border border-[#c8d6f5] bg-[#f2f7ff] px-4 py-2 text-sm font-medium text-[#1d4ed8] transition hover:bg-[#eaf2ff]"
+          >
+            Ir a Calculo Incentivos
+          </Link>
         </div>
       </div>
     </section>

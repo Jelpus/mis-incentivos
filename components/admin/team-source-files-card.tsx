@@ -4,8 +4,10 @@ import { useState, useTransition, type ChangeEvent } from "react";
 import Link from "next/link";
 import {
   previewTeamSourceFileAction,
+  reprocessTeamSourceFileFromStorageAction,
   uploadTeamSourceFileAction,
 } from "@/app/admin/incentive-rules/actions";
+import { formatDateTimeNoTimezoneShift } from "@/lib/date-time";
 
 type SourceFileRow = {
   fileCode: string;
@@ -73,11 +75,7 @@ type PreviewState =
   | null;
 
 function formatDateTime(value: string | null) {
-  if (!value) return "-";
-  return new Intl.DateTimeFormat("es-MX", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+  return formatDateTimeNoTimezoneShift(value, "es-MX", "-");
 }
 
 function TeamSourceFileUploadRowItem({
@@ -91,6 +89,7 @@ function TeamSourceFileUploadRowItem({
   const [previewState, setPreviewState] = useState<PreviewState>(null);
   const [isPending, startUploadTransition] = useTransition();
   const [isPreviewPending, startPreviewTransition] = useTransition();
+  const [isReprocessPending, startReprocessTransition] = useTransition();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [selectedSheetName, setSelectedSheetName] = useState("");
@@ -187,6 +186,28 @@ function TeamSourceFileUploadRowItem({
     });
   }
 
+  function handleReprocessFromStorage() {
+    setState(null);
+    startReprocessTransition(async () => {
+      try {
+        const formData = new FormData();
+        formData.append("period_month", periodMonthInput);
+        formData.append("file_code", row.fileCode);
+        if (selectedSheetName) formData.append("sheet_name", selectedSheetName);
+        const result = await reprocessTeamSourceFileFromStorageAction(null, formData);
+        setState(result);
+      } catch (error) {
+        setState({
+          ok: false,
+          message:
+            error instanceof Error
+              ? `No se pudo reprocesar archivo: ${error.message}`
+              : "No se pudo reprocesar archivo.",
+        });
+      }
+    });
+  }
+
   return (
     <tr className="border-b border-neutral-100">
 
@@ -260,6 +281,23 @@ function TeamSourceFileUploadRowItem({
               "Validar"
             )}
           </button>
+          {row.uploaded ? (
+            <button
+              type="button"
+              disabled={isReprocessPending}
+              onClick={handleReprocessFromStorage}
+              className="inline-flex items-center justify-center rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isReprocessPending ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-neutral-400 border-t-transparent" />
+                  Reprocesando...
+                </span>
+              ) : (
+                "Reprocesar Storage"
+              )}
+            </button>
+          ) : null}
           {state ? (
             <p className={`text-xs ${state.ok ? "text-emerald-700" : "text-red-700"}`}>
               {state.message}
@@ -434,3 +472,4 @@ export function TeamSourceFilesCard({ periodMonthInput, sourceFiles }: Props) {
     </section>
   );
 }
+

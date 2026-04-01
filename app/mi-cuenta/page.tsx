@@ -1,7 +1,11 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { formatPeriodMonthLabel, isMissingRelationError } from "@/lib/admin/incentive-rules/shared";
+import { getResultadosV2Data } from "@/lib/results/get-resultados-v2-data";
+import { ResultadosSummaryCard } from "@/components/results/resultados-summary-card";
+import { ResultadosTableCard } from "@/components/results/resultados-table-card";
 
 type SalesForceMatchRow = {
   id: string;
@@ -455,6 +459,32 @@ export default async function MiCuentaPage() {
     fetchError = toSafeErrorMessage(error);
   }
 
+  let resultadosData = await getResultadosV2Data({
+    role,
+    profileUserId,
+    maxRows: role === "user" ? 80 : 150,
+  });
+
+  if (!resultadosData.ok) {
+    resultadosData = {
+      ...resultadosData,
+      rows: [],
+      summary: {
+        rowCount: 0,
+        totalPagoResultado: 0,
+        totalPagoVariable: 0,
+        avgCobertura: 0,
+      },
+    };
+  }
+
+  const resultadosDetailLevel =
+    role === "admin" || role === "super_admin" || role === "viewer"
+      ? "full"
+      : role === "manager"
+        ? "team"
+        : "basic";
+
   return (
     <section>
       <div className="mx-auto w-full max-w-5xl rounded-2xl border border-[#d8e3f8] bg-white p-6 shadow-[0_12px_30px_rgba(0,32,104,0.08)] sm:p-8">
@@ -478,6 +508,12 @@ export default async function MiCuentaPage() {
             <div className="rounded-xl border border-[#fecdca] bg-[#fff6f5] p-4 sm:p-5">
               <p className="text-sm font-semibold text-[#b42318]">No se pudo validar el match</p>
               <p className="mt-1 text-sm text-[#7a271a]">{fetchError}</p>
+            </div>
+          ) : null}
+
+          {relationSourceMessage ? (
+            <div className="rounded-xl border border-[#e3ebfa] bg-[#f8fbff] p-4 sm:p-5">
+              <p className="text-sm text-[#334155]">{relationSourceMessage}</p>
             </div>
           ) : null}
 
@@ -567,6 +603,37 @@ export default async function MiCuentaPage() {
               </p>
             </div>
           ) : null}
+
+          {resultadosData.message ? (
+            <div className="rounded-xl border border-[#d9e5fb] bg-[#f8fbff] p-4 sm:p-5">
+              <p className="text-sm text-[#475467]">{resultadosData.message}</p>
+
+            </div>
+          ) : null}
+
+          <ResultadosSummaryCard
+            title="Resultados"
+            summary={resultadosData.summary}
+            scope={resultadosData.scope}
+            periodCode={resultadosData.periodCode}
+          />
+
+          <ResultadosTableCard
+            title="Detalle de resultados"
+            rows={resultadosData.rows}
+            detailLevel={resultadosDetailLevel}
+          />
+
+
+
+          <div className="rounded-xl border border-[#e3ebfa] bg-white p-4 sm:p-5">
+            <Link
+              href="/perfil/resultados"
+              className="inline-flex items-center rounded-lg border border-[#d0d5dd] bg-white px-3 py-2 text-sm font-medium text-[#334155] transition hover:bg-[#f8fafc]"
+            >
+              Ver vista completa de resultados
+            </Link>
+          </div>
         </div>
       </div>
     </section>

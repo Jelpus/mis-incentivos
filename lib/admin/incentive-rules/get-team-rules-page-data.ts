@@ -27,6 +27,13 @@ type TeamRuleVersionRow = {
   rule_definition: Record<string, unknown> | null;
 };
 
+type TeamRuleVersionRawRow = {
+  team_id: string;
+  version_no: number;
+  created_at: string;
+  rule_definition_id: string;
+};
+
 export type TeamRulesListRow = {
   teamId: string;
   salesForceTotal: number;
@@ -218,6 +225,33 @@ function buildRuleSummary(ruleDefinition: Record<string, unknown> | null): {
   };
 }
 
+function pickLatestVersionsByTeam(rows: TeamRuleVersionRawRow[]): TeamRuleVersionRawRow[] {
+  const latestByTeam = new Map<string, TeamRuleVersionRawRow>();
+
+  for (const row of rows) {
+    const teamId = String(row.team_id ?? "").trim();
+    if (!teamId) continue;
+
+    const current = latestByTeam.get(teamId);
+    if (!current) {
+      latestByTeam.set(teamId, row);
+      continue;
+    }
+
+    const currentVersion = Number(current.version_no ?? 0);
+    const nextVersion = Number(row.version_no ?? 0);
+    if (nextVersion > currentVersion) {
+      latestByTeam.set(teamId, row);
+      continue;
+    }
+    if (nextVersion === currentVersion && String(row.created_at ?? "") > String(current.created_at ?? "")) {
+      latestByTeam.set(teamId, row);
+    }
+  }
+
+  return Array.from(latestByTeam.values());
+}
+
 export async function getTeamRulesPageData(
   periodMonthInput?: string | null,
 ): Promise<TeamRulesPageData> {
@@ -329,13 +363,9 @@ export async function getTeamRulesPageData(
       throw new Error(`Failed to load team rule versions: ${rulesVersionResult.error.message}`);
     }
   } else {
-    const rawRows = (rulesVersionResult.data ?? []) as Array<{
-      team_id: string;
-      version_no: number;
-      created_at: string;
-      rule_definition_id: string;
-    }>;
-    const definitionIds = rawRows
+    const rawRows = (rulesVersionResult.data ?? []) as TeamRuleVersionRawRow[];
+    const latestRowsByTeam = pickLatestVersionsByTeam(rawRows);
+    const definitionIds = latestRowsByTeam
       .map((row) => String(row.rule_definition_id ?? "").trim())
       .filter((value) => value.length > 0);
     let definitionsById: Map<string, Record<string, unknown>>;
@@ -349,7 +379,7 @@ export async function getTeamRulesPageData(
       storageMessage = `La tabla ${parsedName} aun no existe. Crea el esquema normalizado para habilitar versionado.`;
       definitionsById = new Map();
     }
-    ruleVersions = rawRows.map((row) => ({
+    ruleVersions = latestRowsByTeam.map((row) => ({
       ...row,
       rule_definition:
         definitionsById.get(String(row.rule_definition_id ?? "").trim()) ?? null,
@@ -452,7 +482,7 @@ export async function getTeamRulesPageData(
       const [latestRulesRowsResult] = await Promise.all([
         supabase
           .from("team_incentive_rule_versions")
-          .select("team_id")
+          .select("team_id, version_no, created_at, rule_definition_id")
           .eq("period_month", latestRulesPeriod),
       ]);
 
@@ -467,7 +497,9 @@ export async function getTeamRulesPageData(
         };
       } else {
         const latestTeams = new Set(
-          (latestRulesRowsResult.data ?? [])
+          pickLatestVersionsByTeam(
+            (latestRulesRowsResult.data ?? []) as TeamRuleVersionRawRow[],
+          )
             .map((row) => String(row.team_id ?? "").trim())
             .filter((value) => value.length > 0),
         );

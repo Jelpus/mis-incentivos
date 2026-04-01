@@ -2,12 +2,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { getPayCurvesListData } from "@/lib/admin/pay-curves/get-pay-curves-data";
+import { formatDateTimeNoTimezoneShift } from "@/lib/date-time";
 
 function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("es-MX", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+  return formatDateTimeNoTimezoneShift(value, "es-MX", "-");
 }
 
 export default async function CurvasDePagoPage() {
@@ -124,3 +122,4 @@ export default async function CurvasDePagoPage() {
     </main>
   );
 }
+

@@ -3,7 +3,7 @@ import { BigQuery } from "@google-cloud/bigquery";
 type BigQueryParameter = {
   name: string;
   type: "STRING" | "INT64" | "FLOAT64" | "BOOL";
-  value: string | number | boolean;
+  value: string | number | boolean | null;
 };
 
 type BigQueryInsertRow = {
@@ -90,6 +90,34 @@ export async function runBigQueryQuery(params: {
   }
 }
 
+export async function fetchBigQueryRows<T>(params: {
+  query: string;
+  parameters?: BigQueryParameter[];
+}): Promise<T[]> {
+  getBigQueryProjectId();
+  const client = getBigQueryClient();
+  const queryLocation = process.env.BQ_LOCATION?.trim() || undefined;
+
+  const paramsObject =
+    params.parameters && params.parameters.length > 0
+      ? Object.fromEntries(params.parameters.map((param) => [param.name, param.value]))
+      : undefined;
+
+  try {
+    const [rows] = await client.query({
+      query: params.query,
+      useLegacySql: false,
+      location: queryLocation,
+      params: paramsObject,
+    });
+
+    return rows as T[];
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown BigQuery error.";
+    throw new Error(`BigQuery query failed: ${message}`);
+  }
+}
+
 export async function insertBigQueryRows(params: {
   datasetId: string;
   tableId: string;
@@ -98,19 +126,25 @@ export async function insertBigQueryRows(params: {
   getBigQueryProjectId();
   const client = getBigQueryClient();
   const table = client.dataset(params.datasetId).table(params.tableId);
+  const batchSizeRaw = Number(process.env.BQ_INSERT_BATCH_SIZE ?? 5000);
+  const batchSize =
+    Number.isFinite(batchSizeRaw) && batchSizeRaw > 0 ? Math.floor(batchSizeRaw) : 5000;
 
   try {
-    await table.insert(
-      params.rows.map((row) => ({
-        insertId: row.rowId,
-        json: row.json,
-      })),
-      {
-        ignoreUnknownValues: true,
-        skipInvalidRows: false,
-        raw: true,
-      },
-    );
+    for (let start = 0; start < params.rows.length; start += batchSize) {
+      const chunk = params.rows.slice(start, start + batchSize);
+      await table.insert(
+        chunk.map((row) => ({
+          insertId: row.rowId,
+          json: row.json,
+        })),
+        {
+          ignoreUnknownValues: true,
+          skipInvalidRows: false,
+          raw: true,
+        },
+      );
+    }
   } catch (error) {
     const maybePartialFailure = error as {
       errors?: Array<{ errors?: Array<{ message?: string }> }>;

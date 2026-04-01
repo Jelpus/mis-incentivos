@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getMissingRelationName,
@@ -6,6 +7,12 @@ import {
   normalizePeriodMonthInput,
 } from "@/lib/admin/incentive-rules/shared";
 import { loadRuleDefinitionsByIds } from "@/lib/admin/incentive-rules/rule-definition-normalized";
+
+const RETRY_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 180;
+const PERIOD_BATCH_SIZE = 2500;
+const PERIOD_MAX_SCAN_ROWS = 30000;
+const PERIOD_MAX_OPTIONS = 24;
 
 type SalesForceTeamRow = {
   id: string;
@@ -20,7 +27,6 @@ type TeamRuleVersionRow = {
   version_no: number;
   change_note: string | null;
   rule_definition_id: string;
-  rule_definition: Record<string, unknown> | null;
   created_at: string;
   created_by: string | null;
   created_by_name: string | null;
@@ -32,6 +38,70 @@ type ProfileNameRow = {
   last_name: string | null;
   email: string | null;
 };
+
+function isRetryableMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("fetch failed") ||
+    normalized.includes("econnreset") ||
+    normalized.includes("authretryablefetcherror") ||
+    normalized.includes("timeout")
+  );
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function queryWithRetry<T extends { error: { message?: string } | null }>(
+  run: () => PromiseLike<T>,
+): Promise<T> {
+  let lastResult = await run();
+  if (!lastResult.error) return lastResult;
+
+  for (let attempt = 1; attempt < RETRY_ATTEMPTS; attempt += 1) {
+    const message = String(lastResult.error?.message ?? "");
+    if (!isRetryableMessage(message)) break;
+    await wait(RETRY_DELAY_MS * attempt);
+    lastResult = await run();
+    if (!lastResult.error) return lastResult;
+  }
+  return lastResult;
+}
+
+async function loadDistinctStatusPeriods(
+  supabase: NonNullable<ReturnType<typeof createAdminClient>>,
+): Promise<string[]> {
+  const unique = new Set<string>();
+  let offset = 0;
+
+  while (unique.size < PERIOD_MAX_OPTIONS && offset < PERIOD_MAX_SCAN_ROWS) {
+    const batchResult = await queryWithRetry(() =>
+      supabase
+        .from("sales_force_status")
+        .select("period_month")
+        .eq("is_deleted", false)
+        .order("period_month", { ascending: false })
+        .range(offset, offset + PERIOD_BATCH_SIZE - 1),
+    );
+    if (batchResult.error) break;
+
+    const rows = batchResult.data ?? [];
+    if (rows.length === 0) break;
+
+    for (const row of rows) {
+      const normalized = normalizePeriodMonthInput(String((row as { period_month?: unknown }).period_month ?? "").trim());
+      if (!normalized) continue;
+      unique.add(normalized);
+      if (unique.size >= PERIOD_MAX_OPTIONS) break;
+    }
+
+    if (rows.length < PERIOD_BATCH_SIZE) break;
+    offset += PERIOD_BATCH_SIZE;
+  }
+
+  return Array.from(unique).sort((a, b) => b.localeCompare(a));
+}
 
 export type TeamRuleDetailData = {
   teamId: string;
@@ -46,9 +116,10 @@ export type TeamRuleDetailData = {
   storageMessage: string | null;
   versions: TeamRuleVersionRow[];
   currentVersion: TeamRuleVersionRow | null;
+  currentRuleDefinition: Record<string, unknown> | null;
 };
 
-export async function getTeamRuleDetailData(params: {
+async function loadTeamRuleDetailData(params: {
   teamId: string;
   periodMonthInput?: string | null;
 }): Promise<TeamRuleDetailData> {
@@ -63,33 +134,26 @@ export async function getTeamRuleDetailData(params: {
     throw new Error("Team ID invalido.");
   }
 
-  const latestPeriodResult = await supabase
-    .from("sales_force_status")
-    .select("period_month")
-    .eq("is_deleted", false)
-    .order("period_month", { ascending: false })
-    .limit(1);
-  const statusPeriodsResult = await supabase
-    .from("sales_force_status")
-    .select("period_month")
-    .eq("is_deleted", false)
-    .order("period_month", { ascending: false });
+  const [latestPeriodResult, statusPeriods] = await Promise.all([
+    queryWithRetry(() =>
+      supabase
+        .from("sales_force_status")
+        .select("period_month")
+        .eq("is_deleted", false)
+        .order("period_month", { ascending: false })
+        .limit(1),
+    ),
+    loadDistinctStatusPeriods(supabase),
+  ]);
 
   if (latestPeriodResult.error) {
     throw new Error(`Failed to load latest period: ${latestPeriodResult.error.message}`);
-  }
-  if (statusPeriodsResult.error) {
-    throw new Error(`Failed to load status periods: ${statusPeriodsResult.error.message}`);
   }
 
   const latestAvailablePeriodMonth = normalizePeriodMonthInput(
     String(latestPeriodResult.data?.[0]?.period_month ?? "").trim(),
   );
-  const availableStatusPeriods = new Set(
-    (statusPeriodsResult.data ?? [])
-      .map((row) => normalizePeriodMonthInput(String(row.period_month ?? "").trim()))
-      .filter((value): value is string => Boolean(value)),
-  );
+  const availableStatusPeriods = new Set(statusPeriods);
   const requestedPeriod = normalizePeriodMonthInput(params.periodMonthInput);
   const periodMonth =
     requestedPeriod && availableStatusPeriods.has(requestedPeriod)
@@ -97,19 +161,23 @@ export async function getTeamRuleDetailData(params: {
       : latestAvailablePeriodMonth ?? getCurrentPeriodMonth();
 
   const [teamRowsResult, ruleVersionsResult] = await Promise.all([
-    supabase
-      .from("sales_force_status")
-      .select("id, is_active, is_vacant")
-      .eq("period_month", periodMonth)
-      .eq("is_deleted", false)
-      .eq("team_id", cleanedTeamId),
-    supabase
-      .from("team_incentive_rule_versions")
-      .select("id, period_month, team_id, version_no, change_note, rule_definition_id, created_at, created_by")
-      .eq("period_month", periodMonth)
-      .eq("team_id", cleanedTeamId)
-      .order("version_no", { ascending: false })
-      .limit(20),
+    queryWithRetry(() =>
+      supabase
+        .from("sales_force_status")
+        .select("id, is_active, is_vacant")
+        .eq("period_month", periodMonth)
+        .eq("is_deleted", false)
+        .eq("team_id", cleanedTeamId),
+    ),
+    queryWithRetry(() =>
+      supabase
+        .from("team_incentive_rule_versions")
+        .select("id, period_month, team_id, version_no, change_note, rule_definition_id, created_at, created_by")
+        .eq("period_month", periodMonth)
+        .eq("team_id", cleanedTeamId)
+        .order("version_no", { ascending: false })
+        .limit(20),
+    ),
   ]);
 
   if (teamRowsResult.error) {
@@ -141,21 +209,6 @@ export async function getTeamRuleDetailData(params: {
       created_at: string;
       created_by: string | null;
     }>;
-    const definitionIds = rawRows
-      .map((row) => String(row.rule_definition_id ?? "").trim())
-      .filter((value) => value.length > 0);
-    let definitionsById: Map<string, Record<string, unknown>>;
-    try {
-      definitionsById = await loadRuleDefinitionsByIds({ supabase, definitionIds });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      const parsedName =
-        getMissingRelationName({ message }) ?? "team_rule_definitions / team_rule_definition_items";
-      storageReady = false;
-      storageMessage = `La tabla ${parsedName} aun no existe. Crea el esquema normalizado para habilitar versionado.`;
-      definitionsById = new Map();
-    }
-
     const createdByIds = Array.from(
       new Set(
         rawRows
@@ -166,10 +219,12 @@ export async function getTeamRuleDetailData(params: {
 
     const profileNameById = new Map<string, string>();
     if (createdByIds.length > 0) {
-      const profileResult = await supabase
-        .from("profiles")
-        .select("user_id, first_name, last_name, email")
-        .in("user_id", createdByIds);
+      const profileResult = await queryWithRetry(() =>
+        supabase
+          .from("profiles")
+          .select("user_id, first_name, last_name, email")
+          .in("user_id", createdByIds),
+      );
 
       if (!profileResult.error) {
         const profileRows = (profileResult.data ?? []) as ProfileNameRow[];
@@ -187,14 +242,31 @@ export async function getTeamRuleDetailData(params: {
 
     versions = rawRows.map((row) => ({
       ...row,
-      rule_definition:
-        definitionsById.get(String(row.rule_definition_id ?? "").trim()) ?? null,
       created_by_name:
         profileNameById.get(String(row.created_by ?? "").trim()) ?? null,
     }));
   }
 
   const teamRows = (teamRowsResult.data ?? []) as SalesForceTeamRow[];
+  const currentVersion = versions[0] ?? null;
+  let currentRuleDefinition: Record<string, unknown> | null = null;
+
+  if (storageReady && currentVersion?.rule_definition_id) {
+    try {
+      const definitionsById = await loadRuleDefinitionsByIds({
+        supabase,
+        definitionIds: [String(currentVersion.rule_definition_id).trim()],
+      });
+      currentRuleDefinition =
+        definitionsById.get(String(currentVersion.rule_definition_id).trim()) ?? null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const parsedName =
+        getMissingRelationName({ message }) ?? "team_rule_definitions / team_rule_definition_items";
+      storageReady = false;
+      storageMessage = `La tabla ${parsedName} aun no existe. Crea el esquema normalizado para habilitar versionado.`;
+    }
+  }
 
   return {
     teamId: cleanedTeamId,
@@ -210,6 +282,21 @@ export async function getTeamRuleDetailData(params: {
     storageReady,
     storageMessage,
     versions,
-    currentVersion: versions[0] ?? null,
+    currentVersion,
+    currentRuleDefinition,
   };
+}
+
+const getCachedTeamRuleDetailData = unstable_cache(
+  async (teamId: string, periodMonthInput?: string | null) =>
+    loadTeamRuleDetailData({ teamId, periodMonthInput }),
+  ["admin-incentive-rule-detail"],
+  { revalidate: 120, tags: ["admin-incentive-rules"] },
+);
+
+export async function getTeamRuleDetailData(params: {
+  teamId: string;
+  periodMonthInput?: string | null;
+}): Promise<TeamRuleDetailData> {
+  return getCachedTeamRuleDetailData(params.teamId, params.periodMonthInput ?? null);
 }

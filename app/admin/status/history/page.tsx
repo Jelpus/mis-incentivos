@@ -2,18 +2,16 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { getStatusHistoryData } from "@/lib/admin/status/get-status-history-data";
+import { formatDateTimeNoTimezoneShift } from "@/lib/date-time";
 
 function formatPeriodLabel(value: string | null) {
-  if (!value) return "—";
+  if (!value) return "-";
   const [year, month] = value.split("-");
   return `${month}/${year}`;
 }
 
 function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("es-MX", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+  return formatDateTimeNoTimezoneShift(value, "es-MX", "-");
 }
 
 export default async function StatusHistoryPage() {
@@ -43,7 +41,7 @@ export default async function StatusHistoryPage() {
             Historial de batches
           </h1>
           <p className="mt-2 text-sm text-neutral-600">
-            Revisa cargas masivas, su estatus y resultados por período.
+            Revisa cargas masivas, su estatus y resultados por periodo.
           </p>
         </header>
 
@@ -53,11 +51,11 @@ export default async function StatusHistoryPage() {
               <thead className="bg-neutral-50">
                 <tr className="text-left text-neutral-600">
                   <th className="px-4 py-3 font-medium">Fecha</th>
-                  <th className="px-4 py-3 font-medium">Período</th>
+                  <th className="px-4 py-3 font-medium">Periodo</th>
                   <th className="px-4 py-3 font-medium">Archivo</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Filas</th>
-                  <th className="px-4 py-3 font-medium">Inválidas</th>
+                  <th className="px-4 py-3 font-medium">Invalidas</th>
                   <th className="px-4 py-3 font-medium">Acciones</th>
                 </tr>
               </thead>
@@ -73,7 +71,7 @@ export default async function StatusHistoryPage() {
                     <tr key={batch.id}>
                       <td className="px-4 py-4">{formatDateTime(batch.created_at)}</td>
                       <td className="px-4 py-4">{formatPeriodLabel(batch.period_month)}</td>
-                      <td className="px-4 py-4">{batch.file_name ?? "—"}</td>
+                      <td className="px-4 py-4">{batch.file_name ?? "-"}</td>
                       <td className="px-4 py-4">{batch.status}</td>
                       <td className="px-4 py-4">{batch.total_rows ?? 0}</td>
                       <td className="px-4 py-4">{batch.invalid_rows ?? 0}</td>
@@ -104,3 +102,4 @@ export default async function StatusHistoryPage() {
     </main>
   );
 }
+

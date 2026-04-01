@@ -1,18 +1,30 @@
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { MobileAuthFlow } from "@/components/auth/mobile-auth-flow";
 import { LoginHero } from "@/components/auth/login-hero";
 import { LoginPanel } from "@/components/auth/login-panel";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 
 export default async function Home() {
-  const { user, role, isActive } = await getCurrentAuthContext();
+  const requestCookies = await cookies();
+  const hasSupabaseAuthCookie = requestCookies
+    .getAll()
+    .some((cookie) => cookie.name.includes("-auth-token"));
 
-  if (user && isActive !== false && (role === "super_admin" || role === "admin")) {
-    redirect("/admin");
-  }
+  if (hasSupabaseAuthCookie) {
+    const { user, role, isActive } = await getCurrentAuthContext();
 
-  if (user && isActive !== false) {
-    redirect("/mi-cuenta");
+    if (user && isActive === false) {
+      redirect("/inactive");
+    }
+
+    if (user && (role === "super_admin" || role === "admin")) {
+      redirect("/admin");
+    }
+
+    if (user) {
+      redirect("/mi-cuenta");
+    }
   }
 
   return (

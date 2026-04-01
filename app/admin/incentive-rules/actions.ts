@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import {
@@ -98,6 +98,26 @@ type PreviewTeamSourceFileResult =
     };
 
 const MAX_SOURCE_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
+const SOURCE_VALIDATION_CACHE_TTL_MS = 5 * 60 * 1000;
+const BIGQUERY_HEALTH_CACHE_TTL_MS = 10 * 60 * 1000;
+
+type SourceConstraint = {
+  metrics: Set<string>;
+  fuentes: Set<string>;
+};
+
+type SourceValidationSnapshot = {
+  requiredCodes: Set<string>;
+  constraintsByFile: Map<string, SourceConstraint>;
+  requirementsByFileAndTeam: Map<string, Map<string, SourceRequirement[]>>;
+};
+
+const sourceValidationSnapshotCache = new Map<
+  string,
+  { expiresAt: number; snapshot: SourceValidationSnapshot }
+>();
+const readyStorageBuckets = new Set<string>();
+let bigQueryHealthCache: { key: string; expiresAt: number } | null = null;
 
 function isAdminRole(role: string | null, isActive: boolean | null): boolean {
   return isActive !== false && (role === "admin" || role === "super_admin");
@@ -151,12 +171,24 @@ function normalizeCp(value: unknown): string | null {
   return digits.padStart(5, "0");
 }
 
+function normalizeCodigoEstado(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  return raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
 type NormalizedSourceRow = {
   archivo: string;
+  institucion: string | null;
   cedula: string | null;
   medico: string | null;
   cp: string | null;
   estado: string | null;
+  codigo_estado: string | null;
   brick: string | null;
   molecula_producto: string | null;
   valor: number | null;
@@ -172,10 +204,12 @@ type NormalizedSourceRow = {
 
 type BigQuerySourceRow = {
   archivo: string | null;
+  institucion: string | null;
   cedula: string | null;
   medico: string | null;
   cp: string | null;
   estado: string | null;
+  codigo_estado: string | null;
   brick: string | null;
   molecula_producto: string | null;
   valor: number | null;
@@ -415,6 +449,25 @@ function normalizeRowsForBigQuery(params: {
     }
     const monthValues = extractMonthValues(row);
     const ytdValue = readNumberFromRow(row, normalizedHeaderMap, ["ytd"]);
+    const codigoEstado = normalizeCodigoEstado(
+      readStringFromRow(row, normalizedHeaderMap, [
+        "codigo_estado",
+        "cod_estado",
+        "codigo de estado",
+        "state_code",
+        "state code",
+        "codigoestado",
+      ]),
+    );
+    const institucion = normalizeUpperText(
+      readStringFromRow(row, normalizedHeaderMap, [
+        "institucion",
+        "institución",
+        "institution",
+        "institucion_name",
+        "nombre_institucion",
+      ]),
+    );
 
     if (fileLogicKey.includes("asignac")) {
       const producto = readStringFromRow(row, normalizedHeaderMap, [
@@ -425,10 +478,12 @@ function normalizeRowsForBigQuery(params: {
       const brick = normalizeLowerText(readStringFromRow(row, normalizedHeaderMap, ["ruta"]));
       pushIfValid({
         archivo: params.displayName || params.fileCode,
+        institucion,
         cedula: null,
         medico: null,
         cp: null,
         estado: null,
+        codigo_estado: codigoEstado,
         brick,
         molecula_producto: producto,
         valor: readNumberFromRow(row, normalizedHeaderMap, ["unidades"]) ?? 0,
@@ -452,10 +507,12 @@ function normalizeRowsForBigQuery(params: {
       );
       pushIfValid({
         archivo: params.displayName || params.fileCode,
+        institucion,
         cedula: readStringFromRow(row, normalizedHeaderMap, ["ced_profesional", "cedula"]),
         medico,
         cp,
         estado,
+        codigo_estado: codigoEstado,
         brick: sanitizeBrick(readStringFromRow(row, normalizedHeaderMap, ["brick"])),
         molecula_producto: normalizeUpperText(
           readStringFromRow(row, normalizedHeaderMap, ["producto", "molecula_producto"]),
@@ -488,10 +545,12 @@ function normalizeRowsForBigQuery(params: {
       const cleanedProduct = (productRaw ?? "").replace(/\s+NVR$/i, "").trim();
       pushIfValid({
         archivo: params.displayName || params.fileCode,
+        institucion,
         cedula: null,
         medico: null,
         cp: null,
         estado: null,
+        codigo_estado: codigoEstado,
         brick: sanitizeBrick(readStringFromRow(row, normalizedHeaderMap, ["brick"])),
         molecula_producto: normalizeUpperText(cleanedProduct),
         valor: month01,
@@ -526,10 +585,14 @@ function normalizeRowsForBigQuery(params: {
 
       pushIfValid({
         archivo: params.displayName || params.fileCode,
+        institucion:
+          institucion ??
+          normalizeUpperText(readStringFromRow(row, normalizedHeaderMap, ["final_client_description"])),
         cedula: null,
         medico: null,
         cp: null,
         estado: region ? estadosDF[region] ?? region : null,
+        codigo_estado: codigoEstado ?? region ?? null,
         brick: brickParts.length > 0 ? brickParts.join("-") : null,
         molecula_producto: String(material),
         valor: readNumberFromRow(row, normalizedHeaderMap, ["billed_quantity"]) ?? 0,
@@ -561,10 +624,12 @@ function normalizeRowsForBigQuery(params: {
 
       pushIfValid({
         archivo: params.displayName || params.fileCode,
+        institucion,
         cedula: null,
         medico: null,
         cp: null,
         estado: null,
+        codigo_estado: codigoEstado,
         brick: normalizeUpperText(clueId),
         molecula_producto: normalizeUpperText(molecula),
         valor: month01,
@@ -588,10 +653,12 @@ function normalizeRowsForBigQuery(params: {
 
       pushIfValid({
         archivo: params.displayName || params.fileCode,
+        institucion,
         cedula: null,
         medico: normalizeLowerText(hcp),
         cp: null,
         estado: null,
+        codigo_estado: codigoEstado,
         brick: null,
         molecula_producto: String(sku),
         valor: quantity,
@@ -658,10 +725,12 @@ function normalizeRowsForBigQuery(params: {
 
     pushIfValid({
       archivo: params.displayName || params.fileCode,
+      institucion,
       cedula,
       medico,
       cp,
       estado,
+      codigo_estado: codigoEstado,
       brick,
       molecula_producto: moleculaProducto,
       valor,
@@ -725,10 +794,12 @@ function mapNormalizedRowsToBigQuerySchema(
   for (const row of rows) {
     const mapped: BigQuerySourceRow = {
       archivo: sanitizeStringOrNull(row.archivo),
+      institucion: sanitizeStringOrNull(row.institucion),
       cedula: sanitizeStringOrNull(row.cedula),
       medico: sanitizeStringOrNull(row.medico),
       cp: sanitizeStringOrNull(row.cp),
       estado: sanitizeStringOrNull(row.estado),
+      codigo_estado: sanitizeStringOrNull(row.codigo_estado),
       brick: sanitizeStringOrNull(row.brick),
       molecula_producto: sanitizeStringOrNull(row.molecula_producto),
       valor: sanitizeNumberOrNull(row.valor),
@@ -849,10 +920,22 @@ function splitMoleculeValues(value: unknown): string[] {
   const raw = String(value ?? "").trim();
   if (!raw) return [];
 
-  return raw
-    .split(/[;,]/g)
-    .map((item) => item.trim().toUpperCase())
-    .filter((item) => item.length > 0);
+  return Array.from(
+    new Set(
+      raw
+        .split(/[\/,;|]+/g)
+        .map((item) => item.trim().toUpperCase())
+        .filter((item) => item.length > 0),
+    ),
+  );
+}
+
+function toRequirementKey(requirement: SourceRequirement): string {
+  return [
+    requirement.metric ?? "",
+    requirement.fuentes.slice().sort().join("|"),
+    requirement.molecules.slice().sort().join("|"),
+  ].join("::");
 }
 
 function collectRequirementsByTeamFromRuleDefinition(
@@ -875,14 +958,26 @@ function collectRequirementsByTeamFromRuleDefinition(
     if (!teamId) continue;
 
     const addRequirement = (metric: unknown, fuente: unknown, molecule: unknown) => {
-      const nextRequirement: SourceRequirement = {
-        metric: normalizeUpperText(metric),
-        fuentes: splitFuenteValues(fuente),
-        molecules: splitMoleculeValues(molecule),
-      };
-
+      const metricValue = normalizeUpperText(metric);
+      const fuenteValues = splitFuenteValues(fuente);
+      const moleculeValues = splitMoleculeValues(molecule);
       const current = result.get(teamId) ?? [];
-      current.push(nextRequirement);
+      if (moleculeValues.length === 0) {
+        current.push({
+          metric: metricValue,
+          fuentes: fuenteValues,
+          molecules: [],
+        });
+      } else {
+        // "JAKAVI / SCEMBLIX" debe evaluarse como dos requerimientos (uno por molecula).
+        for (const moleculeValue of moleculeValues) {
+          current.push({
+            metric: metricValue,
+            fuentes: fuenteValues,
+            molecules: [moleculeValue],
+          });
+        }
+      }
       result.set(teamId, current);
     };
 
@@ -1075,6 +1170,135 @@ async function loadLatestRuleDefinitionsByTeamForPeriod(
   };
 }
 
+function getEmptySourceConstraint(): SourceConstraint {
+  return { metrics: new Set<string>(), fuentes: new Set<string>() };
+}
+
+function mergeRequirements(
+  target: SourceRequirement[],
+  source: SourceRequirement[],
+): SourceRequirement[] {
+  if (source.length === 0) return target;
+  target.push(...source);
+  return target;
+}
+
+async function getSourceValidationSnapshotForPeriod(
+  supabase: SupabaseClient,
+  periodMonth: string,
+): Promise<
+  | { ok: true; snapshot: SourceValidationSnapshot }
+  | { ok: false; message: string }
+> {
+  const now = Date.now();
+  const cached = sourceValidationSnapshotCache.get(periodMonth);
+  if (cached && cached.expiresAt > now) {
+    return { ok: true, snapshot: cached.snapshot };
+  }
+
+  const rulesLoad = await loadLatestRuleDefinitionsByTeamForPeriod(supabase, periodMonth);
+  if (!rulesLoad.ok) {
+    return { ok: false, message: rulesLoad.message };
+  }
+
+  const requiredCodes = new Set<string>();
+  const constraintsByFile = new Map<string, SourceConstraint>();
+  const requirementsByFileAndTeam = new Map<string, Map<string, SourceRequirement[]>>();
+
+  for (const [, value] of rulesLoad.latestByTeam.entries()) {
+    const definition = value.ruleDefinition;
+    if (!definition) continue;
+
+    const definitionCodes = collectSourceFileCodesFromRuleDefinition(definition);
+    for (const code of definitionCodes) {
+      requiredCodes.add(code);
+
+      const fileConstraints = collectSourceConstraintsForFileFromRuleDefinition(definition, code);
+      const currentConstraint = constraintsByFile.get(code) ?? getEmptySourceConstraint();
+      for (const metric of fileConstraints.metrics) currentConstraint.metrics.add(metric);
+      for (const fuente of fileConstraints.fuentes) currentConstraint.fuentes.add(fuente);
+      constraintsByFile.set(code, currentConstraint);
+
+      const teamRequirements = collectRequirementsByTeamFromRuleDefinition(definition, code);
+      const currentByTeam = requirementsByFileAndTeam.get(code) ?? new Map<string, SourceRequirement[]>();
+      for (const [teamId, reqs] of teamRequirements.entries()) {
+        const currentReqs = currentByTeam.get(teamId) ?? [];
+        currentByTeam.set(teamId, mergeRequirements(currentReqs, reqs));
+      }
+      requirementsByFileAndTeam.set(code, currentByTeam);
+    }
+  }
+
+  const snapshot: SourceValidationSnapshot = {
+    requiredCodes,
+    constraintsByFile,
+    requirementsByFileAndTeam,
+  };
+
+  sourceValidationSnapshotCache.set(periodMonth, {
+    expiresAt: now + SOURCE_VALIDATION_CACHE_TTL_MS,
+    snapshot,
+  });
+
+  return { ok: true, snapshot };
+}
+
+async function ensureStorageBucketReady(
+  supabase: SupabaseClient,
+  bucketName: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (readyStorageBuckets.has(bucketName)) {
+    return { ok: true };
+  }
+
+  const bucketCheckResult = await supabase.storage.getBucket(bucketName);
+  if (bucketCheckResult.error) {
+    const message = String(bucketCheckResult.error.message ?? "").toLowerCase();
+    const notFound =
+      message.includes("not found") ||
+      message.includes("does not exist") ||
+      message.includes("bucket");
+
+    if (notFound) {
+      const createBucketResult = await supabase.storage.createBucket(bucketName, {
+        public: false,
+        fileSizeLimit: "50MB",
+      });
+
+      if (createBucketResult.error) {
+        return {
+          ok: false,
+          message: `No existe el bucket "${bucketName}" y no se pudo crear automaticamente: ${createBucketResult.error.message}`,
+        };
+      }
+      readyStorageBuckets.add(bucketName);
+      return { ok: true };
+    }
+
+    return {
+      ok: false,
+      message: `No se pudo validar bucket "${bucketName}": ${bucketCheckResult.error.message}`,
+    };
+  }
+
+  readyStorageBuckets.add(bucketName);
+  return { ok: true };
+}
+
+async function ensureBigQueryTableHealthCached(datasetId: string, tableId: string): Promise<void> {
+  const cacheKey = `${datasetId}.${tableId}`;
+  const now = Date.now();
+  if (bigQueryHealthCache && bigQueryHealthCache.key === cacheKey && bigQueryHealthCache.expiresAt > now) {
+    return;
+  }
+
+  await validateBigQueryTableConnection({ datasetId, tableId });
+  bigQueryHealthCache = {
+    key: cacheKey,
+    expiresAt: now + BIGQUERY_HEALTH_CACHE_TTL_MS,
+  };
+}
+
 export async function cloneTeamRulesPeriodAction(
   _prevState: CloneTeamRulesPeriodResult | null,
   formData: FormData,
@@ -1239,6 +1463,7 @@ export async function cloneTeamRulesPeriodAction(
 
   revalidatePath("/admin/incentive-rules");
   revalidatePath("/admin/data-sources");
+  revalidateTag("admin-incentive-rules", "max");
 
   return {
     ok: true,
@@ -1749,6 +1974,7 @@ export async function uploadTeamRulesFromExcelAction(
   }
 
   revalidatePath("/admin/incentive-rules");
+  revalidateTag("admin-incentive-rules", "max");
   for (const teamId of validImportedTeamIds) {
     revalidatePath(`/admin/incentive-rules/${encodeURIComponent(teamId)}`);
   }
@@ -1842,29 +2068,17 @@ export async function uploadTeamSourceFileAction(
     };
   }
 
-  const rulesLoad = await loadLatestRuleDefinitionsByTeamForPeriod(supabase, periodMonth);
-  if (!rulesLoad.ok) {
+  const snapshotResult = await getSourceValidationSnapshotForPeriod(supabase, periodMonth);
+  if (!snapshotResult.ok) {
     return {
       ok: false,
-      message: `No se pudo validar archivos requeridos desde reglas: ${rulesLoad.message}`,
+      message: `No se pudo validar archivos requeridos desde reglas: ${snapshotResult.message}`,
     };
   }
-
-  const latestRuleByTeam = new Map<string, Record<string, unknown> | null>();
-  for (const [teamId, value] of rulesLoad.latestByTeam.entries()) {
-    latestRuleByTeam.set(teamId, value.ruleDefinition);
-  }
-
-  const requiredCodes = new Set<string>();
-  const allowedMetrics = new Set<string>();
-  const allowedFuentes = new Set<string>();
-  for (const definition of latestRuleByTeam.values()) {
-    const codes = collectSourceFileCodesFromRuleDefinition(definition);
-    for (const code of codes) requiredCodes.add(code);
-    const constraints = collectSourceConstraintsForFileFromRuleDefinition(definition, fileCode);
-    for (const metric of constraints.metrics) allowedMetrics.add(metric);
-    for (const fuente of constraints.fuentes) allowedFuentes.add(fuente);
-  }
+  const requiredCodes = snapshotResult.snapshot.requiredCodes;
+  const sourceConstraint = snapshotResult.snapshot.constraintsByFile.get(fileCode) ?? getEmptySourceConstraint();
+  const allowedMetrics = sourceConstraint.metrics;
+  const allowedFuentes = sourceConstraint.fuentes;
 
   if (requiredCodes.size === 0) {
     return {
@@ -1886,32 +2100,12 @@ export async function uploadTeamSourceFileAction(
     process.env.NEXT_PUBLIC_SUPABASE_TEAM_SOURCE_FILES_BUCKET ??
     "team-incentive-source-files";
 
-  const bucketCheckResult = await supabase.storage.getBucket(bucketName);
-  if (bucketCheckResult.error) {
-    const message = String(bucketCheckResult.error.message ?? "").toLowerCase();
-    const notFound =
-      message.includes("not found") ||
-      message.includes("does not exist") ||
-      message.includes("bucket");
-
-    if (notFound) {
-      const createBucketResult = await supabase.storage.createBucket(bucketName, {
-        public: false,
-        fileSizeLimit: "50MB",
-      });
-
-      if (createBucketResult.error) {
-        return {
-          ok: false,
-          message: `No existe el bucket "${bucketName}" y no se pudo crear automaticamente: ${createBucketResult.error.message}`,
-        };
-      }
-    } else {
-      return {
-        ok: false,
-        message: `No se pudo validar bucket "${bucketName}": ${bucketCheckResult.error.message}`,
-      };
-    }
+  const bucketReadyResult = await ensureStorageBucketReady(supabase, bucketName);
+  if (!bucketReadyResult.ok) {
+    return {
+      ok: false,
+      message: bucketReadyResult.message,
+    };
   }
 
   const safeFileName = sanitizeUploadedFileName(uploadedFile.name);
@@ -2011,7 +2205,7 @@ export async function uploadTeamSourceFileAction(
         postMessage =
           "Archivo cargado y normalizado, pero falta GCP_PROJECT_ID para subir a BigQuery.";
       } else {
-        await validateBigQueryTableConnection({ datasetId, tableId });
+        await ensureBigQueryTableHealthCached(datasetId, tableId);
 
         await runBigQueryQuery({
           query: `DELETE FROM \`${projectId}.${datasetId}.${tableId}\` WHERE periodo = @periodo AND archivo = @archivo`,
@@ -2064,6 +2258,7 @@ export async function uploadTeamSourceFileAction(
 
   revalidatePath("/admin/incentive-rules");
   revalidatePath("/admin/data-sources");
+  revalidateTag("admin-incentive-rules", "max");
 
   return {
     ok: true,
@@ -2071,6 +2266,211 @@ export async function uploadTeamSourceFileAction(
     fileCode,
     periodMonth,
     uploadedPath: targetPath,
+    normalizedRows: normalizedRowsCount,
+    bigQueryStatus,
+  };
+}
+
+export async function reprocessTeamSourceFileFromStorageAction(
+  _prevState: UploadTeamSourceFileResult | null,
+  formData: FormData,
+): Promise<UploadTeamSourceFileResult> {
+  const { user, role, isActive } = await getCurrentAuthContext();
+
+  if (!user || !isAdminRole(role, isActive)) {
+    return { ok: false, message: "No autorizado." };
+  }
+
+  const periodInput = String(formData.get("period_month") ?? "").trim();
+  const fileCodeInput = String(formData.get("file_code") ?? "").trim();
+  const sheetNameInput = String(formData.get("sheet_name") ?? "").trim();
+
+  const periodMonth = normalizePeriodMonthInput(periodInput);
+  if (!periodMonth) {
+    return { ok: false, message: "Periodo invalido. Usa formato YYYY-MM." };
+  }
+
+  const fileCode = normalizeSourceFileCode(fileCodeInput);
+  if (!fileCode) {
+    return { ok: false, message: "Falta la clave de archivo a reprocesar." };
+  }
+
+  const supabase = createAdminClient();
+  if (!supabase) {
+    return { ok: false, message: "Admin client no disponible." };
+  }
+
+  const snapshotResult = await getSourceValidationSnapshotForPeriod(supabase, periodMonth);
+  if (!snapshotResult.ok) {
+    return {
+      ok: false,
+      message: `No se pudo validar archivos requeridos desde reglas: ${snapshotResult.message}`,
+    };
+  }
+  const requiredCodes = snapshotResult.snapshot.requiredCodes;
+  const sourceConstraint = snapshotResult.snapshot.constraintsByFile.get(fileCode) ?? getEmptySourceConstraint();
+  const allowedMetrics = sourceConstraint.metrics;
+  const allowedFuentes = sourceConstraint.fuentes;
+
+  if (requiredCodes.size === 0) {
+    return {
+      ok: false,
+      message: "No hay archivos fuente requeridos para este periodo segun las reglas.",
+    };
+  }
+
+  if (!requiredCodes.has(fileCode)) {
+    return {
+      ok: false,
+      message:
+        "La clave de archivo no existe en las reglas del periodo. Refresca la vista y selecciona un archivo requerido.",
+    };
+  }
+
+  const metadataResult = await supabase
+    .from("team_incentive_source_files")
+    .select("display_name, storage_bucket, storage_path")
+    .eq("period_month", periodMonth)
+    .eq("file_code", fileCode)
+    .maybeSingle();
+
+  if (metadataResult.error) {
+    if (isMissingRelationError(metadataResult.error)) {
+      const tableName =
+        getMissingRelationName(metadataResult.error) ?? "team_incentive_source_files";
+      return {
+        ok: false,
+        message: `No existe la tabla ${tableName}. Revisa docs/team-incentive-source-files-schema.sql para crearla.`,
+      };
+    }
+    return {
+      ok: false,
+      message: `No se pudo leer metadata del archivo: ${metadataResult.error.message}`,
+    };
+  }
+
+  const storageBucket = String(metadataResult.data?.storage_bucket ?? "").trim();
+  const storagePath = String(metadataResult.data?.storage_path ?? "").trim();
+  const displayName = String(metadataResult.data?.display_name ?? fileCode).trim() || fileCode;
+
+  if (!storageBucket || !storagePath) {
+    return {
+      ok: false,
+      message: "No existe archivo en storage para este periodo/file_code. Sube el archivo primero.",
+    };
+  }
+
+  const downloadResult = await supabase.storage.from(storageBucket).download(storagePath);
+  if (downloadResult.error || !downloadResult.data) {
+    return {
+      ok: false,
+      message: `No se pudo descargar archivo desde storage: ${downloadResult.error?.message ?? "archivo no disponible"}`,
+    };
+  }
+
+  let normalizedRowsCount = 0;
+  let bigQueryStatus: "uploaded" | "skipped" = "skipped";
+  let postMessage = `Archivo reprocesado desde storage para ${fileCode}.`;
+
+  try {
+    const fileBuffer = Buffer.from(await downloadResult.data.arrayBuffer());
+    const { read, utils } = await import("xlsx");
+    const workbook = read(fileBuffer, { type: "buffer" });
+    const resolvedSheetName = sheetNameInput || workbook.SheetNames[0] || "";
+
+    if (!resolvedSheetName || !workbook.Sheets[resolvedSheetName]) {
+      return {
+        ok: false,
+        message: "No se encontro una pestana valida en el archivo almacenado.",
+      };
+    }
+
+    const sheetRows = utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[resolvedSheetName], {
+      defval: "",
+    });
+
+    const normalizedRows = normalizeRowsForBigQuery({
+      rows: sheetRows,
+      periodMonth,
+      fileCode,
+      displayName,
+      allowedMetrics,
+      allowedFuentes,
+    });
+    const normalizedForBigQuery = mapNormalizedRowsToBigQuerySchema(normalizedRows);
+    normalizedRowsCount = normalizedForBigQuery.rows.length;
+
+    if (normalizedForBigQuery.rows.length === 0) {
+      postMessage =
+        normalizedForBigQuery.droppedRows > 0
+          ? `Reproceso desde storage completo, pero todas las filas normalizadas (${normalizedForBigQuery.droppedRows}) se omitieron por no cumplir schema minimo (archivo/periodo).`
+          : "Reproceso desde storage completo, pero no se detectaron filas utiles para normalizar.";
+    } else if (isBigQueryConfigured()) {
+      const projectId = process.env.GCP_PROJECT_ID;
+      const datasetId = process.env.BQ_DATASET_ID ?? "incentivos";
+      const tableId = process.env.BQ_TABLE_FILES_NORMALIZADOS ?? "filesNormalizados";
+
+      if (!projectId) {
+        postMessage =
+          "Archivo reprocesado desde storage, pero falta GCP_PROJECT_ID para subir a BigQuery.";
+      } else {
+        await ensureBigQueryTableHealthCached(datasetId, tableId);
+
+        await runBigQueryQuery({
+          query: `DELETE FROM \`${projectId}.${datasetId}.${tableId}\` WHERE periodo = @periodo AND archivo = @archivo`,
+          parameters: [
+            { name: "periodo", type: "STRING", value: periodMonth.slice(0, 7) },
+            { name: "archivo", type: "STRING", value: displayName },
+          ],
+        });
+
+        await insertBigQueryRows({
+          datasetId,
+          tableId,
+          rows: normalizedForBigQuery.rows.map((row, index) => ({
+            rowId: `${fileCode}-${periodMonth}-reprocess-${index + 1}`,
+            json: row,
+          })),
+        });
+
+        bigQueryStatus = "uploaded";
+        postMessage = `Reproceso desde storage completado: ${normalizedForBigQuery.rows.length} filas normalizadas y subidas a BigQuery (reemplazo por periodo+archivo).`;
+        if (normalizedForBigQuery.droppedRows > 0) {
+          postMessage += ` Se omitieron ${normalizedForBigQuery.droppedRows} filas por no cumplir schema minimo (archivo/periodo).`;
+        }
+      }
+    } else {
+      postMessage =
+        "Archivo reprocesado desde storage, pero BigQuery no esta configurado en variables de entorno.";
+    }
+  } catch (error) {
+    if (isBigQueryStreamingBufferMutationError(error)) {
+      return {
+        ok: false,
+        message:
+          "BigQuery aun esta finalizando la transmision de datos de este archivo. Reintenta en unos minutos.",
+      };
+    }
+
+    return {
+      ok: false,
+      message:
+        error instanceof Error
+          ? `No se pudo reprocesar/subir a BigQuery: ${error.message}`
+          : "No se pudo reprocesar/subir a BigQuery.",
+    };
+  }
+
+  revalidatePath("/admin/incentive-rules");
+  revalidatePath("/admin/data-sources");
+  revalidateTag("admin-incentive-rules", "max");
+
+  return {
+    ok: true,
+    message: postMessage,
+    fileCode,
+    periodMonth,
+    uploadedPath: storagePath,
     normalizedRows: normalizedRowsCount,
     bigQueryStatus,
   };
@@ -2119,35 +2519,19 @@ export async function previewTeamSourceFileAction(
     return { ok: false, message: "Admin client no disponible." };
   }
 
-  const rulesLoad = await loadLatestRuleDefinitionsByTeamForPeriod(supabase, periodMonth);
-  if (!rulesLoad.ok) {
+  const snapshotResult = await getSourceValidationSnapshotForPeriod(supabase, periodMonth);
+  if (!snapshotResult.ok) {
     return {
       ok: false,
-      message: `No se pudieron leer reglas para validar: ${rulesLoad.message}`,
+      message: `No se pudieron leer reglas para validar: ${snapshotResult.message}`,
     };
   }
-
-  const latestRuleByTeam = new Map<string, Record<string, unknown> | null>();
-  for (const [teamId, value] of rulesLoad.latestByTeam.entries()) {
-    latestRuleByTeam.set(teamId, value.ruleDefinition);
-  }
-
-  const allowedMetrics = new Set<string>();
-  const allowedFuentes = new Set<string>();
-  const requirementsByTeam = new Map<string, SourceRequirement[]>();
-
-  for (const definition of latestRuleByTeam.values()) {
-    const constraints = collectSourceConstraintsForFileFromRuleDefinition(definition, fileCode);
-    for (const metric of constraints.metrics) allowedMetrics.add(metric);
-    for (const fuente of constraints.fuentes) allowedFuentes.add(fuente);
-
-    const teamRequirements = collectRequirementsByTeamFromRuleDefinition(definition, fileCode);
-    for (const [teamId, list] of teamRequirements.entries()) {
-      const current = requirementsByTeam.get(teamId) ?? [];
-      current.push(...list);
-      requirementsByTeam.set(teamId, current);
-    }
-  }
+  const sourceConstraint = snapshotResult.snapshot.constraintsByFile.get(fileCode) ?? getEmptySourceConstraint();
+  const allowedMetrics = sourceConstraint.metrics;
+  const allowedFuentes = sourceConstraint.fuentes;
+  const requirementsByTeam =
+    snapshotResult.snapshot.requirementsByFileAndTeam.get(fileCode) ??
+    new Map<string, SourceRequirement[]>();
 
   if (requirementsByTeam.size === 0) {
     return {
@@ -2187,7 +2571,11 @@ export async function previewTeamSourceFileAction(
     let teamsFullyCovered = 0;
 
     for (const [teamId, requirements] of requirementsByTeam.entries()) {
-      const missing = requirements.filter(
+      const uniqueRequirements = Array.from(
+        new Map(requirements.map((requirement) => [toRequirementKey(requirement), requirement])).values(),
+      );
+
+      const missing = uniqueRequirements.filter(
         (requirement) =>
           !normalizedRows.some((row) => doesRowMeetRequirement(row, requirement)),
       );
@@ -2415,6 +2803,7 @@ export async function saveTeamIncentiveRuleVersionAction(
   }
 
   revalidatePath("/admin/incentive-rules");
+  revalidateTag("admin-incentive-rules", "max");
   revalidatePath(`/admin/incentive-rules/${encodeURIComponent(teamId)}`);
 
   return {

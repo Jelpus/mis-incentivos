@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
@@ -173,6 +173,7 @@ export async function savePayCurveAction(input: SavePayCurveInput): Promise<Save
   }
 
   revalidatePath("/admin/curvas-de-pago");
+  revalidateTag("admin-pay-curves", "max");
   return {
     ok: true,
     message: "Curva guardada correctamente.",
@@ -295,6 +296,7 @@ export async function updatePayCurveAction(input: UpdatePayCurveInput): Promise<
 
   revalidatePath("/admin/curvas-de-pago");
   revalidatePath(`/admin/curvas-de-pago/${encodeURIComponent(curveId)}/editar`);
+  revalidateTag("admin-pay-curves", "max");
 
   return {
     ok: true,

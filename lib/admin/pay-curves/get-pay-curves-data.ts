@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getMissingRelationName,
@@ -38,7 +39,7 @@ export type PayCurveDetail = {
   points: PayCurvePoint[];
 };
 
-export async function getPayCurvesListData(): Promise<
+async function loadPayCurvesListData(): Promise<
   | { ok: true; rows: PayCurveListRow[] }
   | { ok: false; message: string; rows: [] }
 > {
@@ -109,6 +110,19 @@ export async function getPayCurvesListData(): Promise<
       createdAt: row.created_at,
     })),
   };
+}
+
+const getCachedPayCurvesListData = unstable_cache(
+  async () => loadPayCurvesListData(),
+  ["admin-pay-curves-list"],
+  { revalidate: 300, tags: ["admin-pay-curves"] },
+);
+
+export async function getPayCurvesListData(): Promise<
+  | { ok: true; rows: PayCurveListRow[] }
+  | { ok: false; message: string; rows: [] }
+> {
+  return getCachedPayCurvesListData();
 }
 
 export async function getPayCurveDetailData(curveId: string): Promise<

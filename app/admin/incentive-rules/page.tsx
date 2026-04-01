@@ -1,10 +1,9 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { StatusPeriodPicker } from "@/components/admin/status-period-picker";
 import { TeamRulesUpdatePanel } from "@/components/admin/team-rules-update-panel";
-import { getTeamRulesPageData } from "@/lib/admin/incentive-rules/get-team-rules-page-data";
+import { getTeamRulesPageFastData } from "@/lib/admin/incentive-rules/get-team-rules-page-data-fast";
 import { formatPeriodMonthForInput } from "@/lib/admin/incentive-rules/shared";
+import { formatDateTimeNoTimezoneShift } from "@/lib/date-time";
 
 type PageProps = {
   searchParams?: Promise<{
@@ -14,38 +13,21 @@ type PageProps = {
 };
 
 function formatDateTime(value: string | null) {
-  if (!value) return "-";
-  return new Intl.DateTimeFormat("es-MX", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+  return formatDateTimeNoTimezoneShift(value, "es-MX", "-");
 }
 
 export default async function IncentiveRulesPage({ searchParams }: PageProps) {
-  const { user, role, isActive } = await getCurrentAuthContext();
-
-  if (!user) {
-    redirect("/login");
-  }
-
-  if (isActive === false) {
-    redirect("/inactive");
-  }
-
-  const isSuperAdmin = role === "super_admin";
-  const isAdmin = role === "admin" || isSuperAdmin;
-
-  if (!isAdmin) {
-    redirect("/");
-  }
+  // Admin auth check already happens in app/admin/layout.tsx.
 
   const params = searchParams ? await searchParams : {};
   const selectedTablePeriodInput = params?.period ?? null;
   const selectedUpdatePeriodInput = params?.update_period ?? null;
-  const [tableData, updateData] = await Promise.all([
-    getTeamRulesPageData(selectedTablePeriodInput),
-    getTeamRulesPageData(selectedUpdatePeriodInput),
-  ]);
+  const tableData = await getTeamRulesPageFastData(selectedTablePeriodInput);
+  const updateData =
+    !selectedUpdatePeriodInput ||
+    selectedUpdatePeriodInput === selectedTablePeriodInput
+      ? tableData
+      : await getTeamRulesPageFastData(selectedUpdatePeriodInput);
 
   const tablePeriodInput = formatPeriodMonthForInput(tableData.periodMonth);
   const updatePeriodInput = formatPeriodMonthForInput(updateData.periodMonth);
@@ -56,10 +38,10 @@ export default async function IncentiveRulesPage({ searchParams }: PageProps) {
   );
 
   const teamsCargados = tableData.rows.filter((row) => row.latestVersionNo !== null).length;
-  const teamsCompletos = tableData.rows.filter((row) => row.productWeightStatus === "ok").length;
-  const erroresPorRevisar = tableData.rows.filter(
-    (row) => row.latestVersionNo !== null && row.productWeightStatus !== "ok",
-  ).length;
+  const teamsPendientes = tableData.rows.filter((row) => row.latestVersionNo === null).length;
+  const MAX_ROWS_RENDER = 400;
+  const rowsToRender = tableData.rows.slice(0, MAX_ROWS_RENDER);
+  const hasTruncatedRows = tableData.rows.length > rowsToRender.length;
 
   return (
     <main className="min-h-screen bg-neutral-50">
@@ -131,12 +113,12 @@ export default async function IncentiveRulesPage({ searchParams }: PageProps) {
               <p className="mt-1 text-lg font-semibold text-neutral-900">{teamsCargados}</p>
             </div>
             <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-              <p className="text-xs uppercase tracking-wide text-emerald-700">Teams completos</p>
-              <p className="mt-1 text-lg font-semibold text-emerald-800">{teamsCompletos}</p>
+              <p className="text-xs uppercase tracking-wide text-emerald-700">Teams con version</p>
+              <p className="mt-1 text-lg font-semibold text-emerald-800">{teamsCargados}</p>
             </div>
             <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
-              <p className="text-xs uppercase tracking-wide text-amber-700">Errores por revisar</p>
-              <p className="mt-1 text-lg font-semibold text-amber-800">{erroresPorRevisar}</p>
+              <p className="text-xs uppercase tracking-wide text-amber-700">Teams pendientes</p>
+              <p className="mt-1 text-lg font-semibold text-amber-800">{teamsPendientes}</p>
             </div>
           </div>
 
@@ -151,62 +133,20 @@ export default async function IncentiveRulesPage({ searchParams }: PageProps) {
                   <tr className="border-b border-neutral-200 text-left text-xs uppercase tracking-wide text-neutral-500">
                     <th className="px-4 py-3">Team ID</th>
                     <th className="px-4 py-3">SVA (total/activos/vacantes)</th>
-                    <th className="px-4 py-3">Evaluaciones</th>
-                    <th className="px-4 py-3">Productos</th>
-                    <th className="px-4 py-3">Suma prod_weight</th>
+                    <th className="px-4 py-3">Items de regla</th>
                     <th className="px-4 py-3">Version actual</th>
                     <th className="px-4 py-3">Ultima actualizacion</th>
                     <th className="px-4 py-3">Accion</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {tableData.rows.map((row) => (
+                  {rowsToRender.map((row) => (
                     <tr key={row.teamId} className="border-b border-neutral-100">
                       <td className="px-4 py-3 font-medium text-neutral-900">{row.teamId}</td>
                       <td className="px-4 py-3 text-neutral-700">
                         {row.salesForceTotal} / {row.salesForceActive} / {row.salesForceVacant}
                       </td>
                       <td className="px-4 py-3 text-neutral-700">{row.rulesCount}</td>
-                      <td className="max-w-[22rem] px-4 py-3 text-neutral-700">
-                        {row.productNamesSummary !== "-" ? (
-                          <div className="flex max-w-[22rem] flex-wrap gap-1.5">
-                            {row.productNamesSummary.split(" | ").slice(0, 4).map((product) => (
-                              <span
-                                key={`${row.teamId}-${product}`}
-                                className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-700"
-                                title={product}
-                              >
-                                <span className="max-w-[10rem] truncate">{product}</span>
-                              </span>
-                            ))}
-                            {row.productNamesSummary.split(" | ").length > 4 ? (
-                              <span
-                                className="inline-flex items-center rounded-full bg-neutral-200 px-2 py-0.5 text-[11px] font-medium text-neutral-700"
-                                title={row.productNamesSummary}
-                              >
-                                +{row.productNamesSummary.split(" | ").length - 4}
-                              </span>
-                            ) : null}
-                          </div>
-                        ) : (
-                          <span>-</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        {row.productWeightStatus === "ok" ? (
-                          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
-                            {row.productWeightSumPercent?.toFixed(2)}%
-                          </span>
-                        ) : row.productWeightStatus === "incomplete" ? (
-                          <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">
-                            {row.productWeightSumPercent?.toFixed(2)}%
-                          </span>
-                        ) : (
-                          <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-600">
-                            Sin reglas
-                          </span>
-                        )}
-                      </td>
                       <td className="px-4 py-3 text-neutral-700">
                         {row.latestVersionNo ? `v${row.latestVersionNo}` : "Sin version"}
                       </td>
@@ -227,8 +167,14 @@ export default async function IncentiveRulesPage({ searchParams }: PageProps) {
               </table>
             </div>
           )}
+          {hasTruncatedRows ? (
+            <p className="mt-3 text-xs text-neutral-500">
+              Mostrando {rowsToRender.length} de {tableData.rows.length} teams para respuesta rapida.
+            </p>
+          ) : null}
         </section>
       </div>
     </main>
   );
 }
+

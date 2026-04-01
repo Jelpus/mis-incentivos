@@ -74,18 +74,18 @@ export function tryParseFlexibleDate(value: unknown): string | null {
 
   const normalized = input.replace(/\./g, "/").replace(/-/g, "/");
 
-  // YYYY/MM/DD
-  let match = normalized.match(/^(\d{4})\/(\d{2})\/(\d{2})$/);
+  // YYYY/MM/DD (allows 1-2 digit month/day)
+  let match = normalized.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
   if (match) {
     const [, y, m, d] = match;
-    return `${y}-${m}-${d}`;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
   }
 
-  // DD/MM/YYYY
-  match = normalized.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  // DD/MM/YYYY (allows 1-2 digit day/month)
+  match = normalized.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (match) {
     const [, d, m, y] = match;
-    return `${y}-${m}-${d}`;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
   }
 
   // YYYYMMDD
@@ -95,9 +95,15 @@ export function tryParseFlexibleDate(value: unknown): string | null {
     return `${y}-${m}-${d}`;
   }
 
-  const date = new Date(input);
-  if (!Number.isNaN(date.getTime())) {
-    return date.toISOString().slice(0, 10);
+  // Fallback only for datetime-like inputs. Date-only strings are intentionally
+  // not parsed with `new Date(...)` to avoid timezone day shifts.
+  const hasTimeComponent = /[T\s]\d{1,2}:\d{2}/.test(input);
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(input);
+  if (hasTimeComponent || hasTimezone) {
+    const date = new Date(input);
+    if (!Number.isNaN(date.getTime())) {
+      return date.toISOString().slice(0, 10);
+    }
   }
 
   return null;

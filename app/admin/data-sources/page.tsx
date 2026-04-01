@@ -3,8 +3,8 @@ import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { StatusPeriodPicker } from "@/components/admin/status-period-picker";
 import { TeamSourceFilesCard } from "@/components/admin/team-source-files-card";
 import { BigQueryConnectionIndicator } from "@/components/admin/bigquery-connection-indicator";
-import { getTeamRulesPageData } from "@/lib/admin/incentive-rules/get-team-rules-page-data";
 import { formatPeriodMonthForInput } from "@/lib/admin/incentive-rules/shared";
+import { getDataSourcesPageData } from "@/lib/admin/data-sources/get-data-sources-page-data";
 
 type PageProps = {
   searchParams?: Promise<{
@@ -32,7 +32,7 @@ export default async function AdminDataSourcesPage({ searchParams }: PageProps) 
 
   const params = searchParams ? await searchParams : {};
   const selectedPeriodInput = params?.period ?? null;
-  const data = await getTeamRulesPageData(selectedPeriodInput);
+  const data = await getDataSourcesPageData(selectedPeriodInput);
 
   const periodInput = formatPeriodMonthForInput(data.periodMonth);
   const availableStatusPeriodInputs = Array.from(

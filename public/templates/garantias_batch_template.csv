@@ -1,0 +1,4 @@
+no_empleado,guarantee_start_month,guarantee_end_month,rule_scope,rule_key,is_active,note
+32100111,2026-01,2026-03,all_rules,,true,garantia trimestral por ausentismo operativo
+32100461,2026-01,2026-01,single_rule,ENTRESTO_ISSSTE,true,aplica solo para la regla puntual
+32097538,2026-02,2026-04,single_rule,SYBRAVA_GOV,true,garantia por cambio de territorio

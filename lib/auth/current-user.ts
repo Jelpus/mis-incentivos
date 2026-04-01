@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { cookies } from "next/headers";
+import { cache } from "react";
 import { ADMIN_IMPERSONATION_COOKIE, isAdminRole } from "@/lib/auth/impersonation";
 import type { User } from "@supabase/supabase-js";
 
@@ -50,7 +51,7 @@ function normalizeRole(value: string | null | undefined): ProfileRole | null {
   return null;
 }
 
-export async function getCurrentAuthContext() {
+const getCurrentAuthContextCached = cache(async (): Promise<AuthContext> => {
   const supabase = await createClient();
   const {
     data: { user },
@@ -152,4 +153,8 @@ export async function getCurrentAuthContext() {
     isImpersonating: impersonation !== null,
     impersonation: impersonation as typeof impersonation | null,
   };
+});
+
+export async function getCurrentAuthContext() {
+  return getCurrentAuthContextCached();
 }

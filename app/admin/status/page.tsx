@@ -5,6 +5,7 @@ import { getStatusPageData } from "@/lib/admin/status/get-status-page-data";
 import { ClonePeriodCard } from "@/components/admin/clone-period-card";
 import { MassImportUploadCard } from "@/components/admin/mass-import-upload-card";
 import { StatusCurrentCollapsible } from "@/components/admin/status-current-collapsible";
+import { formatDateTimeNoTimezoneShift } from "@/lib/date-time";
 
 type AdminRole = "admin" | "super_admin";
 
@@ -14,12 +15,7 @@ function formatPeriodLabel(value: string) {
 }
 
 function formatDateTime(value: string | null) {
-  if (!value) return "—";
-
-  return new Intl.DateTimeFormat("es-MX", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+  return formatDateTimeNoTimezoneShift(value, "es-MX", "-");
 }
 
 type PageProps = {
@@ -85,7 +81,7 @@ export default async function StatusPage({ searchParams }: PageProps) {
 
               <p className="max-w-3xl text-sm text-neutral-600">
                 Gestiona la estructura mensual de fuerza de ventas, revisa
-                cambios detectados, cargas masivas y mantén trazabilidad completa
+                cambios detectados, cargas masivas y manten trazabilidad completa
                 de movimientos y versiones.
               </p>
             </div>
@@ -116,21 +112,21 @@ export default async function StatusPage({ searchParams }: PageProps) {
             </p>
 
             <p className="mt-1 text-xs text-neutral-500">
-              Período seleccionado: {formatPeriodLabel(periodMonth)}
+              Periodo seleccionado: {formatPeriodLabel(periodMonth)}
             </p>
           </div>
 
           <div className="rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm">
-            <p className="text-sm text-neutral-500">Último batch</p>
+            <p className="text-sm text-neutral-500">Ultimo batch</p>
 
             <p className="mt-2 text-xl font-semibold text-neutral-950">
-              {latestBatch?.status ?? "—"}
+              {latestBatch?.status ?? "-"}
             </p>
 
             <p className="mt-1 text-xs text-neutral-500">
               {latestBatch?.created_at
                 ? `Procesado: ${formatDateTime(latestBatch.created_at)}`
-                : "Sin cargas registradas todavía"}
+                : "Sin cargas registradas todavia"}
             </p>
           </div>
 
@@ -144,7 +140,7 @@ export default async function StatusPage({ searchParams }: PageProps) {
               Actualizar status
             </h2>
             <p className="mt-1 text-sm text-neutral-600">
-              Puedes actualizar el status con clonación mensual o carga masiva con flujo SVA/SVM.
+              Puedes actualizar el status con clonacion mensual o carga masiva con flujo SVA/SVM.
             </p>
           </div>
 
@@ -157,7 +153,7 @@ export default async function StatusPage({ searchParams }: PageProps) {
         <section className="rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm">
           <h2 className="text-lg font-semibold text-neutral-950">Trazabilidad</h2>
           <p className="mt-1 text-sm text-neutral-600">
-            Consulta históricos, lotes procesados y logs de auditoría.
+            Consulta historicos, lotes procesados y logs de auditoria.
           </p>
           <div className="mt-5 flex flex-wrap gap-3">
             <Link
@@ -171,7 +167,7 @@ export default async function StatusPage({ searchParams }: PageProps) {
                 href={latestBatch ? `/admin/status/history/${latestBatch.id}` : "/admin/status/history"}
                 className="inline-flex items-center justify-center rounded-2xl border border-neutral-300 px-4 py-2.5 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
               >
-                Auditoría avanzada
+                Auditoria avanzada
               </Link>
             ) : null}
           </div>
@@ -193,4 +189,3 @@ export default async function StatusPage({ searchParams }: PageProps) {
     </main>
   );
 }
-
