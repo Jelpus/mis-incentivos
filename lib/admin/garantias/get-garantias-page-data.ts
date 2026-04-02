@@ -191,7 +191,12 @@ export async function getGarantiasPageData(
     try {
       const projectId = process.env.GCP_PROJECT_ID;
       const datasetId = process.env.BQ_RESULTS_DATASET?.trim() || "incentivos";
-      const tableId = process.env.BQ_RESULTS_TABLE?.trim() || "resultados_v2";
+      const tableId =
+        process.env.BQ_RESULTS_READ_TABLE?.trim() ||
+        process.env.BQ_RESULTS_TABLE?.trim() ||
+        "resultados_v2";
+      const readStage = process.env.BQ_RESULTS_READ_STAGE?.trim() || null;
+      const useStageFilter = Boolean(process.env.BQ_RESULTS_READ_TABLE?.trim() && readStage);
 
       if (!projectId) {
         rulesMessage = "Falta GCP_PROJECT_ID para cargar reglas desde resultados.";
@@ -203,12 +208,18 @@ export async function getGarantiasPageData(
             SELECT DISTINCT product_name AS value
             FROM ${tableRef}
             WHERE periodo = @periodo
+              ${useStageFilter ? "AND stage = @stage" : ""}
               AND product_name IS NOT NULL
               AND TRIM(product_name) <> ''
             ORDER BY value ASC
             LIMIT 1000
           `,
-          parameters: [{ name: "periodo", type: "STRING", value: periodCode }],
+          parameters: useStageFilter
+            ? [
+              { name: "periodo", type: "STRING", value: periodCode },
+              { name: "stage", type: "STRING", value: readStage ?? "" },
+            ]
+            : [{ name: "periodo", type: "STRING", value: periodCode }],
         });
 
         rules = (result ?? [])

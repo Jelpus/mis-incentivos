@@ -7,6 +7,16 @@ type QueryParam = {
   value: string | number | boolean | null;
 };
 
+function getResultsReadConfig() {
+  const tableId =
+    process.env.BQ_RESULTS_READ_TABLE?.trim() ||
+    process.env.BQ_RESULTS_TABLE?.trim() ||
+    "resultados_v2";
+  const readStage = process.env.BQ_RESULTS_READ_STAGE?.trim() || null;
+  const useStageFilter = Boolean(process.env.BQ_RESULTS_READ_TABLE?.trim() && readStage);
+  return { tableId, readStage, useStageFilter };
+}
+
 type BigQueryPeriodRow = {
   periodo: string | null;
 };
@@ -118,6 +128,8 @@ function buildWhereSql(params: {
   periodCodes: string[];
   filters: PerformanceReportFilters;
   exclude?: keyof PerformanceReportFilters;
+  readStage?: string | null;
+  useStageFilter?: boolean;
 }) {
   const clauses = [`periodo IN (${buildPeriodInClause(params.periodCodes)})`];
   const parameters: QueryParam[] = [];
@@ -142,6 +154,10 @@ function buildWhereSql(params: {
   if (params.exclude !== "manager" && manager) {
     clauses.push("manager = @manager");
     parameters.push({ name: "manager", type: "STRING", value: manager });
+  }
+  if (params.useStageFilter) {
+    clauses.push("stage = @stage");
+    parameters.push({ name: "stage", type: "STRING", value: params.readStage ?? "" });
   }
 
   return {
@@ -353,11 +369,15 @@ async function fetchDistinctOptions(params: {
   periodCodes: string[];
   filters: PerformanceReportFilters;
   exclude: keyof PerformanceReportFilters;
+  readStage?: string | null;
+  useStageFilter?: boolean;
 }) {
   const whereContext = buildWhereSql({
     periodCodes: params.periodCodes,
     filters: params.filters,
     exclude: params.exclude,
+    readStage: params.readStage,
+    useStageFilter: params.useStageFilter,
   });
 
   const rows = await fetchBigQueryRows<BigQueryOptionRow>({
@@ -384,7 +404,7 @@ export async function getPerformanceReportData(params: {
 }): Promise<PerformanceReportData> {
   const projectId = process.env.GCP_PROJECT_ID;
   const datasetId = process.env.BQ_RESULTS_DATASET?.trim() || "incentivos";
-  const tableId = process.env.BQ_RESULTS_TABLE?.trim() || "resultados_v2";
+  const { tableId, readStage, useStageFilter } = getResultsReadConfig();
 
   const emptyData: PerformanceReportData = {
     ok: false,
@@ -422,9 +442,13 @@ export async function getPerformanceReportData(params: {
       SELECT DISTINCT periodo
       FROM ${tableRef}
       WHERE periodo IS NOT NULL
+      ${useStageFilter ? "AND stage = @stage" : ""}
       ORDER BY periodo DESC
       LIMIT 48
     `,
+    parameters: useStageFilter
+      ? [{ name: "stage", type: "STRING", value: readStage ?? "" }]
+      : undefined,
   });
 
   const availablePeriods = normalizePeriodCodes((periodRows ?? []).map((row) => row.periodo));
@@ -448,6 +472,8 @@ export async function getPerformanceReportData(params: {
   const whereContext = buildWhereSql({
     periodCodes: finalSelectedPeriods,
     filters,
+    readStage,
+    useStageFilter,
   });
 
   const routeRows = await fetchBigQueryRows<BigQueryRouteCoverageRow>({
@@ -479,6 +505,8 @@ export async function getPerformanceReportData(params: {
       periodCodes: finalSelectedPeriods,
       filters,
       exclude: "teamId",
+      readStage,
+      useStageFilter,
     }),
     fetchDistinctOptions({
       tableRef,
@@ -486,6 +514,8 @@ export async function getPerformanceReportData(params: {
       periodCodes: finalSelectedPeriods,
       filters,
       exclude: "linea",
+      readStage,
+      useStageFilter,
     }),
     fetchDistinctOptions({
       tableRef,
@@ -493,6 +523,8 @@ export async function getPerformanceReportData(params: {
       periodCodes: finalSelectedPeriods,
       filters,
       exclude: "productName",
+      readStage,
+      useStageFilter,
     }),
     fetchDistinctOptions({
       tableRef,
@@ -500,6 +532,8 @@ export async function getPerformanceReportData(params: {
       periodCodes: finalSelectedPeriods,
       filters,
       exclude: "manager",
+      readStage,
+      useStageFilter,
     }),
   ]);
 

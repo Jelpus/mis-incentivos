@@ -101,6 +101,9 @@ export type CalculoPreviewResult =
       match_mode: "exact" | "fuzzy" | "none";
       none_reason: string | null;
       objective_block: "private" | "drilldown_cuentas" | "drilldown_estados" | "otros";
+      matched_rows_count: number;
+      valor_imss: number;
+      valor_issste: number;
     }>;
   }
   | { ok: false; message: string };

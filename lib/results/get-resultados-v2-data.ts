@@ -99,6 +99,16 @@ type QueryParam = {
   value: string | number | boolean | null;
 };
 
+function getResultsReadConfig() {
+  const tableId =
+    process.env.BQ_RESULTS_READ_TABLE?.trim() ||
+    process.env.BQ_RESULTS_TABLE?.trim() ||
+    "resultados_v2";
+  const readStage = process.env.BQ_RESULTS_READ_STAGE?.trim() || null;
+  const useStageFilter = Boolean(process.env.BQ_RESULTS_READ_TABLE?.trim() && readStage);
+  return { tableId, readStage, useStageFilter };
+}
+
 type BigQueryPeriodSummaryRow = {
   periodo: string | null;
   row_count: number | null;
@@ -285,6 +295,8 @@ async function buildScopeContext(params: {
   projectId: string;
   datasetId: string;
   tableId: string;
+  readStage?: string | null;
+  useStageFilter?: boolean;
 }) {
   const scope = resolveScope(params.role);
   const anchor = await getAnchorForUser(params.profileUserId, params.role);
@@ -333,17 +345,23 @@ async function buildScopeContext(params: {
 
   const scopeWhereSql = scopeClauses.length ? scopeClauses.join(" AND ") : "1=1";
   const tableRef = `\`${params.projectId}.${params.datasetId}.${params.tableId}\``;
+  const periodWhereSql = params.useStageFilter
+    ? `${scopeWhereSql} AND stage = @stage`
+    : scopeWhereSql;
+  const periodParams = params.useStageFilter
+    ? [...scopeParams, { name: "stage", type: "STRING" as const, value: params.readStage ?? "" }]
+    : scopeParams;
 
   const periodRows = await fetchBigQueryRows<{ periodo: string | null }>({
     query: `
       SELECT DISTINCT periodo
       FROM ${tableRef}
-      WHERE ${scopeWhereSql}
+      WHERE ${periodWhereSql}
         AND periodo IS NOT NULL
       ORDER BY periodo DESC
       LIMIT 24
     `,
-    parameters: scopeParams,
+    parameters: periodParams,
   });
 
   const availablePeriods = (periodRows ?? [])
@@ -373,7 +391,7 @@ export async function getResultadosV2PeriodSummary(params: {
 }> {
   const projectId = process.env.GCP_PROJECT_ID;
   const datasetId = process.env.BQ_RESULTS_DATASET?.trim() || "incentivos";
-  const tableId = process.env.BQ_RESULTS_TABLE?.trim() || "resultados_v2";
+  const { tableId, readStage, useStageFilter } = getResultsReadConfig();
   const maxPeriods = Math.max(3, Math.min(24, params.maxPeriods ?? 12));
 
   const fallbackScope = resolveScope(params.role);
@@ -402,6 +420,8 @@ export async function getResultadosV2PeriodSummary(params: {
     projectId,
     datasetId,
     tableId,
+    readStage,
+    useStageFilter,
   });
 
   if (!context.ok) {
@@ -414,6 +434,12 @@ export async function getResultadosV2PeriodSummary(params: {
   }
 
   const tableRef = `\`${projectId}.${datasetId}.${tableId}\``;
+  const summaryWhereSql = useStageFilter
+    ? `${context.scopeWhereSql} AND stage = @stage`
+    : context.scopeWhereSql;
+  const summaryParams = useStageFilter
+    ? [...context.scopeParams, { name: "stage", type: "STRING" as const, value: readStage ?? "" }]
+    : context.scopeParams;
 
   const summaryRows = await fetchBigQueryRows<BigQueryPeriodSummaryRow>({
     query: `
@@ -422,14 +448,14 @@ export async function getResultadosV2PeriodSummary(params: {
         COUNT(1) AS row_count,
         SUM(IFNULL(pagoresultado, 0)) AS total_pagoresultado,
         SUM(IFNULL(pagovariable, 0)) AS total_pagovariable,
-        AVG(IFNULL(cobertura, 0)) AS avg_cobertura
+      AVG(IFNULL(cobertura, 0)) AS avg_cobertura
       FROM ${tableRef}
-      WHERE ${context.scopeWhereSql}
+      WHERE ${summaryWhereSql}
       GROUP BY periodo
       ORDER BY periodo DESC
       LIMIT ${maxPeriods}
     `,
-    parameters: context.scopeParams,
+    parameters: summaryParams,
   });
 
   const periods = (summaryRows ?? [])
@@ -459,7 +485,7 @@ export async function getResultadosV2Data(params: {
   const maxRows = Math.max(20, Math.min(500, params.maxRows ?? 120));
   const projectId = process.env.GCP_PROJECT_ID;
   const datasetId = process.env.BQ_RESULTS_DATASET?.trim() || "incentivos";
-  const tableId = process.env.BQ_RESULTS_TABLE?.trim() || "resultados_v2";
+  const { tableId, readStage, useStageFilter } = getResultsReadConfig();
 
   const emptySummary: ResultadoSummary = {
     rowCount: 0,
@@ -498,6 +524,8 @@ export async function getResultadosV2Data(params: {
     projectId,
     datasetId,
     tableId,
+    readStage,
+    useStageFilter,
   });
 
   if (!context.ok) {
@@ -544,8 +572,16 @@ export async function getResultadosV2Data(params: {
     };
   }
 
-  const whereSql = `${scopeWhereSql} AND periodo = @periodo`;
-  const parameters = [...scopeParams, { name: "periodo", type: "STRING" as const, value: selectedPeriod }];
+  const whereSql = useStageFilter
+    ? `${scopeWhereSql} AND periodo = @periodo AND stage = @stage`
+    : `${scopeWhereSql} AND periodo = @periodo`;
+  const parameters = useStageFilter
+    ? [
+      ...scopeParams,
+      { name: "periodo", type: "STRING" as const, value: selectedPeriod },
+      { name: "stage", type: "STRING" as const, value: readStage ?? "" },
+    ]
+    : [...scopeParams, { name: "periodo", type: "STRING" as const, value: selectedPeriod }];
 
   const summaryQuery = `
     SELECT

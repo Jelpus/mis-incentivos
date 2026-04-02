@@ -356,6 +356,9 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
         Cobertura: Number((row as { cobertura?: number }).cobertura) || 0,
         MatchMode: row.match_mode,
         NoMatchReason: row.none_reason ?? "",
+        MatchedRows: Number((row as { matched_rows_count?: number }).matched_rows_count) || 0,
+        ValorIMSS: Number((row as { valor_imss?: number }).valor_imss) || 0,
+        ValorISSSTE: Number((row as { valor_issste?: number }).valor_issste) || 0,
       }));
 
       const summarySheet = XLSX.utils.json_to_sheet(

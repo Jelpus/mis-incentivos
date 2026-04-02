@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchBigQueryRows, isBigQueryConfigured } from "@/lib/integrations/bigquery";
 import {
   getMissingRelationName,
   isMissingRelationError,
@@ -18,6 +19,11 @@ type CalculationStatusRow = {
   updated_by: string | null;
 };
 
+type BigQueryAmountRow = {
+  periodo: string | null;
+  total_pagoresultado: number | null;
+};
+
 function normalizePeriodCollection(values: unknown[]): string[] {
   return Array.from(
     new Set(
@@ -28,6 +34,16 @@ function normalizePeriodCollection(values: unknown[]): string[] {
   )
     .filter((value) => value >= "2026-01-01")
     .sort((a, b) => b.localeCompare(a));
+}
+
+function toPeriodCode(periodMonth: string): string {
+  return `${periodMonth.slice(0, 4)}${periodMonth.slice(5, 7)}`;
+}
+
+function buildInList(values: string[]): string {
+  const safe = values.filter((value) => /^\d{6}$/.test(value));
+  if (safe.length === 0) return "'000000'";
+  return safe.map((value) => `'${value}'`).join(", ");
 }
 
 export type CalculoPageData = {
@@ -94,17 +110,87 @@ async function loadCalculoPageData(): Promise<CalculoPageData> {
     }
   }
 
-  const bigQueryReady = false;
-  const bigQueryMessage =
-    "Comparativos de BigQuery se cargan en el proceso; el listado usa modo rapido.";
+  const periodCodes = periods.map(toPeriodCode);
+  const baseAmountsByPeriod = new Map<string, number>();
+  const adjustmentAmountsByPeriod = new Map<string, number>();
+  const bigQueryReady = isBigQueryConfigured() && Boolean(process.env.GCP_PROJECT_ID?.trim());
+  let bigQueryMessage: string | null = null;
+
+  if (bigQueryReady && periodCodes.length > 0) {
+    const projectId = process.env.GCP_PROJECT_ID?.trim() ?? "";
+    const datasetId = process.env.BQ_RESULTS_DATASET?.trim() || "incentivos";
+    const baseTableId = process.env.BQ_RESULTS_TABLE?.trim() || "resultados_v2";
+    const adjustmentsTableId = process.env.BQ_RESULTS_ADJUSTMENTS_TABLE?.trim() || "resultados_v2_ajustes";
+    const inList = buildInList(periodCodes);
+    const baseTableRef = `\`${projectId}.${datasetId}.${baseTableId}\``;
+    const adjustmentsTableRef = `\`${projectId}.${datasetId}.${adjustmentsTableId}\``;
+
+    try {
+      const baseRows = await fetchBigQueryRows<BigQueryAmountRow>({
+        query: `
+          SELECT
+            periodo,
+            SUM(IFNULL(pagoresultado, 0)) AS total_pagoresultado
+          FROM ${baseTableRef}
+          WHERE periodo IN (${inList})
+          GROUP BY periodo
+        `,
+      });
+      for (const row of baseRows ?? []) {
+        const key = String(row.periodo ?? "").trim();
+        if (!/^\d{6}$/.test(key)) continue;
+        baseAmountsByPeriod.set(key, Number(row.total_pagoresultado ?? 0));
+      }
+    } catch (error) {
+      bigQueryMessage =
+        error instanceof Error
+          ? `No se pudo leer ${baseTableId}: ${error.message}`
+          : `No se pudo leer ${baseTableId}.`;
+    }
+
+    try {
+      const adjustmentsRows = await fetchBigQueryRows<BigQueryAmountRow>({
+        query: `
+          SELECT
+            periodo,
+            SUM(IFNULL(delta_pagoresultado, 0)) AS total_pagoresultado
+          FROM ${adjustmentsTableRef}
+          WHERE periodo IN (${inList})
+            AND stage = 'precalculo'
+            AND is_active = TRUE
+          GROUP BY periodo
+        `,
+      });
+      for (const row of adjustmentsRows ?? []) {
+        const key = String(row.periodo ?? "").trim();
+        if (!/^\d{6}$/.test(key)) continue;
+        adjustmentAmountsByPeriod.set(key, Number(row.total_pagoresultado ?? 0));
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? `No se pudo leer ${adjustmentsTableId}: ${error.message}`
+          : `No se pudo leer ${adjustmentsTableId}.`;
+      bigQueryMessage = bigQueryMessage ? `${bigQueryMessage} | ${message}` : message;
+    }
+  } else {
+    bigQueryMessage = "BigQuery no configurado: usando monto almacenado en periodos.";
+  }
 
   const rows = periods.map((periodMonth) => {
     const statusRow = statusesByPeriod.get(periodMonth);
+    const periodCode = toPeriodCode(periodMonth);
+    const baseAmount = baseAmountsByPeriod.get(periodCode);
+    const ajusteAmount = adjustmentAmountsByPeriod.get(periodCode) ?? 0;
+    const computedAmount =
+      statusRow?.status === "final"
+        ? ((baseAmount ?? 0) + ajusteAmount)
+        : (baseAmount ?? null);
 
     return {
       periodMonth,
       status: statusRow?.status ?? "borrador",
-      finalAmount: statusRow?.final_amount ?? null,
+      finalAmount: computedAmount ?? statusRow?.final_amount ?? null,
       vsMedia: null,
       vsPeriodoAnterior: null,
       updatedAt: statusRow?.updated_at ?? null,

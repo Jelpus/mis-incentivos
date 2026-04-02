@@ -96,6 +96,9 @@ type AssignmentRow = {
   match_mode: "exact" | "fuzzy" | "none";
   none_reason: string | null;
   objective_block: "private" | "drilldown_cuentas" | "drilldown_estados" | "otros";
+  matched_rows_count: number;
+  valor_imss: number;
+  valor_issste: number;
 };
 
 export type CalculoProcessRunResult = {
@@ -129,6 +132,9 @@ export type CalculoProcessRunResult = {
     match_mode: "exact" | "fuzzy" | "none";
     none_reason: string | null;
     objective_block: "private" | "drilldown_cuentas" | "drilldown_estados" | "otros";
+    matched_rows_count: number;
+    valor_imss: number;
+    valor_issste: number;
   }>;
 };
 
@@ -930,6 +936,22 @@ export async function runCalculoProcess(
               return sum + toNumber(row.valor);
             }, 0),
           );
+          const valorImss = round6(
+            matchedRows.reduce((sum, row) => {
+              const inst = normalizeTextForCompare(row.institucion);
+              if (!inst.includes("IMSS")) return sum;
+              const ytd = toNumber(row.ytd);
+              return sum + (ytd !== 0 ? ytd : toNumber(row.valor));
+            }, 0),
+          );
+          const valorIssste = round6(
+            matchedRows.reduce((sum, row) => {
+              const inst = normalizeTextForCompare(row.institucion);
+              if (!inst.includes("ISSSTE")) return sum;
+              const ytd = toNumber(row.ytd);
+              return sum + (ytd !== 0 ? ytd : toNumber(row.valor));
+            }, 0),
+          );
           const resultado = round6(valor * peso);
           const cobertura = computeCobertura(objetivo, resultado);
           valorTotalPlan = round6(valorTotalPlan + valor);
@@ -961,6 +983,9 @@ export async function runCalculoProcess(
             match_mode: matchMode,
             none_reason: noneReason,
             objective_block: objectiveBlock,
+            matched_rows_count: matchedRows.length,
+            valor_imss: valorImss,
+            valor_issste: valorIssste,
           });
         }
       }
@@ -1063,6 +1088,9 @@ export async function runCalculoProcess(
     match_mode: row.match_mode,
     none_reason: row.none_reason,
     objective_block: row.objective_block,
+    matched_rows_count: row.matched_rows_count,
+    valor_imss: row.valor_imss,
+    valor_issste: row.valor_issste,
   }));
 
   return {
