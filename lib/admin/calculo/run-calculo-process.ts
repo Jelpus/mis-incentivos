@@ -202,10 +202,15 @@ function canonicalFuenteToken(value: unknown): string {
 function splitFuenteCandidates(value: unknown): string[] {
   const raw = String(value ?? "").trim();
   if (!raw) return [];
-  const tokens = raw
-    .split(/[;,/|]+/g)
-    .map((token) => canonicalFuenteToken(token))
-    .filter((token) => token.length > 0);
+  const tokens: string[] = [];
+  const topLevelParts = raw.split(/[;,/|]+/g);
+  for (const part of topLevelParts) {
+    const subParts = part
+      .split(/\b(?:Y|E|AND)\b/gi)
+      .map((token) => canonicalFuenteToken(token))
+      .filter((token) => token.length > 0);
+    tokens.push(...subParts);
+  }
   const normalizedFull = canonicalFuenteToken(raw);
   const unique = new Set<string>();
   if (normalizedFull) unique.add(normalizedFull);
@@ -229,6 +234,12 @@ function inferInstitutionByProductName(productName: string): "IMSS" | "ISSSTE" |
   if (normalized.includes("ISSSTE")) return "ISSSTE";
   if (normalized.includes("IMSS")) return "IMSS";
   return null;
+}
+
+function isGobProductName(productName: string): boolean {
+  const normalized = normalizeTextForCompare(productName);
+  if (!normalized) return false;
+  return normalized.endsWith(" GOB") || normalized.includes(" GOB ");
 }
 
 function dedupeSources(rows: RuleItemSourceRow[]): RuleItemSourceRow[] {
@@ -764,6 +775,9 @@ export async function runCalculoProcess(
       let resultadoTotalPlan = 0;
       const perProductAssignments: AssignmentRow[] = [];
       const expectedInstitution = inferInstitutionByProductName(productName);
+      const isGobProduct = isGobProductName(productName);
+      const desplazamientoFuenteToken = canonicalFuenteToken("DESPLAZAMIENTO");
+      const ordenesFuenteToken = canonicalFuenteToken("ORDENES");
 
       for (const source of sources.sort((a, b) => Number(a.source_order ?? 0) - Number(b.source_order ?? 0))) {
         const fileCode = normalizeFileCode(source.file_code);
@@ -817,6 +831,15 @@ export async function runCalculoProcess(
               const rowInstitution = normalizeTextForCompare(row.institucion);
               const institutionMatch = rowInstitution.includes(expectedInstitution);
               if (!institutionMatch) continue;
+            } else if (isGobProduct) {
+              let expectedGobInstitution: "IMSS" | "ISSSTE" | null = null;
+              if (rowFuenteCanonical === desplazamientoFuenteToken) expectedGobInstitution = "IMSS";
+              if (rowFuenteCanonical === ordenesFuenteToken) expectedGobInstitution = "ISSSTE";
+              if (expectedGobInstitution) {
+                const rowInstitution = normalizeTextForCompare(row.institucion);
+                const institutionMatch = rowInstitution.includes(expectedGobInstitution);
+                if (!institutionMatch) continue;
+              }
             }
             afterInstitutionRows.push(row);
 
@@ -885,7 +908,7 @@ export async function runCalculoProcess(
               noneReason = "fuente";
             } else if (afterMetricRows.length === 0) {
               noneReason = "metric";
-            } else if (expectedInstitution && afterInstitutionRows.length === 0) {
+            } else if ((expectedInstitution || isGobProduct) && afterInstitutionRows.length === 0) {
               noneReason = "institucion";
             } else if (afterFindRows.length === 0) {
               noneReason = findingMode === "estado"
