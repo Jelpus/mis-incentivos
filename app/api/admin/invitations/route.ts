@@ -8,6 +8,17 @@ type InvitePayload = {
   confirmRoleChange?: boolean;
 };
 
+function logInviteEvent(level: "info" | "warn" | "error", stage: string, details: Record<string, unknown>) {
+  const payload = {
+    area: "admin-invitations",
+    stage,
+    ...details,
+  };
+  if (level === "info") console.info(payload);
+  if (level === "warn") console.warn(payload);
+  if (level === "error") console.error(payload);
+}
+
 function getBaseUrl() {
   const siteUrl =
     process.env.NEXT_PUBLIC_SITE_URL ||
@@ -35,6 +46,7 @@ export async function POST(request: Request) {
   try {
     payload = (await request.json()) as InvitePayload;
   } catch {
+    logInviteEvent("warn", "invalid-json", { actorUserId: user.id });
     return NextResponse.json(
       { error: "No se pudo leer la solicitud." },
       { status: 400 },
@@ -43,7 +55,13 @@ export async function POST(request: Request) {
 
   const email = normalizeEmail(payload.email ?? "");
   const confirmRoleChange = Boolean(payload.confirmRoleChange);
+  logInviteEvent("info", "request-received", {
+    actorUserId: user.id,
+    email,
+    confirmRoleChange,
+  });
   if (!email || !email.includes("@")) {
+    logInviteEvent("warn", "invalid-email", { actorUserId: user.id, email });
     return NextResponse.json(
       { error: "Ingresa un correo valido." },
       { status: 400 },
@@ -54,6 +72,7 @@ export async function POST(request: Request) {
     email.endsWith("@novartis.com") || email.endsWith("@jelpus.com");
 
   if (!isAllowedAdminDomain) {
+    logInviteEvent("warn", "blocked-domain", { actorUserId: user.id, email });
     return NextResponse.json(
       { error: "Solo se permiten correos @novartis.com y @jelpus.com para admin." },
       { status: 400 },
@@ -77,6 +96,11 @@ export async function POST(request: Request) {
     .maybeSingle();
 
   if (profileLookupError) {
+    logInviteEvent("error", "profile-lookup-failed", {
+      actorUserId: user.id,
+      email,
+      error: profileLookupError.message,
+    });
     return NextResponse.json(
       { error: "No se pudo validar el perfil existente." },
       { status: 400 },
@@ -87,12 +111,22 @@ export async function POST(request: Request) {
     const currentRole = (existingProfile.global_role ?? "").toString().toLowerCase();
 
     if (currentRole === "admin" || currentRole === "super_admin") {
+      logInviteEvent("info", "already-admin", {
+        actorUserId: user.id,
+        email,
+        currentRole,
+      });
       return NextResponse.json({
         message: `El usuario ${email} ya tiene rol ${currentRole}.`,
       });
     }
 
     if (!confirmRoleChange) {
+      logInviteEvent("warn", "role-change-confirm-required", {
+        actorUserId: user.id,
+        email,
+        currentRole: currentRole || "user",
+      });
       return NextResponse.json(
         {
           code: "ROLE_CHANGE_CONFIRM_REQUIRED",
@@ -111,12 +145,23 @@ export async function POST(request: Request) {
       .eq("user_id", existingProfile.user_id);
 
     if (updateRoleError) {
+      logInviteEvent("error", "role-update-failed", {
+        actorUserId: user.id,
+        email,
+        existingUserId: existingProfile.user_id,
+        error: updateRoleError.message,
+      });
       return NextResponse.json(
         { error: "No se pudo actualizar el rol del usuario existente." },
         { status: 400 },
       );
     }
 
+    logInviteEvent("info", "role-updated", {
+      actorUserId: user.id,
+      email,
+      existingUserId: existingProfile.user_id,
+    });
     return NextResponse.json({
       message: `Rol actualizado a admin para ${email}.`,
     });
@@ -130,6 +175,11 @@ export async function POST(request: Request) {
   });
 
   if (error) {
+    logInviteEvent("error", "invite-user-failed", {
+      actorUserId: user.id,
+      email,
+      error: error.message,
+    });
     return NextResponse.json(
       { error: error.message || "No se pudo enviar la invitacion." },
       { status: 400 },
@@ -143,11 +193,18 @@ export async function POST(request: Request) {
         email,
         global_role: "admin",
         is_active: true,
+        updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id" },
     );
 
     if (profileError) {
+      logInviteEvent("error", "profile-upsert-failed", {
+        actorUserId: user.id,
+        email,
+        invitedUserId: data.user.id,
+        error: profileError.message,
+      });
       return NextResponse.json(
         {
           error:
@@ -158,6 +215,11 @@ export async function POST(request: Request) {
     }
   }
 
+  logInviteEvent("info", "invite-sent", {
+    actorUserId: user.id,
+    email,
+    invitedUserId: data.user?.id ?? null,
+  });
   return NextResponse.json({
     message: `Invitacion enviada a ${email}.`,
   });
