@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { normalizePeriodMonthInput } from "@/lib/admin/incentive-rules/shared";
-import { fetchBigQueryRows, isBigQueryConfigured, runBigQueryQuery } from "@/lib/integrations/bigquery";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { isBigQueryConfigured, runBigQueryQuery } from "@/lib/integrations/bigquery";
 
 type AdjustmentActionResult =
   | { ok: true; message: string; applied: number; invalid: number; errors: string[] }
@@ -226,8 +227,7 @@ async function applyAdjustments(
     return { ok: false, message: "No hay filas validas para aplicar.", errors: [] };
   }
 
-  const { projectId, datasetId, baseTableId, adjustmentsTableId } = await ensureBigQueryReady();
-  const baseTableRef = `\`${projectId}.${datasetId}.${baseTableId}\``;
+  const { projectId, datasetId, adjustmentsTableId } = await ensureBigQueryReady();
   const adjustmentsTableRef = `\`${projectId}.${datasetId}.${adjustmentsTableId}\``;
   const periodo = normalizePeriodCode(periodMonth);
   const fixedStage = "precalculo";
@@ -241,26 +241,33 @@ async function applyAdjustments(
     return { ok: false, message: "No hay rutas validas en el archivo.", errors: [] };
   }
 
-  const routeInList = distinctRouteKeys.map(sqlStringLiteral).join(", ");
-  const existingRoutesRows = await fetchBigQueryRows<{ ruta_key: string | null; ruta: string | null }>({
-    query: `
-      SELECT
-        LOWER(REGEXP_REPLACE(TRIM(ruta), r'\\s+', '')) AS ruta_key,
-        ANY_VALUE(TRIM(ruta)) AS ruta
-      FROM ${baseTableRef}
-      WHERE periodo = @periodo
-        AND LOWER(REGEXP_REPLACE(TRIM(ruta), r'\\s+', '')) IN (${routeInList})
-      GROUP BY ruta_key
-    `,
-    parameters: [{ name: "periodo", type: "STRING", value: periodo }],
-  });
   const existingRoutes = new Map<string, string>();
-  for (const row of existingRoutesRows ?? []) {
-    const routeKey = normalizeRouteMatchKey(String(row.ruta_key ?? ""));
-    const routeValue = normalizeRouteKey(String(row.ruta ?? ""));
+  const supabase = createAdminClient();
+  if (!supabase) {
+    return { ok: false, message: "No hay conexion admin para validar rutas en sales_force_status." };
+  }
+  const statusRoutesResult = await supabase
+    .from("sales_force_status")
+    .select("territorio_individual")
+    .eq("period_month", periodMonth)
+    .eq("is_deleted", false);
+
+  if (statusRoutesResult.error) {
+    return { ok: false, message: `No se pudo validar rutas con sales_force_status: ${statusRoutesResult.error.message}` };
+  }
+
+  for (const row of statusRoutesResult.data ?? []) {
+    const routeValue = normalizeRouteKey(String(row.territorio_individual ?? ""));
+    const routeKey = normalizeRouteMatchKey(routeValue);
     if (routeKey && routeValue && !existingRoutes.has(routeKey)) {
       existingRoutes.set(routeKey, routeValue);
     }
+  }
+  if (existingRoutes.size === 0) {
+    return {
+      ok: false,
+      message: `No hay rutas en sales_force_status para ${periodMonth}.`,
+    };
   }
 
   const validRows: AdjustmentInput[] = [];

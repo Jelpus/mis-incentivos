@@ -1,4 +1,5 @@
-import { fetchBigQueryRows, isBigQueryConfigured } from "@/lib/integrations/bigquery";
+import { fetchBigQueryRows } from "@/lib/integrations/bigquery";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 type OptionRow = { value: string | null };
 
@@ -13,8 +14,9 @@ function toPeriodCode(periodMonth: string): string {
 }
 
 export async function getAdjustmentsOptionsData(periodMonth: string): Promise<AdjustmentsOptionsData> {
-  if (!isBigQueryConfigured()) {
-    return { rutas: [], productNames: [], message: "BigQuery no configurado para cargar opciones." };
+  const supabase = createAdminClient();
+  if (!supabase) {
+    return { rutas: [], productNames: [], message: "Sin conexion admin para leer rutas de Status." };
   }
 
   const projectId = process.env.GCP_PROJECT_ID?.trim();
@@ -27,19 +29,12 @@ export async function getAdjustmentsOptionsData(periodMonth: string): Promise<Ad
   const tableRef = `\`${projectId}.${datasetId}.${tableId}\``;
   const periodCode = toPeriodCode(periodMonth);
 
-  const [rutasRows, productsRows] = await Promise.all([
-    fetchBigQueryRows<OptionRow>({
-      query: `
-        SELECT DISTINCT ruta AS value
-        FROM ${tableRef}
-        WHERE periodo = @periodo
-          AND ruta IS NOT NULL
-          AND TRIM(ruta) <> ''
-        ORDER BY value ASC
-        LIMIT 5000
-      `,
-      parameters: [{ name: "periodo", type: "STRING", value: periodCode }],
-    }),
+  const [statusRoutesResult, productsRows] = await Promise.all([
+    supabase
+      .from("sales_force_status")
+      .select("territorio_individual")
+      .eq("period_month", periodMonth)
+      .eq("is_deleted", false),
     fetchBigQueryRows<OptionRow>({
       query: `
         SELECT DISTINCT product_name AS value
@@ -54,9 +49,21 @@ export async function getAdjustmentsOptionsData(periodMonth: string): Promise<Ad
     }),
   ]);
 
-  const rutas = (rutasRows ?? [])
-    .map((row) => String(row.value ?? "").trim())
-    .filter((value) => value.length > 0);
+  if (statusRoutesResult.error) {
+    return {
+      rutas: [],
+      productNames: [],
+      message: `No se pudieron cargar rutas desde sales_force_status: ${statusRoutesResult.error.message}`,
+    };
+  }
+
+  const rutas = Array.from(
+    new Set(
+      (statusRoutesResult.data ?? [])
+        .map((row) => String(row.territorio_individual ?? "").trim())
+        .filter((value) => value.length > 0),
+    ),
+  ).sort((a, b) => a.localeCompare(b, "es"));
   const productNames = (productsRows ?? [])
     .map((row) => String(row.value ?? "").trim())
     .filter((value) => value.length > 0);
