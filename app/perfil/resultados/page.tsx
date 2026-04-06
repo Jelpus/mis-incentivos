@@ -23,6 +23,7 @@ export default async function PerfilResultadosPage({ searchParams }: ResultadosP
   const profileUserId = effectiveUserId ?? user.id;
   const params = searchParams ? await searchParams : {};
   const requestedPeriod = params?.periodo ?? null;
+  const profileResultsTable = process.env.BQ_RESULTS_PROFILE_TABLE?.trim() || "resultados_v2_con_ajustes";
 
   const [data, periodSummaryData] = await Promise.all([
     getResultadosV2Data({
@@ -30,11 +31,13 @@ export default async function PerfilResultadosPage({ searchParams }: ResultadosP
       profileUserId,
       periodCode: requestedPeriod,
       maxRows: role === "user" ? 120 : 250,
+      readTableId: profileResultsTable,
     }),
     getResultadosV2PeriodSummary({
       role,
       profileUserId,
       maxPeriods: 12,
+      readTableId: profileResultsTable,
     }),
   ]);
 

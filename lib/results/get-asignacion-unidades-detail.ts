@@ -14,6 +14,7 @@ type BigQueryAsignacionRow = {
   brick: string | null;
   molecula_producto: string | null;
   valor: number | null;
+  resultadomes: number | null;
   periodo: string | null;
   referencia: string | null;
 };
@@ -102,16 +103,45 @@ async function getAnchorForUser(userId: string, role: ProfileRole | null): Promi
 }
 
 function mapRow(row: BigQueryAsignacionRow): AsignacionUnidadDetailRow {
+  const resultadoMes = row.resultadomes ?? null;
+  const valorFallback = row.valor ?? null;
   return {
     asignacion: row.asignacion ?? null,
     ruta: row.ruta ?? null,
     teamId: row.teamid ?? null,
     brick: row.brick ?? null,
     moleculaProducto: row.molecula_producto ?? null,
-    valor: row.valor ?? null,
+    valor: resultadoMes ?? valorFallback,
     periodo: row.periodo ?? null,
     referencia: row.referencia ?? null,
   };
+}
+
+function buildPeriodoVariants(periodoInput: string): {
+  raw: string;
+  compact: string;
+  ym: string;
+  ymd: string;
+} {
+  const raw = String(periodoInput ?? "").trim();
+  const compact = /^\d{6}$/.test(raw)
+    ? raw
+    : /^\d{4}-\d{2}$/.test(raw)
+      ? `${raw.slice(0, 4)}${raw.slice(5, 7)}`
+      : /^\d{4}-\d{2}-\d{2}$/.test(raw)
+        ? `${raw.slice(0, 4)}${raw.slice(5, 7)}`
+        : raw.replace(/[^0-9]/g, "").slice(0, 6);
+  const ym = /^\d{4}-\d{2}$/.test(raw)
+    ? raw
+    : /^\d{6}$/.test(raw)
+      ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}`
+      : /^\d{4}-\d{2}-\d{2}$/.test(raw)
+        ? raw.slice(0, 7)
+        : compact && compact.length === 6
+          ? `${compact.slice(0, 4)}-${compact.slice(4, 6)}`
+          : raw;
+  const ymd = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : `${ym}-01`;
+  return { raw, compact, ym, ymd };
 }
 
 export async function getAsignacionUnidadesDetail(params: {
@@ -158,8 +188,9 @@ export async function getAsignacionUnidadesDetail(params: {
   }
 
   const tableRef = `\`${projectId}.${datasetId}.${tableId}\``;
+  const periodoVariants = buildPeriodoVariants(params.periodo);
   const where: string[] = [
-    "periodo = @periodo",
+    "(periodo = @periodo_raw OR periodo = @periodo_compact OR periodo = @periodo_ym OR periodo = @periodo_ymd)",
     "ruta = @ruta",
     "plan = @plan",
   ];
@@ -168,7 +199,10 @@ export async function getAsignacionUnidadesDetail(params: {
     type: "STRING" | "INT64" | "FLOAT64" | "BOOL";
     value: string | number | boolean | null;
   }> = [
-    { name: "periodo", type: "STRING", value: params.periodo },
+    { name: "periodo_raw", type: "STRING", value: periodoVariants.raw },
+    { name: "periodo_compact", type: "STRING", value: periodoVariants.compact },
+    { name: "periodo_ym", type: "STRING", value: periodoVariants.ym },
+    { name: "periodo_ymd", type: "STRING", value: periodoVariants.ymd },
     { name: "ruta", type: "STRING", value: params.ruta },
     { name: "plan", type: "STRING", value: params.plan },
   ];
@@ -187,11 +221,12 @@ export async function getAsignacionUnidadesDetail(params: {
         brick,
         molecula_producto,
         valor,
+        resultadomes,
         periodo,
         encontrar AS referencia
       FROM ${tableRef}
       WHERE ${where.join(" AND ")}
-      ORDER BY valor DESC
+      ORDER BY IFNULL(resultadomes, valor) DESC
       LIMIT 200
     `,
     parameters,

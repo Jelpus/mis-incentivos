@@ -202,6 +202,7 @@ function getTitle(pathname: string) {
   if (pathname.startsWith("/admin/control-acceso")) return "Control de acceso";
   if (pathname.startsWith("/admin/curvas-de-pago")) return "Curvas de pago";
   if (pathname.startsWith("/admin/incentive-rules")) return "Reglas de incentivos";
+  if (pathname.startsWith("/admin/reglas-ranking")) return "Reglas de Ranking";
   if (pathname.startsWith("/admin/data-sources")) return "Fuentes de datos";
   if (pathname.startsWith("/admin/source-ranking")) return "Data Source Ranking";
   if (pathname.startsWith("/admin")) return "Panel de administracion";

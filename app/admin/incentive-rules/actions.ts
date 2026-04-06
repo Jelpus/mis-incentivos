@@ -1603,6 +1603,13 @@ export async function uploadTeamRulesFromExcelAction(
       "distribucion no asignada",
       "distribucion_no_asignada",
     ]),
+    ranking: resolveHeader(["ranking"]),
+    puntosRankingLvu: resolveHeader([
+      "puntos_ranking_lvu",
+      "puntos ranking lvu",
+      "puntos_ranking",
+      "puntos ranking",
+    ]),
     precioPromedio: resolveHeader([
       "precio promedio",
       "precio-promedio",
@@ -1663,6 +1670,22 @@ export async function uploadTeamRulesFromExcelAction(
       molecula: moleculaHeader,
       metric: metricHeader,
     });
+  }
+
+  const reservedNormalizedHeaders = new Set<string>([
+    ...Object.values(requiredHeaderKeys).filter((value): value is string => Boolean(value)).map(
+      (value) => normalizeHeader(value),
+    ),
+    ...Object.values(optionalHeaderKeys).filter((value): value is string => Boolean(value)).map(
+      (value) => normalizeHeader(value),
+    ),
+  ]);
+
+  for (const sourceHeader of fileHeaders) {
+    if (sourceHeader.file) reservedNormalizedHeaders.add(normalizeHeader(sourceHeader.file));
+    if (sourceHeader.fuente) reservedNormalizedHeaders.add(normalizeHeader(sourceHeader.fuente));
+    if (sourceHeader.molecula) reservedNormalizedHeaders.add(normalizeHeader(sourceHeader.molecula));
+    if (sourceHeader.metric) reservedNormalizedHeaders.add(normalizeHeader(sourceHeader.metric));
   }
 
   const validationErrors: string[] = [];
@@ -1748,6 +1771,16 @@ export async function uploadTeamRulesFromExcelAction(
       })
       .filter((source): source is { file: string; fuente: string; molecula_producto: string; metric: string; order: number } => Boolean(source));
 
+    const extraFields: Record<string, unknown> = {};
+    for (const header of firstRowHeaders) {
+      if (reservedNormalizedHeaders.has(normalizeHeader(header))) continue;
+      const rawValue = excelRow[header];
+      if (rawValue === null || rawValue === undefined) continue;
+      const textValue = String(rawValue).trim();
+      if (!textValue) continue;
+      extraFields[header] = rawValue;
+    }
+
     const rule = {
       rule_id: `${teamId}-${rowNumber}`,
       team_id: teamId,
@@ -1762,6 +1795,12 @@ export async function uploadTeamRulesFromExcelAction(
       distribucion_no_asignada: optionalHeaderKeys.distribucionNoAsignada
         ? parseBooleanLike(excelRow[optionalHeaderKeys.distribucionNoAsignada])
         : false,
+      ranking: optionalHeaderKeys.ranking
+        ? String(excelRow[optionalHeaderKeys.ranking] ?? "").trim()
+        : "",
+      puntos_ranking_lvu: optionalHeaderKeys.puntosRankingLvu
+        ? parseOptionalNumber(excelRow[optionalHeaderKeys.puntosRankingLvu])
+        : null,
       prod_weight: prodWeight,
       calcular_en_valores: calcularEnValores,
       precio_promedio: calcularEnValores ? precioPromedioValue : null,
@@ -1782,6 +1821,7 @@ export async function uploadTeamRulesFromExcelAction(
       molecula_producto3: sources[2]?.molecula_producto ?? "",
       metric3: sources[2]?.metric ?? "",
       sources,
+      extra_fields: extraFields,
     };
 
     parsedRows.push({ rowNumber, teamId, rule });
@@ -1907,6 +1947,7 @@ export async function uploadTeamRulesFromExcelAction(
     source_type: string;
     created_by: string;
     rule_definition_id: string;
+    rule_definition: Record<string, unknown>;
   }> = [];
 
   for (const [teamId, rules] of rulesByTeam.entries()) {
@@ -1919,6 +1960,9 @@ export async function uploadTeamRulesFromExcelAction(
         import_file_name: file.name,
         import_sheet_name: finalSheetName,
         imported_at: new Date().toISOString(),
+        extra_headers: firstRowHeaders.filter(
+          (header) => !reservedNormalizedHeaders.has(normalizeHeader(header)),
+        ),
       },
       reference_values: TEAM_RULE_REFERENCE_VALUES,
       rules,
@@ -1953,6 +1997,7 @@ export async function uploadTeamRulesFromExcelAction(
       source_type: "excel_import",
       created_by: user.id,
       rule_definition_id: definitionId,
+      rule_definition: definition,
     });
   }
 

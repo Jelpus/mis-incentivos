@@ -44,6 +44,10 @@ function normalizeRouteKey(value: string): string {
   return normalizeText(value);
 }
 
+function normalizeRouteMatchKey(value: string): string {
+  return normalizeRouteKey(value).toLowerCase().replace(/\s+/g, "");
+}
+
 function sqlStringLiteral(value: string): string {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
@@ -230,42 +234,54 @@ async function applyAdjustments(
   let applied = 0;
   let invalid = 0;
   const errors: string[] = [];
-  const distinctRoutes = Array.from(
-    new Set(rows.map((row) => normalizeRouteKey(row.ruta)).filter((route) => route.length > 0)),
+  const distinctRouteKeys = Array.from(
+    new Set(rows.map((row) => normalizeRouteMatchKey(row.ruta)).filter((routeKey) => routeKey.length > 0)),
   );
-  if (distinctRoutes.length === 0) {
+  if (distinctRouteKeys.length === 0) {
     return { ok: false, message: "No hay rutas validas en el archivo.", errors: [] };
   }
 
-  const routeInList = distinctRoutes.map(sqlStringLiteral).join(", ");
-  const existingRoutesRows = await fetchBigQueryRows<{ ruta: string | null }>({
+  const routeInList = distinctRouteKeys.map(sqlStringLiteral).join(", ");
+  const existingRoutesRows = await fetchBigQueryRows<{ ruta_key: string | null; ruta: string | null }>({
     query: `
-      SELECT DISTINCT TRIM(ruta) AS ruta
+      SELECT
+        LOWER(REGEXP_REPLACE(TRIM(ruta), r'\\s+', '')) AS ruta_key,
+        ANY_VALUE(TRIM(ruta)) AS ruta
       FROM ${baseTableRef}
       WHERE periodo = @periodo
-        AND TRIM(ruta) IN (${routeInList})
+        AND LOWER(REGEXP_REPLACE(TRIM(ruta), r'\\s+', '')) IN (${routeInList})
+      GROUP BY ruta_key
     `,
     parameters: [{ name: "periodo", type: "STRING", value: periodo }],
   });
-  const existingRoutes = new Set(
-    (existingRoutesRows ?? [])
-      .map((row) => normalizeRouteKey(String(row.ruta ?? "")))
-      .filter((route) => route.length > 0),
-  );
+  const existingRoutes = new Map<string, string>();
+  for (const row of existingRoutesRows ?? []) {
+    const routeKey = normalizeRouteMatchKey(String(row.ruta_key ?? ""));
+    const routeValue = normalizeRouteKey(String(row.ruta ?? ""));
+    if (routeKey && routeValue && !existingRoutes.has(routeKey)) {
+      existingRoutes.set(routeKey, routeValue);
+    }
+  }
 
   const validRows: AdjustmentInput[] = [];
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const rowNumber = index + 2;
-    const routeKey = normalizeRouteKey(row.ruta);
-    if (!existingRoutes.has(routeKey)) {
+    const routeInput = normalizeRouteKey(row.ruta);
+    const routeKey = normalizeRouteMatchKey(routeInput);
+    const matchedRoute = existingRoutes.get(routeKey);
+    if (!matchedRoute) {
       invalid += 1;
       if (errors.length < 25) {
         errors.push(`Fila ${rowNumber}: ruta=${row.ruta} no existe en ${periodMonth}.`);
       }
       continue;
     }
-    validRows.push(row);
+    validRows.push({
+      ...row,
+      ruta: matchedRoute,
+      productName: normalizeText(row.productName),
+    });
   }
 
   if (validRows.length > 0) {
@@ -313,7 +329,7 @@ async function applyAdjustments(
           ${sourceSql}
         ) S
         ON T.periodo = S.periodo
-          AND UPPER(TRIM(T.ruta)) = UPPER(TRIM(S.ruta))
+          AND LOWER(REGEXP_REPLACE(TRIM(T.ruta), r'\\s+', '')) = LOWER(REGEXP_REPLACE(TRIM(S.ruta), r'\\s+', ''))
           AND UPPER(TRIM(T.product_name)) = UPPER(TRIM(S.product_name))
           AND T.stage = S.stage
           AND T.kind = S.kind
@@ -424,8 +440,8 @@ export async function deleteManualAdjustmentAction(
           updated_at = CURRENT_TIMESTAMP(),
           updated_by = @updated_by
         WHERE periodo = @periodo
-          AND ruta = @ruta
-          AND product_name = @product_name
+          AND LOWER(REGEXP_REPLACE(TRIM(ruta), r'\\s+', '')) = LOWER(REGEXP_REPLACE(TRIM(@ruta), r'\\s+', ''))
+          AND UPPER(TRIM(product_name)) = UPPER(TRIM(@product_name))
           AND stage = @stage
           AND kind = @kind
           AND is_active = TRUE

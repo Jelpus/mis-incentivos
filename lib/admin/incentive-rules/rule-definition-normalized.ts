@@ -41,6 +41,13 @@ type ItemSourceRow = {
   molecula_producto: string | null;
 };
 
+type ItemMetaRow = {
+  item_id: number;
+  ranking: string | null;
+  puntos_ranking_lvu: number | null;
+  extra_fields: JsonRecord | null;
+};
+
 function parseOptionalNumber(value: unknown): number | null {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : null;
@@ -64,6 +71,11 @@ function parseBooleanLike(value: unknown): boolean {
 function normalizeText(value: unknown): string | null {
   const raw = String(value ?? "").trim();
   return raw.length > 0 ? raw : null;
+}
+
+function normalizeJsonRecord(value: unknown): JsonRecord | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as JsonRecord;
 }
 
 function extractSourcesFromRule(rule: JsonRecord): ItemSourceRow[] {
@@ -149,6 +161,7 @@ export async function createNormalizedRuleDefinition(params: {
 
   const rules = Array.isArray(definition.rules) ? definition.rules : [];
   const pendingSourceInserts: ItemSourceRow[] = [];
+  const pendingMetaUpserts: ItemMetaRow[] = [];
 
   for (let index = 0; index < rules.length; index += 1) {
     const item = rules[index];
@@ -188,6 +201,18 @@ export async function createNormalizedRuleDefinition(params: {
       item_id: itemId,
     }));
     pendingSourceInserts.push(...itemSources);
+
+    const ranking = normalizeText(rule.ranking);
+    const puntosRankingLvu = parseOptionalNumber(rule.puntos_ranking_lvu);
+    const extraFields = normalizeJsonRecord(rule.extra_fields);
+    if (ranking || puntosRankingLvu !== null || extraFields) {
+      pendingMetaUpserts.push({
+        item_id: itemId,
+        ranking,
+        puntos_ranking_lvu: puntosRankingLvu,
+        extra_fields: extraFields,
+      });
+    }
   }
 
   if (pendingSourceInserts.length > 0) {
@@ -198,6 +223,18 @@ export async function createNormalizedRuleDefinition(params: {
     if (insertSourcesResult.error && !isMissingRelationError(insertSourcesResult.error)) {
       throw new Error(
         `No se pudo crear team_rule_definition_item_sources: ${insertSourcesResult.error.message}`,
+      );
+    }
+  }
+
+  if (pendingMetaUpserts.length > 0) {
+    const upsertMetaResult = await params.supabase
+      .from("team_rule_definition_item_meta")
+      .upsert(pendingMetaUpserts, { onConflict: "item_id" });
+
+    if (upsertMetaResult.error && !isMissingRelationError(upsertMetaResult.error)) {
+      throw new Error(
+        `No se pudo crear team_rule_definition_item_meta: ${upsertMetaResult.error.message}`,
       );
     }
   }
@@ -249,6 +286,7 @@ export async function loadRuleDefinitionsByIds(params: {
   const items = (itemsResult.data ?? []) as ItemRow[];
   const itemIds = items.map((item) => item.id);
   const sourcesByItemId = new Map<number, ItemSourceRow[]>();
+  const metaByItemId = new Map<number, ItemMetaRow>();
 
   if (itemIds.length > 0) {
     const sourcesResult = await params.supabase
@@ -268,6 +306,32 @@ export async function loadRuleDefinitionsByIds(params: {
     } else if (!isMissingRelationError(sourcesResult.error)) {
       throw new Error(
         `No se pudo leer team_rule_definition_item_sources: ${sourcesResult.error.message}`,
+      );
+    }
+
+    const metaResult = await params.supabase
+      .from("team_rule_definition_item_meta")
+      .select("item_id, ranking, puntos_ranking_lvu, extra_fields")
+      .in("item_id", itemIds);
+
+    if (!metaResult.error) {
+      const metaRows = (metaResult.data ?? []) as Array<{
+        item_id: number;
+        ranking: string | null;
+        puntos_ranking_lvu: number | string | null;
+        extra_fields: JsonRecord | null;
+      }>;
+      for (const row of metaRows) {
+        metaByItemId.set(row.item_id, {
+          item_id: row.item_id,
+          ranking: normalizeText(row.ranking),
+          puntos_ranking_lvu: parseOptionalNumber(row.puntos_ranking_lvu),
+          extra_fields: normalizeJsonRecord(row.extra_fields),
+        });
+      }
+    } else if (!isMissingRelationError(metaResult.error)) {
+      throw new Error(
+        `No se pudo leer team_rule_definition_item_meta: ${metaResult.error.message}`,
       );
     }
   }
@@ -316,6 +380,19 @@ export async function loadRuleDefinitionsByIds(params: {
           rule[`fuente${legacyNumber}`] = source.fuente ?? "";
           rule[`molecula_producto${legacyNumber}`] = source.molecula_producto ?? "";
           rule[`metric${legacyNumber}`] = source.metric ?? "";
+        }
+      }
+
+      const meta = metaByItemId.get(item.id);
+      if (meta) {
+        if (meta.ranking) {
+          rule.ranking = meta.ranking;
+        }
+        if (meta.puntos_ranking_lvu !== null) {
+          rule.puntos_ranking_lvu = meta.puntos_ranking_lvu;
+        }
+        if (meta.extra_fields) {
+          rule.extra_fields = meta.extra_fields;
         }
       }
 

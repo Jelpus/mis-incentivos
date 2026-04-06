@@ -15,11 +15,13 @@ export async function GET(request: Request) {
   const maxPeriods = Number.isFinite(maxPeriodsParam)
     ? Math.max(3, Math.min(24, maxPeriodsParam))
     : undefined;
+  const profileResultsTable = process.env.BQ_RESULTS_PROFILE_TABLE?.trim() || "resultados_v2_con_ajustes";
 
   const data = await getResultadosV2PeriodSummary({
     role,
     profileUserId: effectiveUserId ?? user.id,
     maxPeriods,
+    readTableId: profileResultsTable,
   });
 
   return NextResponse.json({ data });

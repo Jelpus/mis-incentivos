@@ -413,6 +413,7 @@ export default async function MiCuentaPage() {
 
   const profileUserId = effectiveUserId ?? user.id;
   const profileEmail = effectiveEmail ?? user.email ?? null;
+  const profileResultsTable = process.env.BQ_RESULTS_PROFILE_TABLE?.trim() || "resultados_v2_con_ajustes";
 
   let userMatch: Awaited<ReturnType<typeof getLatestSalesForceMatch>> | null = null;
   let managerMatch: Awaited<ReturnType<typeof getLatestManagerMatch>> | null = null;
@@ -463,6 +464,7 @@ export default async function MiCuentaPage() {
     role,
     profileUserId,
     maxRows: role === "user" ? 80 : 150,
+    readTableId: profileResultsTable,
   });
 
   if (!resultadosData.ok) {

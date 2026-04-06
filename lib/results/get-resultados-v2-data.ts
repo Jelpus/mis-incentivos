@@ -99,13 +99,15 @@ type QueryParam = {
   value: string | number | boolean | null;
 };
 
-function getResultsReadConfig() {
+function getResultsReadConfig(overrideTableId?: string | null) {
+  const forcedTableId = String(overrideTableId ?? "").trim();
   const tableId =
+    forcedTableId ||
     process.env.BQ_RESULTS_READ_TABLE?.trim() ||
     process.env.BQ_RESULTS_TABLE?.trim() ||
     "resultados_v2";
   const readStage = process.env.BQ_RESULTS_READ_STAGE?.trim() || null;
-  const useStageFilter = Boolean(process.env.BQ_RESULTS_READ_TABLE?.trim() && readStage);
+  const useStageFilter = Boolean(!forcedTableId && process.env.BQ_RESULTS_READ_TABLE?.trim() && readStage);
   return { tableId, readStage, useStageFilter };
 }
 
@@ -383,6 +385,7 @@ export async function getResultadosV2PeriodSummary(params: {
   role: ProfileRole | null;
   profileUserId: string;
   maxPeriods?: number;
+  readTableId?: string | null;
 }): Promise<{
   ok: boolean;
   scope: ResultadoScope;
@@ -391,7 +394,7 @@ export async function getResultadosV2PeriodSummary(params: {
 }> {
   const projectId = process.env.GCP_PROJECT_ID;
   const datasetId = process.env.BQ_RESULTS_DATASET?.trim() || "incentivos";
-  const { tableId, readStage, useStageFilter } = getResultsReadConfig();
+  const { tableId, readStage, useStageFilter } = getResultsReadConfig(params.readTableId);
   const maxPeriods = Math.max(3, Math.min(24, params.maxPeriods ?? 12));
 
   const fallbackScope = resolveScope(params.role);
@@ -481,11 +484,12 @@ export async function getResultadosV2Data(params: {
   profileUserId: string;
   periodCode?: string | null;
   maxRows?: number;
+  readTableId?: string | null;
 }): Promise<ResultadosV2Data> {
   const maxRows = Math.max(20, Math.min(500, params.maxRows ?? 120));
   const projectId = process.env.GCP_PROJECT_ID;
   const datasetId = process.env.BQ_RESULTS_DATASET?.trim() || "incentivos";
-  const { tableId, readStage, useStageFilter } = getResultsReadConfig();
+  const { tableId, readStage, useStageFilter } = getResultsReadConfig(params.readTableId);
 
   const emptySummary: ResultadoSummary = {
     rowCount: 0,

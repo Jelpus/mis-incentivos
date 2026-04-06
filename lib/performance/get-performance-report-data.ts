@@ -32,6 +32,13 @@ type BigQueryOptionRow = {
   value: string | null;
 };
 
+type BigQueryProductDistributionBaseRow = {
+  product_name: string | null;
+  route_key: string | null;
+  payout_value: number | null;
+  coverage_value: number | null;
+};
+
 type ManagerOption = {
   value: string;
   label: string;
@@ -86,6 +93,25 @@ export type PerformanceFilterOptions = {
   managers: ManagerOption[];
 };
 
+export type PerformanceProductBandRow = {
+  productName: string;
+  totalRoutes: number;
+  payout_0_30: number;
+  payout_31_60: number;
+  payout_61_90: number;
+  payout_90_100: number;
+  payout_101_150: number;
+  payout_151_200: number;
+  payout_201_250: number;
+  coverage_0_30: number;
+  coverage_31_60: number;
+  coverage_61_90: number;
+  coverage_90_100: number;
+  coverage_101_150: number;
+  coverage_151_200: number;
+  coverage_201_250: number;
+};
+
 export type PerformanceReportData = {
   ok: boolean;
   availablePeriods: string[];
@@ -99,6 +125,7 @@ export type PerformanceReportData = {
   filterOptions: PerformanceFilterOptions;
   summary: PerformanceSummary;
   bins: PerformanceCoverageBin[];
+  productBands: PerformanceProductBandRow[];
   message: string | null;
 };
 
@@ -324,6 +351,92 @@ function computeSummary(rows: BigQueryRouteCoverageRow[]): PerformanceSummary {
   };
 }
 
+type BandKey =
+  | "0_30"
+  | "31_60"
+  | "61_90"
+  | "90_100"
+  | "101_150"
+  | "151_200"
+  | "201_250";
+
+function resolveBandKey(value: number): BandKey | null {
+  if (!Number.isFinite(value)) return null;
+  if (value >= 0 && value <= 30) return "0_30";
+  if (value > 30 && value <= 60) return "31_60";
+  if (value > 60 && value < 90) return "61_90";
+  if (value >= 90 && value <= 100) return "90_100";
+  if (value > 100 && value <= 150) return "101_150";
+  if (value > 150 && value <= 200) return "151_200";
+  if (value > 200 && value <= 250) return "201_250";
+  return null;
+}
+
+function createEmptyBandCounter() {
+  return {
+    "0_30": new Set<string>(),
+    "31_60": new Set<string>(),
+    "61_90": new Set<string>(),
+    "90_100": new Set<string>(),
+    "101_150": new Set<string>(),
+    "151_200": new Set<string>(),
+    "201_250": new Set<string>(),
+  };
+}
+
+function computeProductBands(rows: BigQueryProductDistributionBaseRow[]): PerformanceProductBandRow[] {
+  const map = new Map<
+    string,
+    {
+      routes: Set<string>;
+      payout: ReturnType<typeof createEmptyBandCounter>;
+      coverage: ReturnType<typeof createEmptyBandCounter>;
+    }
+  >();
+
+  for (const row of rows) {
+    const productName = String(row.product_name ?? "").trim();
+    const routeKey = String(row.route_key ?? "").trim();
+    if (!productName || !routeKey) continue;
+
+    const current = map.get(productName) ?? {
+      routes: new Set<string>(),
+      payout: createEmptyBandCounter(),
+      coverage: createEmptyBandCounter(),
+    };
+    current.routes.add(routeKey);
+
+    const payoutBand = resolveBandKey(Number(row.payout_value ?? 0));
+    if (payoutBand) current.payout[payoutBand].add(routeKey);
+
+    const coverageBand = resolveBandKey(Number(row.coverage_value ?? 0));
+    if (coverageBand) current.coverage[coverageBand].add(routeKey);
+
+    map.set(productName, current);
+  }
+
+  return Array.from(map.entries())
+    .map(([productName, counters]) => ({
+      productName,
+      totalRoutes: counters.routes.size,
+      payout_0_30: counters.payout["0_30"].size,
+      payout_31_60: counters.payout["31_60"].size,
+      payout_61_90: counters.payout["61_90"].size,
+      payout_90_100: counters.payout["90_100"].size,
+      payout_101_150: counters.payout["101_150"].size,
+      payout_151_200: counters.payout["151_200"].size,
+      payout_201_250: counters.payout["201_250"].size,
+      coverage_0_30: counters.coverage["0_30"].size,
+      coverage_31_60: counters.coverage["31_60"].size,
+      coverage_61_90: counters.coverage["61_90"].size,
+      coverage_90_100: counters.coverage["90_100"].size,
+      coverage_101_150: counters.coverage["101_150"].size,
+      coverage_151_200: counters.coverage["151_200"].size,
+      coverage_201_250: counters.coverage["201_250"].size,
+    }))
+    .sort((a, b) => a.productName.localeCompare(b.productName, "es"));
+}
+
 async function getManagerNameMap(params: {
   managerKeys: string[];
   periodCodes: string[];
@@ -424,6 +537,7 @@ export async function getPerformanceReportData(params: {
     },
     summary: createEmptySummary(),
     bins: createCoverageBins(),
+    productBands: [],
     message: "No fue posible cargar performance report.",
   };
 
@@ -476,8 +590,9 @@ export async function getPerformanceReportData(params: {
     useStageFilter,
   });
 
-  const routeRows = await fetchBigQueryRows<BigQueryRouteCoverageRow>({
-    query: `
+  const [routeRows, productDistributionRows] = await Promise.all([
+    fetchBigQueryRows<BigQueryRouteCoverageRow>({
+      query: `
       WITH route_base AS (
         SELECT
           COALESCE(NULLIF(TRIM(representante), ''), NULLIF(TRIM(ruta), '')) AS route_key,
@@ -495,8 +610,28 @@ export async function getPerformanceReportData(params: {
       FROM route_base
       WHERE route_key IS NOT NULL
     `,
-    parameters: whereContext.parameters,
-  });
+      parameters: whereContext.parameters,
+    }),
+    fetchBigQueryRows<BigQueryProductDistributionBaseRow>({
+      query: `
+      SELECT
+        product_name,
+        COALESCE(
+          NULLIF(TRIM(representante), ''),
+          NULLIF(TRIM(ruta), ''),
+          CAST(empleado AS STRING),
+          CONCAT(IFNULL(team_id, ''), '|', IFNULL(product_name, ''))
+        ) AS route_key,
+        SAFE_MULTIPLY(IFNULL(coberturapago, 0), 100) AS payout_value,
+        SAFE_MULTIPLY(IFNULL(cobertura, 0), 100) AS coverage_value
+      FROM ${tableRef}
+      WHERE ${whereContext.whereSql}
+        AND product_name IS NOT NULL
+        AND TRIM(product_name) <> ''
+    `,
+      parameters: whereContext.parameters,
+    }),
+  ]);
 
   const [teamIds, lineas, productNames, managerKeys] = await Promise.all([
     fetchDistinctOptions({
@@ -554,6 +689,7 @@ export async function getPerformanceReportData(params: {
 
   const summary = computeSummary(routeRows ?? []);
   const bins = computeBins(routeRows ?? []);
+  const productBands = computeProductBands(productDistributionRows ?? []);
 
   return {
     ok: true,
@@ -568,6 +704,7 @@ export async function getPerformanceReportData(params: {
     },
     summary,
     bins,
+    productBands,
     message: null,
   };
 }

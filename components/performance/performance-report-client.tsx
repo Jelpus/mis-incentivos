@@ -165,6 +165,8 @@ export function PerformanceReportClient({ initialData }: PerformanceReportClient
   const [manager, setManager] = useState(initialData.filters.manager);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bandMetric, setBandMetric] = useState<"payout" | "coverage">("payout");
+  const [exporting, setExporting] = useState(false);
   const initialKeyRef = useRef(
     buildRequestKey({
       periodCodes: initialData.selectedPeriods,
@@ -273,6 +275,96 @@ export function PerformanceReportClient({ initialData }: PerformanceReportClient
     setManager("");
   }
 
+  function getBandPercents(row: PerformanceReportData["productBands"][number], metric: "payout" | "coverage") {
+    const total = row.totalRoutes > 0 ? row.totalRoutes : 1;
+    const values =
+      metric === "payout"
+        ? [
+            row.payout_0_30,
+            row.payout_31_60,
+            row.payout_61_90,
+            row.payout_90_100,
+            row.payout_101_150,
+            row.payout_151_200,
+            row.payout_201_250,
+          ]
+        : [
+            row.coverage_0_30,
+            row.coverage_31_60,
+            row.coverage_61_90,
+            row.coverage_90_100,
+            row.coverage_101_150,
+            row.coverage_151_200,
+            row.coverage_201_250,
+          ];
+    return values.map((count) => ({
+      count,
+      percent: (count / total) * 100,
+    }));
+  }
+
+function heatColor(percent: number) {
+  const alpha = Math.max(0.08, Math.min(0.85, percent / 100));
+  return `rgba(29, 78, 216, ${alpha})`;
+}
+
+function heatTextColor(percent: number) {
+  return percent >= 55 ? "#ffffff" : "#0f172a";
+}
+
+  async function exportReportExcel() {
+    setExporting(true);
+    try {
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.utils.book_new();
+
+      const summaryRows = [
+        { Metrica: "Rutas unicas", Valor: data.summary.routeCount },
+        { Metrica: "Cobertura global (%)", Valor: data.summary.overallCoverage },
+        { Metrica: "Cobertura promedio (%)", Valor: data.summary.averageCoverage },
+        { Metrica: "Cobertura mediana (%)", Valor: data.summary.medianCoverage },
+        { Metrica: "Total payout", Valor: data.summary.totalPayout },
+        { Metrica: "Total variable", Valor: data.summary.totalVariable },
+        { Metrica: "Bottom 10 share (%)", Valor: data.summary.payBottom10Share },
+        { Metrica: "Bottom 25 share (%)", Valor: data.summary.payBottom25Share },
+      ];
+
+      const binsRows = data.bins.map((bin) => ({
+        Rango: bin.label,
+        Rutas: bin.routeCount,
+        FuerzaPct: bin.percentOfForce,
+      }));
+
+      const productRows = data.productBands.map((row) => ({
+        ProductName: row.productName,
+        Rutas: row.totalRoutes,
+        Payout_0_30_pct: row.totalRoutes ? (row.payout_0_30 / row.totalRoutes) * 100 : 0,
+        Payout_31_60_pct: row.totalRoutes ? (row.payout_31_60 / row.totalRoutes) * 100 : 0,
+        Payout_61_90_pct: row.totalRoutes ? (row.payout_61_90 / row.totalRoutes) * 100 : 0,
+        Payout_90_100_pct: row.totalRoutes ? (row.payout_90_100 / row.totalRoutes) * 100 : 0,
+        Payout_101_150_pct: row.totalRoutes ? (row.payout_101_150 / row.totalRoutes) * 100 : 0,
+        Payout_151_200_pct: row.totalRoutes ? (row.payout_151_200 / row.totalRoutes) * 100 : 0,
+        Payout_201_250_pct: row.totalRoutes ? (row.payout_201_250 / row.totalRoutes) * 100 : 0,
+        Coverage_0_30_pct: row.totalRoutes ? (row.coverage_0_30 / row.totalRoutes) * 100 : 0,
+        Coverage_31_60_pct: row.totalRoutes ? (row.coverage_31_60 / row.totalRoutes) * 100 : 0,
+        Coverage_61_90_pct: row.totalRoutes ? (row.coverage_61_90 / row.totalRoutes) * 100 : 0,
+        Coverage_90_100_pct: row.totalRoutes ? (row.coverage_90_100 / row.totalRoutes) * 100 : 0,
+        Coverage_101_150_pct: row.totalRoutes ? (row.coverage_101_150 / row.totalRoutes) * 100 : 0,
+        Coverage_151_200_pct: row.totalRoutes ? (row.coverage_151_200 / row.totalRoutes) * 100 : 0,
+        Coverage_201_250_pct: row.totalRoutes ? (row.coverage_201_250 / row.totalRoutes) * 100 : 0,
+      }));
+
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), "Resumen");
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(binsRows), "Payout Distribution");
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(productRows), "Producto Heatmap");
+
+      const periodLabel = data.selectedPeriods.join("_") || "periodo";
+      XLSX.writeFile(workbook, `performance_report_${periodLabel}.xlsx`);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="mt-6 grid gap-4">
       <div className="rounded-xl border border-[#e3ebfa] bg-[#f8fbff] p-4 sm:p-5">
@@ -330,13 +422,23 @@ export function PerformanceReportClient({ initialData }: PerformanceReportClient
       <div className="rounded-xl border border-[#e3ebfa] bg-white p-4 sm:p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <p className="text-sm font-semibold text-[#1e3a8a]">Filtros</p>
-          <button
-            type="button"
-            onClick={clearFilters}
-            className="rounded-md border border-[#d0d5dd] bg-white px-2.5 py-1 text-xs text-[#344054] hover:bg-[#f8fafc]"
-          >
-            Limpiar
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={exportReportExcel}
+              disabled={exporting || loading}
+              className="rounded-md border border-[#1d4ed8] bg-[#eaf2ff] px-2.5 py-1 text-xs font-semibold text-[#1d4ed8] hover:bg-[#dbeafe] disabled:opacity-60"
+            >
+              {exporting ? "Exportando..." : "Exportar"}
+            </button>
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="rounded-md border border-[#d0d5dd] bg-white px-2.5 py-1 text-xs text-[#344054] hover:bg-[#f8fafc]"
+            >
+              Limpiar
+            </button>
+          </div>
         </div>
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
           <select
@@ -566,6 +668,83 @@ export function PerformanceReportClient({ initialData }: PerformanceReportClient
               <span className="font-semibold">{data.summary.atOrAbove200Count}</span>
             </li>
           </ul>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-[#e3ebfa] bg-white p-4 sm:p-5">
+        <p className="text-sm font-semibold text-[#1e3a8a]">
+          Distribucion Por Producto (Heatmap)
+        </p>
+        <p className="mt-1 text-xs text-[#667085]">
+          Muestra porcentaje de rutas por rango. Formula por celda: (rutas en rango / total rutas del producto) x 100.
+        </p>
+        <div className="mt-3 inline-flex rounded-lg border border-[#d0d5dd] bg-white p-1">
+          <button
+            type="button"
+            onClick={() => setBandMetric("payout")}
+            className={
+              bandMetric === "payout"
+                ? "rounded-md bg-[#eaf2ff] px-3 py-1 text-xs font-semibold text-[#1d4ed8]"
+                : "rounded-md px-3 py-1 text-xs font-medium text-[#344054] hover:bg-[#f8fafc]"
+            }
+          >
+            Payout
+          </button>
+          <button
+            type="button"
+            onClick={() => setBandMetric("coverage")}
+            className={
+              bandMetric === "coverage"
+                ? "rounded-md bg-[#eaf2ff] px-3 py-1 text-xs font-semibold text-[#1d4ed8]"
+                : "rounded-md px-3 py-1 text-xs font-medium text-[#344054] hover:bg-[#f8fafc]"
+            }
+          >
+            Coverage
+          </button>
+        </div>
+
+        <div className="mt-3 max-h-[58vh] overflow-auto">
+          <table className="w-full table-auto text-xs text-[#344054]">
+            <thead className="sticky top-0 z-10 bg-[#f8fbff]">
+              <tr className="border-b border-[#e5e7eb] text-left uppercase tracking-wide text-[#475467]">
+                <th className="px-2 py-2">Producto</th>
+                <th className="px-2 py-2">Rutas</th>
+                <th className="px-2 py-2">0-30</th>
+                <th className="px-2 py-2">31-60</th>
+                <th className="px-2 py-2">61-90</th>
+                <th className="px-2 py-2">90-100</th>
+                <th className="px-2 py-2">101-150</th>
+                <th className="px-2 py-2">151-200</th>
+                <th className="px-2 py-2">201-250</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.productBands.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-2 py-3 text-[#98a2b3]">
+                    Sin datos para la distribucion por producto.
+                  </td>
+                </tr>
+              ) : (
+                data.productBands.map((row) => (
+                  <tr key={`product-band-${row.productName}`} className="border-b border-[#eef2fb]">
+                    <td className="px-2 py-2 font-medium text-[#0f172a]">{row.productName}</td>
+                    <td className="px-2 py-2">{row.totalRoutes}</td>
+                    {getBandPercents(row, bandMetric).map((item, index) => (
+                      <td
+                        key={`${row.productName}-${bandMetric}-${index}`}
+                        className="px-2 py-2 font-semibold"
+                        style={{ backgroundColor: heatColor(item.percent), color: heatTextColor(item.percent) }}
+                        title={`${item.count}/${row.totalRoutes} rutas`}
+                      >
+                        {item.percent.toFixed(1)}%
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 

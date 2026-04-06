@@ -52,9 +52,20 @@ create table if not exists public.team_rule_definition_item_sources (
 create unique index if not exists team_rule_definition_item_sources_unique_order
   on public.team_rule_definition_item_sources (item_id, source_order);
 
+create table if not exists public.team_rule_definition_item_meta (
+  item_id bigint primary key references public.team_rule_definition_items(id) on delete cascade,
+  ranking text null,
+  puntos_ranking_lvu numeric null,
+  extra_fields jsonb null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists team_rule_definition_item_meta_ranking_idx
+  on public.team_rule_definition_item_meta (ranking);
+
 alter table public.team_incentive_rule_versions
   add column if not exists rule_definition_id uuid null references public.team_rule_definitions(id);
 
 create index if not exists team_incentive_rule_versions_definition_idx
   on public.team_incentive_rule_versions (rule_definition_id);
-

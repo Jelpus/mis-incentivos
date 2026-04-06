@@ -14,12 +14,14 @@ export async function GET(request: Request) {
   const periodo = searchParams.get("periodo");
   const maxRowsParam = Number(searchParams.get("maxRows") ?? "");
   const maxRows = Number.isFinite(maxRowsParam) ? Math.max(20, Math.min(500, maxRowsParam)) : undefined;
+  const profileResultsTable = process.env.BQ_RESULTS_PROFILE_TABLE?.trim() || "resultados_v2_con_ajustes";
 
   const data = await getResultadosV2Data({
     role,
     profileUserId: effectiveUserId ?? user.id,
     periodCode: periodo,
     maxRows,
+    readTableId: profileResultsTable,
   });
 
   return NextResponse.json({ data });
