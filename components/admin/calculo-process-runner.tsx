@@ -69,6 +69,10 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
   const [previewState, setPreviewState] = useState<CalculoPreviewResult | null>(null);
   const [resultadosV2State, setResultadosV2State] = useState<ResultadosV2PreviewActionResult | null>(null);
   const [calculateState, setCalculateState] = useState<CalculoActionResult | null>(null);
+  const [wizardFeedback, setWizardFeedback] = useState<{
+    kind: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
   const periodLabel = useMemo(() => periodMonth.slice(0, 7), [periodMonth]);
   const orderedPreviewRows = useMemo(() => {
     if (!previewState?.ok) return [];
@@ -295,34 +299,48 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
 
   function runPreview() {
     setPreviewState(null);
+    setWizardFeedback(null);
     startTransition(async () => {
       const formData = new FormData();
       formData.append("period_month", periodMonth);
       const response = await previewCalculoProcessAction(null, formData);
       setPreviewState(response);
+      setWizardFeedback({
+        kind: response.ok ? "success" : "error",
+        message: response.message,
+      });
     });
   }
 
   function runCalculate() {
     setCalculateState(null);
     setResultadosV2State(null);
+    setWizardFeedback(null);
     startTransition(async () => {
       const calculateFormData = new FormData();
       calculateFormData.append("period_month", periodMonth);
       calculateFormData.append("action", "calcular");
       const calculateResponse = await updateCalculoStatusAction(null, calculateFormData);
       setCalculateState(calculateResponse);
-      if (!calculateResponse.ok) return;
+      if (!calculateResponse.ok) {
+        setWizardFeedback({ kind: "error", message: calculateResponse.message });
+        return;
+      }
 
       const preview2FormData = new FormData();
       preview2FormData.append("period_month", periodMonth);
       const preview2Response = await previewResultadosV2Action(null, preview2FormData);
       setResultadosV2State(preview2Response);
+      setWizardFeedback({
+        kind: preview2Response.ok ? "success" : "error",
+        message: preview2Response.message,
+      });
     });
   }
 
   function confirmStage12() {
     setCalculateState(null);
+    setWizardFeedback(null);
     startTransition(async () => {
       const formData = new FormData();
       formData.append("period_month", periodMonth);
@@ -330,9 +348,14 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
       const response = await updateCalculoStatusAction(null, formData);
       setCalculateState(response);
       if (response.ok) {
-        router.push("/admin/calculo");
         router.refresh();
+        setWizardFeedback({
+          kind: "success",
+          message: `${response.message} Puedes ir a /admin/calculo para validar estatus y resultados.`,
+        });
+        return;
       }
+      setWizardFeedback({ kind: "error", message: response.message });
     });
   }
 
@@ -477,6 +500,7 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
     setPreviewState(null);
     setResultadosV2State(null);
     setCalculateState(null);
+    setWizardFeedback(null);
   }
 
   function runWizardNextStep() {
@@ -562,7 +586,28 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
           >
             Reiniciar flujo
           </button>
+          <button
+            type="button"
+            onClick={() => router.push("/admin/calculo")}
+            disabled={isPending}
+            className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold text-neutral-900 hover:bg-neutral-50 disabled:opacity-60"
+          >
+            Ir a calculo
+          </button>
         </div>
+        {wizardFeedback ? (
+          <p
+            className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
+              wizardFeedback.kind === "success"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : wizardFeedback.kind === "error"
+                  ? "border-red-200 bg-red-50 text-red-800"
+                  : "border-blue-200 bg-blue-50 text-blue-800"
+            }`}
+          >
+            {wizardFeedback.message}
+          </p>
+        ) : null}
       </div>
 
       {resultadosV2State ? (

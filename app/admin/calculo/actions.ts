@@ -188,7 +188,9 @@ function resolveNextStatus(action: string): "borrador" | "precalculo" | "final" 
 
 function canTransition(currentStatus: string, action: string): boolean {
   if (action === "calcular") return true;
-  if (action === "confirmar_precalculo") return currentStatus === "borrador" || currentStatus === "precalculo";
+  if (action === "confirmar_precalculo") {
+    return currentStatus === "borrador" || currentStatus === "precalculo" || currentStatus === "final";
+  }
   if (currentStatus === "precalculo" && (action === "ajustar" || action === "aprobar")) return true;
   if (currentStatus === "final" && (action === "ajustar" || action === "publicar")) return true;
   if (currentStatus === "publicado" && action === "despublicar") return true;
@@ -250,6 +252,8 @@ export async function updateCalculoStatusAction(
   const effectiveNextStatus =
     actionInput === "calcular"
       ? ((currentStatus as "borrador" | "precalculo" | "final" | "publicado") ?? "borrador")
+      : actionInput === "confirmar_precalculo" && currentStatus === "final"
+        ? "final"
       : nextStatus;
   const updatePayload: Record<string, unknown> = {
     period_month: periodMonth,
