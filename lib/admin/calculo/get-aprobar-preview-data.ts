@@ -384,11 +384,12 @@ export async function getAprobarPreviewData(periodMonth: string): Promise<Aproba
       (routeKey && teamKey ? statusByRouteTeam.get(`${routeKey}||${teamKey}`) : null) ??
       (routeKey ? statusByRoute.get(routeKey) : null) ??
       null;
+    const representativeFromStatus = String(statusMatch?.territorio_individual ?? "").trim();
 
     return {
       ...row,
       teamId: row.teamId || String(statusMatch?.team_id ?? "").trim(),
-      representante: row.representante ?? String(statusMatch?.territorio_individual ?? "").trim() || null,
+      representante: row.representante ?? (representativeFromStatus || null),
       nombre: row.nombre ?? statusMatch?.nombre_completo ?? null,
       linea: row.linea ?? statusMatch?.linea_principal ?? null,
       manager: row.manager ?? statusMatch?.territorio_padre ?? null,
