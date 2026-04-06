@@ -197,6 +197,15 @@ function canTransition(currentStatus: string, action: string): boolean {
   return false;
 }
 
+function isStreamingBufferMutationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("streaming buffer") &&
+    (normalized.includes("update or delete") || normalized.includes("would affect rows"))
+  );
+}
+
 export async function updateCalculoStatusAction(
   _prevState: CalculoActionResult | null,
   formData: FormData,
@@ -280,6 +289,7 @@ export async function updateCalculoStatusAction(
       totalPagoVariable: number;
     }
     | undefined;
+  let skippedAsignacionByStreamingBuffer = false;
 
   if (actionInput === "calcular") {
     try {
@@ -328,8 +338,17 @@ export async function updateCalculoStatusAction(
   }
   if (actionInput === "confirmar_precalculo") {
     try {
-      // 1) Persistir primero asignacionUnidades (etapa 1.1)
-      const processPersistResult = await runCalculoProcess(periodMonth, { persist: true });
+      let processPersistResult: CalculoProcessRunResult;
+      try {
+        // 1) Persistir primero asignacionUnidades (etapa 1.1)
+        processPersistResult = await runCalculoProcess(periodMonth, { persist: true });
+      } catch (error) {
+        if (!isStreamingBufferMutationError(error)) throw error;
+        // Fallback: permite continuar con resultados_v2 aunque BigQuery no deje mutar asignacionUnidades aun.
+        skippedAsignacionByStreamingBuffer = true;
+        processPersistResult = await runCalculoProcess(periodMonth, { persist: false });
+      }
+
       updatePayload.final_amount = processPersistResult.totalResultado;
       updatePayload.calculated_at = now;
 
@@ -391,7 +410,9 @@ export async function updateCalculoStatusAction(
       actionInput === "calcular" && calculationSummary
         ? `Calculo listo para revision (${periodMonth.slice(0, 7)}).`
         : actionInput === "confirmar_precalculo"
-          ? `Confirmado (${periodMonth.slice(0, 7)}): asignacionUnidades y resultados_v2 subidos (${resultadosPersistedSummary?.rowsCount ?? 0} filas resultados_v2, pago_resultado=${(resultadosPersistedSummary?.totalPagoResultado ?? 0).toFixed(6)}). Estatus=${effectiveNextStatus}.`
+          ? skippedAsignacionByStreamingBuffer
+            ? `Confirmado (${periodMonth.slice(0, 7)}): resultados_v2 subidos (${resultadosPersistedSummary?.rowsCount ?? 0} filas, pago_resultado=${(resultadosPersistedSummary?.totalPagoResultado ?? 0).toFixed(6)}). Nota: asignacionUnidades no se refresco por streaming buffer de BigQuery; reintenta confirmar en unos minutos para refrescar esa tabla. Estatus=${effectiveNextStatus}.`
+            : `Confirmado (${periodMonth.slice(0, 7)}): asignacionUnidades y resultados_v2 subidos (${resultadosPersistedSummary?.rowsCount ?? 0} filas resultados_v2, pago_resultado=${(resultadosPersistedSummary?.totalPagoResultado ?? 0).toFixed(6)}). Estatus=${effectiveNextStatus}.`
           : `Periodo ${periodMonth.slice(0, 7)} actualizado a ${effectiveNextStatus}.`,
     periodMonth,
     nextStatus: effectiveNextStatus,
