@@ -439,6 +439,17 @@ function normalizeRowsForBigQuery(params: {
     YUC: "YUCATAN",
     ZAC: "ZACATECAS",
   };
+  const diarioRegionCodigoEstado: Record<string, string> = {
+    BC: "2",
+    CHI: "6",
+    CMX: "7",
+    DF: "7",
+    JAL: "15",
+    NL: "19",
+    PUE: "21",
+    QRO: "22",
+    SON: "26",
+  };
 
   for (const rawRow of params.rows) {
     const row = rawRow ?? {};
@@ -582,6 +593,7 @@ function normalizeRowsForBigQuery(params: {
       ].filter((value): value is string => Boolean(value));
 
       const region = normalizeUpperText(readStringFromRow(row, normalizedHeaderMap, ["region"]));
+      const codigoEstadoFromRegion = region ? diarioRegionCodigoEstado[region] ?? null : null;
 
       pushIfValid({
         archivo: params.displayName || params.fileCode,
@@ -592,7 +604,7 @@ function normalizeRowsForBigQuery(params: {
         medico: null,
         cp: null,
         estado: region ? estadosDF[region] ?? region : null,
-        codigo_estado: codigoEstado ?? region ?? null,
+        codigo_estado: codigoEstado ?? codigoEstadoFromRegion ?? region ?? null,
         brick: brickParts.length > 0 ? brickParts.join("-") : null,
         molecula_producto: String(material),
         valor: readNumberFromRow(row, normalizedHeaderMap, ["billed_quantity"]) ?? 0,
