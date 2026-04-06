@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAllowedEmailDomain, normalizeEmail } from "@/lib/auth/email-domain";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 type MagicLinkPayload = {
   email?: string;
@@ -32,7 +33,7 @@ export async function POST(request: Request) {
 
   if (!email || !email.includes("@")) {
     return NextResponse.json(
-      { error: "Ingresa un correo válido." },
+      { error: "Ingresa un correo valido." },
       { status: 400 },
     );
   }
@@ -45,7 +46,29 @@ export async function POST(request: Request) {
   }
 
   const supabase = await createClient();
+  const adminClient = createAdminClient();
   const baseUrl = getBaseUrl();
+  if (adminClient) {
+    const profileLookup = await adminClient
+      .from("profiles")
+      .select("user_id, email, is_active")
+      .eq("email", email)
+      .maybeSingle<{ user_id: string | null; email: string | null; is_active: boolean | null }>();
+
+    if (profileLookup.error) {
+      return NextResponse.json(
+        { error: `No fue posible validar el usuario en profiles: ${profileLookup.error.message}` },
+        { status: 500 },
+      );
+    }
+
+    if (profileLookup.data?.user_id && profileLookup.data.is_active === false) {
+      return NextResponse.json(
+        { error: "Tu usuario existe pero esta inactivo. Solicita habilitacion al administrador." },
+        { status: 403 },
+      );
+    }
+  }
 
   const { error } = await supabase.auth.signInWithOtp({
     email,
@@ -56,10 +79,15 @@ export async function POST(request: Request) {
   });
 
   if (error) {
+    const rawMessage = String(error.message ?? "");
+    const normalizedMessage = rawMessage.toLowerCase();
+    const detailedMessage = normalizedMessage.includes("user not found")
+      ? "Tu perfil existe en profiles pero no en Auth. Pide al administrador reenviar invitacion."
+      : rawMessage;
+
     return NextResponse.json(
       {
-        error:
-          "No fue posible enviar el enlace de acceso. Verifica que tu usuario esté habilitado.",
+        error: `No fue posible enviar el enlace de acceso: ${detailedMessage}`,
       },
       { status: 400 },
     );
@@ -68,6 +96,6 @@ export async function POST(request: Request) {
   return NextResponse.json({
     success: true,
     message:
-      "Te enviamos un enlace a tu correo. Revisa tu bandeja y continúa desde ese enlace.",
+      "Te enviamos un enlace a tu correo. Revisa tu bandeja y continua desde ese enlace.",
   });
 }

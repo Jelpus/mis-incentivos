@@ -396,7 +396,29 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
       XLSX.utils.book_append_sheet(workbook, block3Sheet, "Bloque 3 Estados");
 
       const safePeriod = periodLabel.replace(/[^0-9A-Za-z_-]/g, "-");
-      XLSX.writeFile(workbook, `Asignacion y Cuotas_${safePeriod}.xlsx`);
+      const fileName = `Asignacion y Cuotas_${safePeriod}.xlsx`;
+      try {
+        XLSX.writeFile(workbook, fileName);
+      } catch {
+        const arrayBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+        const blob = new Blob([arrayBuffer], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      }
+      setWizardFeedback({ kind: "success", message: `Excel generado: ${fileName}` });
+    } catch (error) {
+      setWizardFeedback({
+        kind: "error",
+        message: error instanceof Error ? `No se pudo exportar preview: ${error.message}` : "No se pudo exportar preview.",
+      });
     } finally {
       setIsExportingPreview(false);
     }
@@ -485,7 +507,32 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
       XLSX.utils.book_append_sheet(workbook, totalsSheet, "Totales Ruta");
       XLSX.utils.book_append_sheet(workbook, groupingSheet, "Detalle Agrupacion");
       const safePeriod = periodLabel.replace(/[^0-9A-Za-z_-]/g, "-");
-      XLSX.writeFile(workbook, `Resultados_${safePeriod}.xlsx`);
+      const fileName = `Resultados_${safePeriod}.xlsx`;
+      try {
+        XLSX.writeFile(workbook, fileName);
+      } catch {
+        const arrayBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+        const blob = new Blob([arrayBuffer], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      }
+      setWizardFeedback({ kind: "success", message: `Excel generado: ${fileName}` });
+    } catch (error) {
+      setWizardFeedback({
+        kind: "error",
+        message:
+          error instanceof Error
+            ? `No se pudo exportar resultados_v2: ${error.message}`
+            : "No se pudo exportar resultados_v2.",
+      });
     } finally {
       setIsExportingResultados(false);
     }
