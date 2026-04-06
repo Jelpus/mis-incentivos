@@ -1,4 +1,5 @@
 import { fetchBigQueryRows, isBigQueryConfigured } from "@/lib/integrations/bigquery";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 type BigQueryAprobarRow = {
   team_id: string | null;
@@ -45,6 +46,16 @@ type BigQueryAdjustmentRow = {
   delta_pagoresultado: number | null;
   comment: string | null;
   updated_at: string | null;
+};
+
+type SalesForceStatusRow = {
+  period_month: string;
+  team_id: string | null;
+  territorio_individual: string | null;
+  nombre_completo: string | null;
+  linea_principal: string | null;
+  territorio_padre: string | null;
+  no_empleado: number | null;
 };
 
 export type AprobarPreviewRow = {
@@ -314,7 +325,7 @@ export async function getAprobarPreviewData(periodMonth: string): Promise<Aproba
     }),
   ]);
 
-  const mappedRows = (rows ?? []).map((row) => ({
+  const mappedRowsBase = (rows ?? []).map((row) => ({
     teamId: String(row.team_id ?? "").trim(),
     planTypeName: row.plan_type_name ?? null,
     productName: String(row.product_name ?? "").trim() || "-",
@@ -341,6 +352,49 @@ export async function getAprobarPreviewData(periodMonth: string): Promise<Aproba
     ajusteComments: row.ajuste_comments ?? null,
     periodo: String(row.periodo ?? periodo),
   }));
+
+  const adminClient = createAdminClient();
+  const statusRowsResult = adminClient
+    ? await adminClient
+        .from("sales_force_status")
+        .select("period_month, team_id, territorio_individual, nombre_completo, linea_principal, territorio_padre, no_empleado")
+        .eq("period_month", periodMonth)
+        .eq("is_deleted", false)
+    : null;
+
+  const statusRows = (statusRowsResult?.data ?? []) as SalesForceStatusRow[];
+  const statusByRouteTeam = new Map<string, SalesForceStatusRow>();
+  const statusByRoute = new Map<string, SalesForceStatusRow>();
+  for (const row of statusRows) {
+    const route = String(row.territorio_individual ?? "").trim();
+    const team = String(row.team_id ?? "").trim();
+    if (!route) continue;
+    const routeKey = route.toUpperCase();
+    if (team) {
+      const routeTeamKey = `${routeKey}||${team.toUpperCase()}`;
+      if (!statusByRouteTeam.has(routeTeamKey)) statusByRouteTeam.set(routeTeamKey, row);
+    }
+    if (!statusByRoute.has(routeKey)) statusByRoute.set(routeKey, row);
+  }
+
+  const mappedRows = mappedRowsBase.map((row) => {
+    const routeKey = String(row.ruta ?? "").trim().toUpperCase();
+    const teamKey = String(row.teamId ?? "").trim().toUpperCase();
+    const statusMatch =
+      (routeKey && teamKey ? statusByRouteTeam.get(`${routeKey}||${teamKey}`) : null) ??
+      (routeKey ? statusByRoute.get(routeKey) : null) ??
+      null;
+
+    return {
+      ...row,
+      teamId: row.teamId || String(statusMatch?.team_id ?? "").trim(),
+      representante: row.representante ?? String(statusMatch?.territorio_individual ?? "").trim() || null,
+      nombre: row.nombre ?? statusMatch?.nombre_completo ?? null,
+      linea: row.linea ?? statusMatch?.linea_principal ?? null,
+      manager: row.manager ?? statusMatch?.territorio_padre ?? null,
+      empleado: row.empleado ?? statusMatch?.no_empleado ?? null,
+    };
+  });
 
   const summary = summaryRows[0];
   const mappedAdjustments = (adjustmentsRows ?? []).map((row) => ({

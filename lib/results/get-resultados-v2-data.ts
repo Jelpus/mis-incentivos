@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchBigQueryRows, isBigQueryConfigured } from "@/lib/integrations/bigquery";
 import type { ProfileRole } from "@/lib/auth/current-user";
+import { filterPeriodsUpToBusinessCurrent } from "@/lib/periods/business-period";
 
 type AccessAnchor = {
   periodMonth: string;
@@ -546,6 +547,7 @@ export async function getResultadosV2Data(params: {
 
   const tableRef = `\`${projectId}.${datasetId}.${tableId}\``;
   const { scope, anchor, scopeWhereSql, scopeParams, availablePeriods } = context;
+  const defaultCandidatePeriods = filterPeriodsUpToBusinessCurrent(availablePeriods);
 
   const requestedPeriod = toPeriodCode(params.periodCode ?? null);
   const anchorPeriod = toPeriodCode(anchor?.periodMonth);
@@ -554,10 +556,10 @@ export async function getResultadosV2Data(params: {
   let selectedPeriod: string | null = null;
   if (requestedPeriod && availablePeriods.includes(requestedPeriod)) {
     selectedPeriod = requestedPeriod;
-  } else if (anchorPeriod && availablePeriods.includes(anchorPeriod)) {
+  } else if (anchorPeriod && defaultCandidatePeriods.includes(anchorPeriod)) {
     selectedPeriod = anchorPeriod;
   } else {
-    selectedPeriod = availablePeriods[0] ?? null;
+    selectedPeriod = defaultCandidatePeriods[0] ?? null;
     if (requestedPeriod || anchorPeriod) {
       infoMessage =
         "Se mostro el ultimo periodo disponible con datos para este alcance.";

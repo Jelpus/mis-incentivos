@@ -1,5 +1,6 @@
 import { fetchBigQueryRows, isBigQueryConfigured } from "@/lib/integrations/bigquery";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { filterPeriodsUpToBusinessCurrent } from "@/lib/periods/business-period";
 
 type QueryParam = {
   name: string;
@@ -570,11 +571,12 @@ export async function getPerformanceReportData(params: {
     return { ...emptyData, ok: true, message: "No hay periodos disponibles en resultados_v2." };
   }
 
+  const defaultCandidatePeriods = filterPeriodsUpToBusinessCurrent(availablePeriods);
   const selectedPeriodsInput = normalizePeriodCodes(params.periodCodes ?? []);
   const selectedPeriods = selectedPeriodsInput.length
     ? selectedPeriodsInput.filter((period) => availablePeriods.includes(period))
-    : [availablePeriods[0]];
-  const finalSelectedPeriods = selectedPeriods.length ? selectedPeriods : [availablePeriods[0]];
+    : [defaultCandidatePeriods[0]];
+  const finalSelectedPeriods = selectedPeriods.length ? selectedPeriods : [defaultCandidatePeriods[0]];
 
   const filters = {
     teamId: String(params.filters?.teamId ?? "").trim(),
