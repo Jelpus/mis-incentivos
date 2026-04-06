@@ -417,13 +417,18 @@ function chunkArray<T>(rows: T[], chunkSize: number): T[][] {
 
 export async function runCalculoProcess(
   periodMonth: string,
-  options?: { persist?: boolean; previewLimit?: number },
+  options?: { persist?: boolean; previewLimit?: number; persistDeleteRetryAttempts?: number },
 ): Promise<CalculoProcessRunResult> {
   const shouldPersist = options?.persist !== false;
   const previewLimitRaw = Number(options?.previewLimit ?? 0);
   const previewLimit = Number.isFinite(previewLimitRaw) && previewLimitRaw > 0
     ? Math.floor(previewLimitRaw)
     : Number.POSITIVE_INFINITY;
+  const persistDeleteRetryAttemptsRaw = Number(options?.persistDeleteRetryAttempts ?? BQ_DELETE_RETRY_ATTEMPTS);
+  const persistDeleteRetryAttempts =
+    Number.isFinite(persistDeleteRetryAttemptsRaw) && persistDeleteRetryAttemptsRaw > 0
+      ? Math.floor(persistDeleteRetryAttemptsRaw)
+      : BQ_DELETE_RETRY_ATTEMPTS;
 
   const supabase = createAdminClient();
   if (!supabase) throw new Error("Admin client no disponible.");
@@ -1006,7 +1011,7 @@ export async function runCalculoProcess(
     const asignacionTableRef = `\`${projectId}.${asignacionDataset}.${asignacionTable}\``;
     let deleteOk = false;
     let lastDeleteError: unknown = null;
-    for (let attempt = 1; attempt <= BQ_DELETE_RETRY_ATTEMPTS; attempt += 1) {
+    for (let attempt = 1; attempt <= persistDeleteRetryAttempts; attempt += 1) {
       try {
         await runBigQueryQuery({
           query: `DELETE FROM ${asignacionTableRef} WHERE periodo = @periodo`,
@@ -1019,7 +1024,7 @@ export async function runCalculoProcess(
         if (!isBigQueryStreamingBufferMutationError(error)) {
           throw error;
         }
-        if (attempt < BQ_DELETE_RETRY_ATTEMPTS) {
+        if (attempt < persistDeleteRetryAttempts) {
           await wait(BQ_DELETE_RETRY_DELAY_MS * attempt);
         }
       }

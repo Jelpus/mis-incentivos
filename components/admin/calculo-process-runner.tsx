@@ -7,7 +7,6 @@ import {
   previewCalculoProcessAction,
   previewResultadosV2Action,
   updateCalculoStatusAction,
-  type CalculoActionResult,
   type CalculoPreviewResult,
   type ResultadosV2PreviewActionResult,
 } from "@/app/admin/calculo/actions";
@@ -68,7 +67,6 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
   const [isExportingResultados, setIsExportingResultados] = useState(false);
   const [previewState, setPreviewState] = useState<CalculoPreviewResult | null>(null);
   const [resultadosV2State, setResultadosV2State] = useState<ResultadosV2PreviewActionResult | null>(null);
-  const [calculateState, setCalculateState] = useState<CalculoActionResult | null>(null);
   const [wizardFeedback, setWizardFeedback] = useState<{
     kind: "success" | "error" | "info";
     message: string;
@@ -313,7 +311,6 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
   }
 
   function runCalculate() {
-    setCalculateState(null);
     setResultadosV2State(null);
     setWizardFeedback(null);
     startTransition(async () => {
@@ -321,7 +318,6 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
       calculateFormData.append("period_month", periodMonth);
       calculateFormData.append("action", "calcular");
       const calculateResponse = await updateCalculoStatusAction(null, calculateFormData);
-      setCalculateState(calculateResponse);
       if (!calculateResponse.ok) {
         setWizardFeedback({ kind: "error", message: calculateResponse.message });
         return;
@@ -339,14 +335,12 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
   }
 
   function confirmStage12() {
-    setCalculateState(null);
     setWizardFeedback(null);
     startTransition(async () => {
       const formData = new FormData();
       formData.append("period_month", periodMonth);
       formData.append("action", "confirmar_precalculo");
       const response = await updateCalculoStatusAction(null, formData);
-      setCalculateState(response);
       if (response.ok) {
         router.refresh();
         setWizardFeedback({
@@ -499,7 +493,6 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
   function resetWizard() {
     setPreviewState(null);
     setResultadosV2State(null);
-    setCalculateState(null);
     setWizardFeedback(null);
   }
 
@@ -811,11 +804,6 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
         </div>
       ) : null}
 
-      {calculateState ? (
-        <p className={`mt-4 text-sm ${calculateState.ok ? "text-emerald-700" : "text-red-700"}`}>
-          {calculateState.message}
-        </p>
-      ) : null}
     </section>
   );
 }

@@ -201,8 +201,8 @@ function isStreamingBufferMutationError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error ?? "");
   const normalized = message.toLowerCase();
   return (
-    normalized.includes("streaming buffer") &&
-    (normalized.includes("update or delete") || normalized.includes("would affect rows"))
+    normalized.includes("streaming buffer") ||
+    (normalized.includes("asignacionunidades") && normalized.includes("would affect rows"))
   );
 }
 
@@ -341,7 +341,10 @@ export async function updateCalculoStatusAction(
       let processPersistResult: CalculoProcessRunResult;
       try {
         // 1) Persistir primero asignacionUnidades (etapa 1.1)
-        processPersistResult = await runCalculoProcess(periodMonth, { persist: true });
+        processPersistResult = await runCalculoProcess(periodMonth, {
+          persist: true,
+          persistDeleteRetryAttempts: 1,
+        });
       } catch (error) {
         if (!isStreamingBufferMutationError(error)) throw error;
         // Fallback: permite continuar con resultados_v2 aunque BigQuery no deje mutar asignacionUnidades aun.
