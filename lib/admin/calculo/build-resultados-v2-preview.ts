@@ -245,7 +245,7 @@ function computeCoverage(objetivo: number, resultado: number): number {
   if (resultado > 0 && objetivo > 0) {
     const cob = resultado / objetivo;
     const cobRounded = round2(cob);
-    return Math.min(cobRounded, 1.5);
+    return cobRounded;
   }
   return 0;
 }
