@@ -174,11 +174,9 @@ function normalizeCp(value: unknown): string | null {
 function normalizeCodigoEstado(value: unknown): string | null {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
-  return raw
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return null;
+  return String(Number(digits));
 }
 
 type NormalizedSourceRow = {
@@ -594,6 +592,7 @@ function normalizeRowsForBigQuery(params: {
 
       const region = normalizeUpperText(readStringFromRow(row, normalizedHeaderMap, ["region"]));
       const codigoEstadoFromRegion = region ? diarioRegionCodigoEstado[region] ?? null : null;
+      const resolvedCodigoEstado = codigoEstado ?? codigoEstadoFromRegion ?? "999";
 
       pushIfValid({
         archivo: params.displayName || params.fileCode,
@@ -604,7 +603,7 @@ function normalizeRowsForBigQuery(params: {
         medico: null,
         cp: null,
         estado: region ? estadosDF[region] ?? region : null,
-        codigo_estado: codigoEstado ?? codigoEstadoFromRegion ?? region ?? null,
+        codigo_estado: resolvedCodigoEstado,
         brick: brickParts.length > 0 ? brickParts.join("-") : null,
         molecula_producto: String(material),
         valor: readNumberFromRow(row, normalizedHeaderMap, ["billed_quantity"]) ?? 0,
