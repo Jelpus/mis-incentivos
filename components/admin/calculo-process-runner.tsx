@@ -566,7 +566,7 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
           </div>
           <div className={`rounded-xl border p-3 text-xs ${confirmStepClass}`}>
             <p className="font-semibold">Paso 3: Confirmar</p>
-            <p className="mt-1">Confirma precalculo y regresa al listado.</p>
+            <p className="mt-1">Confirma precalculo y regresa al listado una vez completado.</p>
           </div>
         </div>
         <div className="mt-4 flex flex-wrap gap-3">
