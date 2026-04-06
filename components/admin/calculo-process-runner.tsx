@@ -53,12 +53,13 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
   function computeCobertura(objetivo: number, resultado: number): number {
     if (objetivo === 0 && resultado === 0) return 0;
     if (objetivo === 0 && resultado > 1) return 1;
-    if (resultado > 0 && objetivo > 0){
+    if (resultado > 0 && objetivo > 0) {
 
-        const cob = resultado / objetivo;
-        const cobRounded = Math.round(cob * 100) / 100;
-        return Math.min(cobRounded, 1.50);
-    } 
+      const cob = resultado / objetivo;
+      const cobRounded = Math.round(cob * 100) / 100;
+
+      return cobRounded
+    }
     return 0;
   }
 
@@ -590,13 +591,12 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
         </div>
         {wizardFeedback ? (
           <p
-            className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
-              wizardFeedback.kind === "success"
+            className={`mt-3 rounded-lg border px-3 py-2 text-xs ${wizardFeedback.kind === "success"
                 ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                 : wizardFeedback.kind === "error"
                   ? "border-red-200 bg-red-50 text-red-800"
                   : "border-blue-200 bg-blue-50 text-blue-800"
-            }`}
+              }`}
           >
             {wizardFeedback.message}
           </p>
