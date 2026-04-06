@@ -41,7 +41,11 @@ function formatPeriodo(periodCode: string) {
   const year = Number(periodCode.slice(0, 4));
   const month = Number(periodCode.slice(4, 6));
   const date = new Date(Date.UTC(year, month - 1, 1));
-  return new Intl.DateTimeFormat("es-MX", { month: "short", year: "2-digit" }).format(date);
+  return new Intl.DateTimeFormat("es-MX", {
+    month: "short",
+    year: "2-digit",
+    timeZone: "UTC",
+  }).format(date);
 }
 
 export function ResultadosTrendChart({ periods }: ResultadosTrendChartProps) {

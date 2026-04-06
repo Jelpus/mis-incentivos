@@ -26,7 +26,11 @@ function formatPeriodLabel(periodCode: string | null) {
   const year = Number(periodCode.slice(0, 4));
   const month = Number(periodCode.slice(4, 6));
   const date = new Date(Date.UTC(year, month - 1, 1));
-  return new Intl.DateTimeFormat("es-MX", { month: "long", year: "numeric" }).format(date);
+  return new Intl.DateTimeFormat("es-MX", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
 }
 
 function scopeLabel(scope: ResultadoScope) {
