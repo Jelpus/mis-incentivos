@@ -8,6 +8,7 @@ export async function GET(request: Request) {
   const token_hash = searchParams.get("token_hash");
   const type = searchParams.get("type") ?? "email";
   const next = searchParams.get("next") ?? "/";
+  const safeNext = next.startsWith("/") ? next : "/";
 
   const supabase = await createClient();
 
@@ -18,7 +19,7 @@ export async function GET(request: Request) {
       return NextResponse.redirect(`${origin}/?error=invalid_or_expired_link`);
     }
 
-    return NextResponse.redirect(`${origin}${next}`);
+    return NextResponse.redirect(`${origin}${safeNext}`);
   }
 
   if (token_hash) {
@@ -31,7 +32,7 @@ export async function GET(request: Request) {
       return NextResponse.redirect(`${origin}/?error=invalid_or_expired_link`);
     }
 
-    return NextResponse.redirect(`${origin}${next}`);
+    return NextResponse.redirect(`${origin}${safeNext}`);
   }
 
   return NextResponse.redirect(`${origin}/?error=missing_token`);

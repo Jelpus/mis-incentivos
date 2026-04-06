@@ -81,13 +81,19 @@ export async function POST(request: Request) {
   if (error) {
     const rawMessage = String(error.message ?? "");
     const normalizedMessage = rawMessage.toLowerCase();
+    const detailParts: string[] = [];
+    if (error.code) detailParts.push(`code=${error.code}`);
+    if (error.status) detailParts.push(`status=${error.status}`);
+    const technicalDetail = detailParts.length > 0 ? ` (${detailParts.join(", ")})` : "";
     const detailedMessage = normalizedMessage.includes("user not found")
       ? "Tu perfil existe en profiles pero no en Auth. Pide al administrador reenviar invitacion."
-      : rawMessage;
+      : normalizedMessage.includes("error sending magic link email")
+        ? "Supabase no pudo enviar el correo. Revisa Auth > Email (provider SMTP/configuracion), dominio remitente y limites de envio."
+        : rawMessage;
 
     return NextResponse.json(
       {
-        error: `No fue posible enviar el enlace de acceso: ${detailedMessage}`,
+        error: `No fue posible enviar el enlace de acceso: ${detailedMessage}${technicalDetail}`,
       },
       { status: 400 },
     );
