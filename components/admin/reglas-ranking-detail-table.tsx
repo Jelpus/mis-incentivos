@@ -110,6 +110,8 @@ function RowEditor({
           <input
             form={formId}
             name="puntos_custom"
+            type="number"
+            step="0.01"
             placeholder="Nuevo valor"
             className="mt-2 w-full rounded-xl border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-900"
           />

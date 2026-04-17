@@ -96,7 +96,7 @@ export function AdminRolesPanel({ currentRole, refreshToken = 0 }: AdminRolesPan
         <p className="text-sm text-[#64748b]">No hay roles administrativos registrados.</p>
       ) : null}
 
-      <div className="grid gap-3">
+      <div className="max-h-[360px] space-y-3 overflow-y-auto pr-1">
         {rows.map((row) => {
           const role = (row.global_role ?? "user").toLowerCase();
           const canDemote =

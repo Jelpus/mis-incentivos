@@ -292,6 +292,8 @@ export function ReglasRankingImportCard({
               {puntosMode === "new" ? (
                 <input
                   name="puntos_custom"
+                  type="number"
+                  step="0.01"
                   placeholder="Nuevo puntos_ranking_lvu"
                   className="mt-2 w-full rounded-2xl border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900"
                 />
@@ -304,6 +306,8 @@ export function ReglasRankingImportCard({
               </label>
               <input
                 name="prod_weight"
+                type="number"
+                step="0.01"
                 placeholder="1"
                 className="mt-1 w-full rounded-2xl border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900"
               />

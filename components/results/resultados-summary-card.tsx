@@ -56,28 +56,32 @@ export function ResultadosSummaryCard({
         </div>
       </div>
 
+
+
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
+
+        <div className="rounded-lg border border-[#d9e5fb] bg-white p-3">
+          <p className="text-xs text-[#64748b]">Base de Incentivos</p>
+          <p className="mt-1 text-base font-semibold text-[#0f172a]">
+            {formatCurrency(summary.totalPagoVariable)}
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-[#d9e5fb] bg-white p-3">
+          <p className="text-xs text-[#64748b]">Pago vs Base de Incentivos</p>
+          <p className="mt-1 text-base font-semibold text-[#0f172a]">
+            {formatPercent(summary.totalPagoResultado / summary.totalPagoVariable)}
+          </p>
+        </div>
         <div className="rounded-lg border border-[#d9e5fb] bg-white p-3">
           <p className="text-xs text-[#64748b]">Pago resultado</p>
           <p className="mt-1 text-base font-semibold text-[#0f172a]">
             {formatCurrency(summary.totalPagoResultado)}
           </p>
         </div>
-        <div className="rounded-lg border border-[#d9e5fb] bg-white p-3">
-          <p className="text-xs text-[#64748b]">Pago variable</p>
-          <p className="mt-1 text-base font-semibold text-[#0f172a]">
-            {formatCurrency(summary.totalPagoVariable)}
-          </p>
-        </div>
-        <div className="rounded-lg border border-[#d9e5fb] bg-white p-3">
-          <p className="text-xs text-[#64748b]">Cobertura promedio</p>
-          <p className="mt-1 text-base font-semibold text-[#0f172a]">
-            {formatPercent(summary.totalPagoResultado / summary.totalPagoVariable)}
-          </p>
-        </div>
-      </div>
 
-      <p className="mt-3 text-xs text-[#667085]">Filas analizadas: {summary.rowCount}</p>
+      </div>
+      <p className="mt-3 text-xs text-[#667085]">Nota: Todos los importes se presentan antes de aplicar impuestos</p>
     </div>
   );
 }

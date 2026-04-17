@@ -16,6 +16,18 @@ type TeamRuleVersionRow = {
 
 type JsonLike = Record<string, unknown>;
 
+function formatMaxTwoDecimals(value: string): string {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+
+  const parsed = Number(raw.replace(/,/g, ""));
+  if (!Number.isFinite(parsed)) return raw;
+
+  const rounded = Math.round(parsed * 100) / 100;
+  if (Object.is(rounded, -0)) return "0";
+  return rounded.toString();
+}
+
 function normalizePeriodCollection(values: unknown[]): string[] {
   return Array.from(
     new Set(
@@ -184,12 +196,14 @@ export async function getReglasRankingPageData(
       const ranking =
         readFromExtraFields(extraFields, ["ranking"]) ||
         String(rule.ranking ?? "").trim();
-      const puntosRankingLvu =
+      const puntosRankingLvu = formatMaxTwoDecimals(
         readFromExtraFields(extraFields, ["puntos_ranking_lvu", "puntos ranking lvu"]) ||
-        String(rule.puntos_ranking_lvu ?? "").trim();
-      const prodWeight =
+        String(rule.puntos_ranking_lvu ?? "").trim(),
+      );
+      const prodWeight = formatMaxTwoDecimals(
         String(rule.prod_weight ?? "").trim() ||
-        readFromExtraFields(extraFields, ["prod_weigh", "prod_weight", "product_weight"]);
+          readFromExtraFields(extraFields, ["prod_weigh", "prod_weight", "product_weight"]),
+      );
 
       const rowData = {
         teamId,
@@ -236,8 +250,8 @@ export async function getReglasRankingPageData(
       if (!teamId || !productName) continue;
       const key = `${teamId.toUpperCase()}|${productName.toUpperCase()}`;
       const ranking = String(item.ranking ?? "").trim();
-      const puntosRankingLvu = String(item.puntos_ranking_lvu ?? "").trim();
-      const prodWeight = String(item.prod_weight ?? "").trim();
+      const puntosRankingLvu = formatMaxTwoDecimals(String(item.puntos_ranking_lvu ?? "").trim());
+      const prodWeight = formatMaxTwoDecimals(String(item.prod_weight ?? "").trim());
 
       const existing = rowsByKey.get(key);
       if (existing) {

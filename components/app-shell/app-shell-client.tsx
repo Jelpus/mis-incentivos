@@ -203,6 +203,7 @@ function getTitle(pathname: string) {
   if (pathname.startsWith("/admin/curvas-de-pago")) return "Curvas de pago";
   if (pathname.startsWith("/admin/incentive-rules")) return "Reglas de incentivos";
   if (pathname.startsWith("/admin/reglas-ranking")) return "Reglas de Ranking";
+  if (pathname.startsWith("/admin/teams-admin")) return "Teams Admin";
   if (pathname.startsWith("/admin/data-sources")) return "Fuentes de datos";
   if (pathname.startsWith("/admin/source-ranking")) return "Data Source Ranking";
   if (pathname.startsWith("/admin")) return "Panel de administracion";
@@ -259,6 +260,7 @@ function getNavGroups(role: ProfileRole | null): NavGroup[] {
         title: "Configuracion",
         items: [
           { href: "/admin/control-acceso", label: "Control de Acceso", icon: IconUsers },
+          { href: "/admin/teams-admin", label: "Teams Admin", icon: IconUsers },
         ],
       },
     ];

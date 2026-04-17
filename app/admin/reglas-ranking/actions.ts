@@ -50,6 +50,42 @@ function parseOptionalNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function parseBooleanCheckbox(value: FormDataEntryValue | null): boolean {
+  if (typeof value !== "string") return false;
+  return value === "on" || value === "true" || value === "1";
+}
+
+function normalizePeriodInput(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  return normalizePeriodMonthInput(raw);
+}
+
+function normalizeScopeInput(value: unknown): "rep" | "manager" | null {
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (raw === "rep") return "rep";
+  if (raw === "manager" || raw === "manger") return "manager";
+  return null;
+}
+
+function normalizeParticipationScopeInput(value: unknown): "all_fdv" | "ranking_groups" | null {
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (raw === "all_fdv") return "all_fdv";
+  if (raw === "ranking_groups") return "ranking_groups";
+  return null;
+}
+
+function parseBooleanText(value: unknown): boolean {
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return raw === "1" || raw === "true" || raw === "on" || raw === "yes" || raw === "si";
+}
+
 export async function uploadReglasRankingComplementExcelAction(
   _prevState: UploadRankingComplementResult | null,
   formData: FormData,
@@ -366,4 +402,448 @@ export async function upsertManualReglasRankingComplementAction(
 
   revalidatePath("/admin/reglas-ranking");
   return { ok: true, message: "Complemento manual guardado." };
+}
+
+type UpsertRankingContestResult =
+  | {
+      ok: true;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export async function upsertRankingContestAction(
+  _prevState: UpsertRankingContestResult | null,
+  formData: FormData,
+): Promise<UpsertRankingContestResult> {
+  const { user, role, isActive } = await getCurrentAuthContext();
+  if (!user || !isAdminRole(role, isActive)) {
+    return { ok: false, message: "No autorizado." };
+  }
+
+  const contestId = normalizeText(formData.get("contest_id"));
+  const contestName = normalizeText(formData.get("contest_name"));
+  const scope = normalizeScopeInput(formData.get("scope"));
+  const participationScope = normalizeParticipationScopeInput(formData.get("participation_scope"));
+  const paymentDateRaw = normalizeText(formData.get("payment_date"));
+  const coverageStartRaw = normalizeText(formData.get("coverage_period_start"));
+  const coverageEndRaw = normalizeText(formData.get("coverage_period_end"));
+  const paymentDate = normalizePeriodInput(paymentDateRaw);
+  const coverageStart = normalizePeriodInput(coverageStartRaw);
+  const coverageEnd = normalizePeriodInput(coverageEndRaw);
+  const isActiveContest = parseBooleanCheckbox(formData.get("is_active"));
+
+  const componentNames = formData.getAll("component_name[]").map((item) => normalizeText(item));
+  const componentThresholdsRaw = formData
+    .getAll("component_threshold[]")
+    .map((item) => normalizeText(item));
+  const componentStartRaw = formData.getAll("component_start[]").map((item) => normalizeText(item));
+  const componentEndRaw = formData.getAll("component_end[]").map((item) => normalizeText(item));
+  const componentActivesRaw = formData.getAll("component_active[]").map((item) => normalizeText(item));
+  const prizePlacesRaw = formData.getAll("prize_place[]").map((item) => normalizeText(item));
+  const prizeTitlesRaw = formData.getAll("prize_title[]").map((item) => normalizeText(item));
+  const prizeAmountsRaw = formData.getAll("prize_amount_mxn[]").map((item) => normalizeText(item));
+  const prizeDescriptionsRaw = formData.getAll("prize_description[]").map((item) => normalizeText(item));
+
+  if (!contestName) {
+    return { ok: false, message: "Nombre del concurso es requerido." };
+  }
+  if (!scope) {
+    return { ok: false, message: "Alcance invalido. Usa Rep o Manager." };
+  }
+  if (!participationScope) {
+    return { ok: false, message: "Scope de participacion invalido." };
+  }
+  if (paymentDateRaw && !paymentDate) {
+    return { ok: false, message: "Fecha de pago invalida. Usa formato YYYY-MM." };
+  }
+  if (coverageStartRaw && !coverageStart) {
+    return { ok: false, message: "Periodo inicio cobertura invalido. Usa YYYY-MM." };
+  }
+  if (coverageEndRaw && !coverageEnd) {
+    return { ok: false, message: "Periodo fin cobertura invalido. Usa YYYY-MM." };
+  }
+  if (coverageStart && coverageEnd && coverageStart > coverageEnd) {
+    return { ok: false, message: "Periodo cobertura: inicio no puede ser mayor que fin." };
+  }
+
+  const components: Array<{
+    component_name: string;
+    threshold_value: number | null;
+    period_start: string | null;
+    period_end: string | null;
+    is_active: boolean;
+    sort_order: number;
+  }> = [];
+  const prizes: Array<{
+    place_no: number;
+    title: string | null;
+    amount_mxn: number | null;
+    description: string | null;
+    sort_order: number;
+  }> = [];
+
+  const maxLen = Math.max(
+    componentNames.length,
+    componentThresholdsRaw.length,
+    componentStartRaw.length,
+    componentEndRaw.length,
+    componentActivesRaw.length,
+  );
+
+  for (let index = 0; index < maxLen; index += 1) {
+    const name = componentNames[index] ?? "";
+    const thresholdRaw = componentThresholdsRaw[index] ?? "";
+    const startRaw = componentStartRaw[index] ?? "";
+    const endRaw = componentEndRaw[index] ?? "";
+    const isActive = parseBooleanText(componentActivesRaw[index] ?? "");
+    const threshold = parseOptionalNumber(thresholdRaw);
+    const periodStart = normalizePeriodInput(startRaw);
+    const periodEnd = normalizePeriodInput(endRaw);
+
+    const emptyRow = !name && !thresholdRaw && !startRaw && !endRaw;
+    if (emptyRow) continue;
+
+    if (!name) {
+      return { ok: false, message: `Componente #${index + 1}: nombre requerido.` };
+    }
+    if (startRaw && !periodStart) {
+      return { ok: false, message: `Componente ${name}: periodo inicio invalido.` };
+    }
+    if (endRaw && !periodEnd) {
+      return { ok: false, message: `Componente ${name}: periodo fin invalido.` };
+    }
+    if (periodStart && periodEnd && periodStart > periodEnd) {
+      return { ok: false, message: `Componente ${name}: inicio no puede ser mayor que fin.` };
+    }
+
+    if (isActive) {
+      if (threshold === null) {
+        return { ok: false, message: `Componente ${name} activo: define umbral.` };
+      }
+      if (!periodStart || !periodEnd) {
+        return { ok: false, message: `Componente ${name} activo: define inicio y fin.` };
+      }
+    }
+
+    components.push({
+      component_name: name,
+      threshold_value: threshold,
+      period_start: periodStart,
+      period_end: periodEnd,
+      is_active: isActive,
+      sort_order: components.length,
+    });
+  }
+
+  const maxPrizeLen = Math.max(
+    prizePlacesRaw.length,
+    prizeTitlesRaw.length,
+    prizeAmountsRaw.length,
+    prizeDescriptionsRaw.length,
+  );
+
+  for (let index = 0; index < maxPrizeLen; index += 1) {
+    const placeRaw = prizePlacesRaw[index] ?? "";
+    const titleRaw = prizeTitlesRaw[index] ?? "";
+    const amountRaw = prizeAmountsRaw[index] ?? "";
+    const descriptionRaw = prizeDescriptionsRaw[index] ?? "";
+
+    const isEmpty = !placeRaw && !titleRaw && !amountRaw && !descriptionRaw;
+    if (isEmpty) continue;
+
+    const placeNo = Number(placeRaw);
+    const amountMxn = parseOptionalNumber(amountRaw);
+
+    if (!Number.isInteger(placeNo) || placeNo <= 0) {
+      return { ok: false, message: `Premio #${index + 1}: posicion invalida.` };
+    }
+    if (amountRaw && amountMxn === null) {
+      return { ok: false, message: `Premio posicion ${placeNo}: monto invalido.` };
+    }
+
+    prizes.push({
+      place_no: placeNo,
+      title: titleRaw || null,
+      amount_mxn: amountMxn,
+      description: descriptionRaw || null,
+      sort_order: prizes.length,
+    });
+  }
+
+  const supabase = createAdminClient();
+  if (!supabase) {
+    return { ok: false, message: "Admin client no disponible." };
+  }
+  const payload = {
+    contest_name: contestName,
+    scope,
+    participation_scope: participationScope,
+    payment_date: paymentDate,
+    coverage_period_start: coverageStart,
+    coverage_period_end: coverageEnd,
+    is_active: isActiveContest,
+    updated_by: user.id,
+  };
+
+  const upsertResult = contestId
+    ? await supabase.from("ranking_contests").update(payload).eq("id", contestId).select("id").single()
+    : await supabase.from("ranking_contests").insert(payload).select("id").single();
+
+  if (upsertResult.error) {
+    if (
+      String(upsertResult.error.message ?? "").includes("ranking_contests_coverage_period_end_chk")
+    ) {
+      return {
+        ok: false,
+        message:
+          "No se pudo guardar concurso: esquema desalineado en ranking_contests (coverage_period_end). Ejecuta la migracion SQL de normalizacion YYYY-MM.",
+      };
+    }
+    if (isMissingRelationError(upsertResult.error)) {
+      const tableName = getMissingRelationName(upsertResult.error) ?? "ranking_contests";
+      return {
+        ok: false,
+        message: `No existe la tabla ${tableName}. Ejecuta docs/ranking-contests-schema.sql.`,
+      };
+    }
+    return {
+      ok: false,
+      message: `No se pudo guardar concurso: ${upsertResult.error.message}`,
+    };
+  }
+
+  if (!upsertResult.data) {
+    return { ok: false, message: "No se encontro el concurso a actualizar. No se aplicaron cambios." };
+  }
+
+  const savedContestId = String((upsertResult.data as { id?: string }).id ?? "").trim();
+  if (!savedContestId) {
+    return { ok: false, message: "No se pudo resolver el id del concurso guardado." };
+  }
+
+  const deleteComponentsResult = await supabase
+    .from("ranking_contest_components")
+    .delete()
+    .eq("contest_id", savedContestId);
+
+  if (deleteComponentsResult.error) {
+    if (isMissingRelationError(deleteComponentsResult.error)) {
+      const tableName =
+        getMissingRelationName(deleteComponentsResult.error) ?? "ranking_contest_components";
+      return {
+        ok: false,
+        message: `No existe la tabla ${tableName}. Ejecuta docs/ranking-contests-schema.sql.`,
+      };
+    }
+    return {
+      ok: false,
+      message: `No se pudo limpiar componentes del concurso: ${deleteComponentsResult.error.message}`,
+    };
+  }
+
+  if (components.length > 0) {
+    const insertComponentsResult = await supabase.from("ranking_contest_components").insert(
+      components.map((item) => ({
+        contest_id: savedContestId,
+        ...item,
+      })),
+    );
+
+    if (insertComponentsResult.error) {
+      if (isMissingRelationError(insertComponentsResult.error)) {
+        const tableName =
+          getMissingRelationName(insertComponentsResult.error) ?? "ranking_contest_components";
+        return {
+          ok: false,
+          message: `No existe la tabla ${tableName}. Ejecuta docs/ranking-contests-schema.sql.`,
+        };
+      }
+      return {
+        ok: false,
+        message: `No se pudo guardar componentes del concurso: ${insertComponentsResult.error.message}`,
+      };
+    }
+  }
+
+  const deletePrizesResult = await supabase
+    .from("ranking_contest_prizes")
+    .delete()
+    .eq("contest_id", savedContestId);
+
+  if (deletePrizesResult.error) {
+    if (isMissingRelationError(deletePrizesResult.error)) {
+      const tableName = getMissingRelationName(deletePrizesResult.error) ?? "ranking_contest_prizes";
+      return {
+        ok: false,
+        message: `No existe la tabla ${tableName}. Ejecuta docs/ranking-contests-schema.sql.`,
+      };
+    }
+    return {
+      ok: false,
+      message: `No se pudo limpiar premios del concurso: ${deletePrizesResult.error.message}`,
+    };
+  }
+
+  if (prizes.length > 0) {
+    const insertPrizesResult = await supabase.from("ranking_contest_prizes").insert(
+      prizes.map((item) => ({
+        contest_id: savedContestId,
+        ...item,
+      })),
+    );
+
+    if (insertPrizesResult.error) {
+      if (isMissingRelationError(insertPrizesResult.error)) {
+        const tableName = getMissingRelationName(insertPrizesResult.error) ?? "ranking_contest_prizes";
+        return {
+          ok: false,
+          message: `No existe la tabla ${tableName}. Ejecuta docs/ranking-contests-schema.sql.`,
+        };
+      }
+      return {
+        ok: false,
+        message: `No se pudo guardar premios del concurso: ${insertPrizesResult.error.message}`,
+      };
+    }
+  }
+
+  revalidatePath("/admin/reglas-ranking");
+  return { ok: true, message: contestId ? "Concurso actualizado." : "Concurso creado." };
+}
+
+type DeleteRankingContestResult =
+  | {
+      ok: true;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export async function deleteRankingContestAction(
+  _prevState: DeleteRankingContestResult | null,
+  formData: FormData,
+): Promise<DeleteRankingContestResult> {
+  const { user, role, isActive } = await getCurrentAuthContext();
+  if (!user || !isAdminRole(role, isActive)) {
+    return { ok: false, message: "No autorizado." };
+  }
+
+  const contestId = normalizeText(formData.get("contest_id"));
+  if (!contestId) {
+    return { ok: false, message: "contest_id es requerido." };
+  }
+
+  const supabase = createAdminClient();
+  if (!supabase) {
+    return { ok: false, message: "Admin client no disponible." };
+  }
+
+  const deleteResult = await supabase.from("ranking_contests").delete().eq("id", contestId);
+
+  if (deleteResult.error) {
+    if (isMissingRelationError(deleteResult.error)) {
+      const tableName = getMissingRelationName(deleteResult.error) ?? "ranking_contests";
+      return {
+        ok: false,
+        message: `No existe la tabla ${tableName}. Ejecuta docs/ranking-contests-schema.sql.`,
+      };
+    }
+    return {
+      ok: false,
+      message: `No se pudo eliminar concurso: ${deleteResult.error.message}`,
+    };
+  }
+
+  revalidatePath("/admin/reglas-ranking");
+  return { ok: true, message: "Concurso eliminado." };
+}
+
+type UpsertRankingContestParticipantsResult =
+  | {
+      ok: true;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export async function upsertRankingContestParticipantsAction(
+  _prevState: UpsertRankingContestParticipantsResult | null,
+  formData: FormData,
+): Promise<UpsertRankingContestParticipantsResult> {
+  const { user, role, isActive } = await getCurrentAuthContext();
+  if (!user || !isAdminRole(role, isActive)) {
+    return { ok: false, message: "No autorizado." };
+  }
+
+  const contestId = normalizeText(formData.get("contest_id"));
+  if (!contestId) {
+    return { ok: false, message: "contest_id es requerido." };
+  }
+
+  const groupIds = Array.from(
+    new Set(
+      formData
+        .getAll("ranking_group_ids[]")
+        .map((value) => normalizeText(value))
+        .filter((value) => value.length > 0),
+    ),
+  );
+
+  const supabase = createAdminClient();
+  if (!supabase) {
+    return { ok: false, message: "Admin client no disponible." };
+  }
+
+  const deleteResult = await supabase
+    .from("ranking_contest_participants")
+    .delete()
+    .eq("contest_id", contestId);
+
+  if (deleteResult.error) {
+    if (isMissingRelationError(deleteResult.error)) {
+      const tableName = getMissingRelationName(deleteResult.error) ?? "ranking_contest_participants";
+      return {
+        ok: false,
+        message: `No existe la tabla ${tableName}. Ejecuta docs/ranking-contests-schema.sql.`,
+      };
+    }
+    return {
+      ok: false,
+      message: `No se pudo limpiar participantes del concurso: ${deleteResult.error.message}`,
+    };
+  }
+
+  if (groupIds.length > 0) {
+    const insertResult = await supabase.from("ranking_contest_participants").insert(
+      groupIds.map((groupId) => ({
+        contest_id: contestId,
+        ranking_group_id: groupId,
+        updated_by: user.id,
+      })),
+    );
+
+    if (insertResult.error) {
+      if (isMissingRelationError(insertResult.error)) {
+        const tableName = getMissingRelationName(insertResult.error) ?? "ranking_contest_participants";
+        return {
+          ok: false,
+          message: `No existe la tabla ${tableName}. Ejecuta docs/ranking-contests-schema.sql.`,
+        };
+      }
+      return {
+        ok: false,
+        message: `No se pudo guardar participantes del concurso: ${insertResult.error.message}`,
+      };
+    }
+  }
+
+  revalidatePath("/admin/reglas-ranking");
+  return { ok: true, message: "Participacion de equipos guardada." };
 }
