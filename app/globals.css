@@ -73,3 +73,20 @@
     transform: translateY(0);
   }
 }
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: #fff !important;
+    color: #0f172a !important;
+  }
+
+  .print-report-surface {
+    max-width: 100% !important;
+    border: 1px solid #d8e3f8 !important;
+    box-shadow: none !important;
+  }
+}

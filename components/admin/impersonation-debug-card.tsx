@@ -10,6 +10,7 @@ type ProfileOption = {
   last_name: string | null;
   global_role: string | null;
   is_active: boolean;
+  relation_type: "sales_force" | "manager" | null;
 };
 
 type ImpersonationSnapshot = {
@@ -35,15 +36,20 @@ export function ImpersonationDebugCard({ currentImpersonation }: ImpersonationDe
   const [query, setQuery] = useState("");
   const [profiles, setProfiles] = useState<ProfileOption[]>([]);
   const [selectedUserId, setSelectedUserId] = useState(currentImpersonation?.userId ?? "");
+  const [relationTypeFilter, setRelationTypeFilter] = useState<"all" | "sales_force" | "manager">("all");
   const [state, setState] = useState<RequestState>("idle");
   const [message, setMessage] = useState("");
 
-  async function loadProfiles(searchTerm = "") {
+  async function loadProfiles(
+    searchTerm = "",
+    relationType: "all" | "sales_force" | "manager" = relationTypeFilter,
+  ) {
     setState("loading");
     setMessage("");
     try {
       const encoded = encodeURIComponent(searchTerm);
-      const response = await fetch(`/api/admin/debug/users?q=${encoded}`, {
+      const encodedRelationType = encodeURIComponent(relationType);
+      const response = await fetch(`/api/admin/debug/users?q=${encoded}&relation_type=${encodedRelationType}`, {
         cache: "no-store",
       });
       const payload = (await response.json()) as {
@@ -74,13 +80,13 @@ export function ImpersonationDebugCard({ currentImpersonation }: ImpersonationDe
   }
 
   useEffect(() => {
-    void loadProfiles();
+    void loadProfiles(query, relationTypeFilter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [relationTypeFilter]);
 
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await loadProfiles(query);
+    await loadProfiles(query, relationTypeFilter);
   }
 
   async function handleStartImpersonation() {
@@ -173,6 +179,21 @@ export function ImpersonationDebugCard({ currentImpersonation }: ImpersonationDe
             className="h-10 rounded-lg border border-[#d0d5dd] bg-white px-3 text-sm text-[#0f172a] focus:border-[#2563eb] focus:outline-none focus:ring-4 focus:ring-[#dbeafe]"
           />
         </div>
+        <div className="grid min-w-[200px] gap-2">
+          <label htmlFor="debugRelationTypeFilter" className="text-xs font-medium text-[#475467]">
+            Relation type
+          </label>
+          <select
+            id="debugRelationTypeFilter"
+            value={relationTypeFilter}
+            onChange={(event) => setRelationTypeFilter(event.target.value as "all" | "sales_force" | "manager")}
+            className="h-10 rounded-lg border border-[#d0d5dd] bg-white px-3 text-sm text-[#0f172a] focus:border-[#2563eb] focus:outline-none focus:ring-4 focus:ring-[#dbeafe]"
+          >
+            <option value="all">Todos</option>
+            <option value="sales_force">Sales force</option>
+            <option value="manager">Manager</option>
+          </select>
+        </div>
         <button
           type="submit"
           disabled={state === "loading"}
@@ -194,7 +215,7 @@ export function ImpersonationDebugCard({ currentImpersonation }: ImpersonationDe
         >
           {profiles.map((profile) => (
             <option key={profile.user_id} value={profile.user_id}>
-              {`${getDisplayName(profile)} | rol ${profile.global_role ?? "sin-definir"} | ${profile.is_active ? "activo" : "inactivo"}`}
+              {`${getDisplayName(profile)} | relation ${profile.relation_type ?? "-"} | rol ${profile.global_role ?? "sin-definir"} | ${profile.is_active ? "activo" : "inactivo"}`}
             </option>
           ))}
         </select>

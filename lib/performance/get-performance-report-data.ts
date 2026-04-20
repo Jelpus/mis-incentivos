@@ -27,6 +27,7 @@ type BigQueryRouteCoverageRow = {
   total_payout: number | null;
   total_variable: number | null;
   payout_coverage: number | null;
+  coverage_value: number | null;
 };
 
 type BigQueryOptionRow = {
@@ -113,6 +114,22 @@ export type PerformanceProductBandRow = {
   coverage_201_250: number;
 };
 
+export type PerformanceScatterPoint = {
+  id: string;
+  label: string;
+  cpd: number | null;
+  cpaT1: number | null;
+  y: number;
+  color: string;
+};
+
+export type PerformanceScatterGraphData = {
+  points: PerformanceScatterPoint[];
+  yTarget: number;
+  defaultXMetric: "cpd" | "cpa_t1";
+  message: string | null;
+};
+
 export type PerformanceReportData = {
   ok: boolean;
   availablePeriods: string[];
@@ -127,6 +144,7 @@ export type PerformanceReportData = {
   summary: PerformanceSummary;
   bins: PerformanceCoverageBin[];
   productBands: PerformanceProductBandRow[];
+  scatterGraph: PerformanceScatterGraphData | null;
   message: string | null;
 };
 
@@ -438,6 +456,185 @@ function computeProductBands(rows: BigQueryProductDistributionBaseRow[]): Perfor
     .sort((a, b) => a.productName.localeCompare(b.productName, "es"));
 }
 
+function getScatterPointColor(xValue: number, yValue: number): string {
+  if (yValue >= 100 && xValue >= 7) return "#16a34a";
+  if (yValue >= 100 && xValue < 7) return "#f59e0b";
+  if (yValue < 100 && xValue >= 7) return "#eab308";
+  return "#dc2626";
+}
+
+function normalizeTerritoryKey(value: string | null | undefined) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+type RankingAggScatterRow = {
+  territorio_individual: string | null;
+  total_visitas: number | null;
+  total_visitas_top: number | null;
+  total_objetivos: number | null;
+  tier: string | null;
+};
+
+async function getSalesForceTerritoryNameMap(params: {
+  territoryKeys: string[];
+  periodCodes: string[];
+}): Promise<Record<string, string>> {
+  const adminClient = createAdminClient();
+  const territoryKeys = Array.from(
+    new Set(
+      params.territoryKeys
+        .map((value) => normalizeTerritoryKey(value))
+        .filter((value) => value.length > 0),
+    ),
+  );
+  const periodMonths = toPeriodMonthDates(params.periodCodes);
+
+  if (!adminClient || !territoryKeys.length || !periodMonths.length) {
+    return {};
+  }
+
+  const result = await adminClient
+    .from("sales_force_status")
+    .select("territorio_individual, nombre_completo, is_active, updated_at")
+    .in("territorio_individual", territoryKeys)
+    .in("period_month", periodMonths)
+    .eq("is_deleted", false)
+    .order("is_active", { ascending: false })
+    .order("updated_at", { ascending: false });
+
+  if (result.error || !result.data) return {};
+
+  const map: Record<string, string> = {};
+  for (const row of result.data) {
+    const key = normalizeTerritoryKey(row.territorio_individual);
+    const name = String(row.nombre_completo ?? "").trim();
+    if (!key || !name || map[key]) continue;
+    map[key] = name;
+  }
+
+  return map;
+}
+
+async function buildScatterGraphData(params: {
+  selectedPeriods: string[];
+  routeRows: BigQueryRouteCoverageRow[];
+}): Promise<PerformanceScatterGraphData | null> {
+  const adminClient = createAdminClient();
+  if (!adminClient) return null;
+
+  const territoryKeys = Array.from(
+    new Set(
+      params.routeRows
+        .map((row) => normalizeTerritoryKey(row.route_key))
+        .filter((value) => value.length > 0),
+    ),
+  );
+
+  if (!territoryKeys.length) {
+    return {
+      points: [],
+      yTarget: 100,
+      defaultXMetric: "cpd",
+      message: "No hay rutas para construir CPD/CPA T1 con los filtros actuales.",
+    };
+  }
+
+  const periodMonths = toPeriodMonthDates(params.selectedPeriods);
+  if (!periodMonths.length) {
+    return {
+      points: [],
+      yTarget: 100,
+      defaultXMetric: "cpd",
+      message: "No hay periodos validos para construir CPD/CPA T1.",
+    };
+  }
+
+  const chunkArray = <T,>(items: T[], size: number): T[][] => {
+    const output: T[][] = [];
+    for (let index = 0; index < items.length; index += size) {
+      output.push(items.slice(index, index + size));
+    }
+    return output;
+  };
+
+  const rankingRows: RankingAggScatterRow[] = [];
+  for (const territoryChunk of chunkArray(territoryKeys, 200)) {
+    const rankingResult = await adminClient
+      .from("ranking_kpi_local_ytd_agg")
+      .select("territorio_individual, total_visitas, total_visitas_top, total_objetivos, tier")
+      .in("period_month", periodMonths)
+      .in("territorio_individual", territoryChunk);
+
+    if (!rankingResult.error) {
+      rankingRows.push(...((rankingResult.data ?? []) as RankingAggScatterRow[]));
+    }
+  }
+
+  const periodCount = Math.max(1, params.selectedPeriods.length);
+  const territoryNameMap = await getSalesForceTerritoryNameMap({
+    territoryKeys,
+    periodCodes: params.selectedPeriods,
+  });
+  const cpdByTerritory = new Map<string, number>();
+  const cpaByTerritory = new Map<string, { visitasTop: number; objetivos: number }>();
+
+  for (const row of rankingRows) {
+    const key = normalizeTerritoryKey(row.territorio_individual);
+    if (!key) continue;
+
+    cpdByTerritory.set(key, (cpdByTerritory.get(key) ?? 0) + Number(row.total_visitas ?? 0));
+
+    if (String(row.tier ?? "").trim().toUpperCase() === "T1") {
+      const current = cpaByTerritory.get(key) ?? { visitasTop: 0, objetivos: 0 };
+      current.visitasTop += Number(row.total_visitas_top ?? 0);
+      current.objetivos += Number(row.total_objetivos ?? 0);
+      cpaByTerritory.set(key, current);
+    }
+  }
+
+  const points = params.routeRows
+    .map((row) => {
+      const territory = normalizeTerritoryKey(row.route_key);
+      if (!territory) return null;
+      const yValue = Number(row.coverage_value ?? NaN);
+      if (!Number.isFinite(yValue)) return null;
+
+      const visitas = cpdByTerritory.get(territory);
+      const cpd = Number.isFinite(Number(visitas)) ? Number(visitas ?? 0) / (20 * periodCount) : null;
+      const cpaT1Data = cpaByTerritory.get(territory);
+      const cpaT1 =
+        cpaT1Data && cpaT1Data.objetivos > 0
+          ? (cpaT1Data.visitasTop / cpaT1Data.objetivos) * 100
+          : null;
+      const xForColor = Number.isFinite(Number(cpd ?? NaN)) ? Number(cpd) : Number(cpaT1 ?? 0);
+      const territoryName = territoryNameMap[territory] ?? "";
+      const label = territoryName ? `${territoryName} (${territory})` : territory;
+
+      return {
+        id: territory,
+        label,
+        cpd,
+        cpaT1,
+        y: yValue,
+        color: getScatterPointColor(xForColor, yValue),
+      } satisfies PerformanceScatterPoint;
+    })
+    .filter((point): point is PerformanceScatterPoint => point !== null);
+
+  const hasCpd = points.some((point) => Number.isFinite(Number(point.cpd ?? NaN)));
+  const hasCpa = points.some((point) => Number.isFinite(Number(point.cpaT1 ?? NaN)));
+
+  return {
+    points,
+    yTarget: 100,
+    defaultXMetric: hasCpd ? "cpd" : "cpa_t1",
+    message:
+      hasCpd || hasCpa
+        ? "Cobertura = suma(resultado) / suma(objetivo). CPD = total_visitas / 20. CPA T1 = sum(total_visitas_top) / sum(total_objetivos) con tier T1."
+        : "No hay datos KPI para construir CPD/CPA T1.",
+  };
+}
+
 async function getManagerNameMap(params: {
   managerKeys: string[];
   periodCodes: string[];
@@ -539,6 +736,7 @@ export async function getPerformanceReportData(params: {
     summary: createEmptySummary(),
     bins: createCoverageBins(),
     productBands: [],
+    scatterGraph: null,
     message: "No fue posible cargar performance report.",
   };
 
@@ -599,7 +797,12 @@ export async function getPerformanceReportData(params: {
         SELECT
           COALESCE(NULLIF(TRIM(representante), ''), NULLIF(TRIM(ruta), '')) AS route_key,
           SUM(IFNULL(pagoresultado, 0)) AS total_payout,
-          SUM(IFNULL(pagovariable, 0)) AS total_variable
+          SUM(IFNULL(pagovariable, 0)) AS total_variable,
+          IF(
+            SUM(IFNULL(objetivo, 0)) = 0,
+            AVG(SAFE_MULTIPLY(IFNULL(cobertura, 0), 100)),
+            SAFE_MULTIPLY(SAFE_DIVIDE(SUM(IFNULL(resultado, 0)), SUM(IFNULL(objetivo, 0))), 100)
+          ) AS coverage_value
         FROM ${tableRef}
         WHERE ${whereContext.whereSql}
         GROUP BY route_key
@@ -608,7 +811,8 @@ export async function getPerformanceReportData(params: {
         route_key,
         total_payout,
         total_variable,
-        IF(total_variable = 0, 0, SAFE_MULTIPLY(SAFE_DIVIDE(total_payout, total_variable), 100)) AS payout_coverage
+        IF(total_variable = 0, 0, SAFE_MULTIPLY(SAFE_DIVIDE(total_payout, total_variable), 100)) AS payout_coverage,
+        coverage_value
       FROM route_base
       WHERE route_key IS NOT NULL
     `,
@@ -692,6 +896,10 @@ export async function getPerformanceReportData(params: {
   const summary = computeSummary(routeRows ?? []);
   const bins = computeBins(routeRows ?? []);
   const productBands = computeProductBands(productDistributionRows ?? []);
+  const scatterGraph = await buildScatterGraphData({
+    selectedPeriods: finalSelectedPeriods,
+    routeRows: routeRows ?? [],
+  });
 
   return {
     ok: true,
@@ -707,6 +915,7 @@ export async function getPerformanceReportData(params: {
     summary,
     bins,
     productBands,
+    scatterGraph,
     message: null,
   };
 }

@@ -16,6 +16,8 @@ type VersionRow = {
   versionNo: number;
   sourceFileName: string | null;
   sheetName: string | null;
+  hasPrivateFile: boolean;
+  hasDrillDownFile: boolean;
   totalRows: number;
   validRows: number;
   invalidRows: number;
@@ -618,12 +620,13 @@ export function ObjetivosManagementCard({
               <th className="px-3 py-2">Archivo</th>
               <th className="px-3 py-2">Cobertura</th>
               <th className="px-3 py-2">Creado</th>
+              <th className="px-3 py-2">Descargas</th>
             </tr>
           </thead>
           <tbody>
             {versions.length === 0 ? (
               <tr>
-                <td colSpan={4} className="px-3 py-6 text-center text-neutral-500">
+                <td colSpan={5} className="px-3 py-6 text-center text-neutral-500">
                   Aun no hay versiones registradas para este periodo.
                 </td>
               </tr>
@@ -642,6 +645,29 @@ export function ObjetivosManagementCard({
                     </p>
                   </td>
                   <td className="px-3 py-2 text-neutral-700">{formatDateTime(version.createdAt)}</td>
+                  <td className="px-3 py-2 text-neutral-700">
+                    <div className="flex flex-wrap gap-2">
+                      {version.hasPrivateFile ? (
+                        <a
+                          href={`/api/admin/objetivos/versions/${encodeURIComponent(version.id)}/download?source=private`}
+                          className="inline-flex items-center justify-center rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-800 hover:bg-neutral-50"
+                        >
+                          Privados
+                        </a>
+                      ) : null}
+                      {version.hasDrillDownFile ? (
+                        <a
+                          href={`/api/admin/objetivos/versions/${encodeURIComponent(version.id)}/download?source=drilldown`}
+                          className="inline-flex items-center justify-center rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-800 hover:bg-neutral-50"
+                        >
+                          Drill Down
+                        </a>
+                      ) : null}
+                      {!version.hasPrivateFile && !version.hasDrillDownFile ? (
+                        <span className="text-xs text-neutral-500">No disponible</span>
+                      ) : null}
+                    </div>
+                  </td>
                 </tr>
               ))
             )}

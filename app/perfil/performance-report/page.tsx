@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { getPerformanceReportData } from "@/lib/performance/get-performance-report-data";
 import { PerformanceReportClient } from "@/components/performance/performance-report-client";
+import { ExportReportButton } from "@/components/profile/export-report-button";
 
 type PerformanceReportPageProps = {
   searchParams?: Promise<{
@@ -39,13 +40,18 @@ export default async function PerformanceReportPage({ searchParams }: Performanc
 
   return (
     <section className="mx-auto w-full max-w-7xl">
-      <div className="rounded-2xl border border-[#d8e3f8] bg-white p-6 shadow-[0_12px_30px_rgba(0,32,104,0.08)] sm:p-8">
-        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#445f95]">
-          Perfil
-        </p>
-        <h1 className="mt-2 text-3xl font-semibold leading-tight text-[#002b7f]">
-          Performance Report
-        </h1>
+      <div className="print-report-surface rounded-2xl border border-[#d8e3f8] bg-white p-6 shadow-[0_12px_30px_rgba(0,32,104,0.08)] sm:p-8">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#445f95]">
+              Perfil
+            </p>
+            <h1 className="mt-2 text-3xl font-semibold leading-tight text-[#002b7f]">
+              Performance Report
+            </h1>
+          </div>
+          <ExportReportButton />
+        </div>
         <p className="mt-3 text-sm text-[#4b5f86]">
           Analiza payout distribution por periodos y detecta comportamientos de low performers.
         </p>

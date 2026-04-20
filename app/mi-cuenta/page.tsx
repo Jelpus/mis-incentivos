@@ -9,6 +9,7 @@ import {
   normalizePeriodMonthInput,
 } from "@/lib/admin/incentive-rules/shared";
 import { getResultadosV2Data } from "@/lib/results/get-resultados-v2-data";
+import type { ResultadoRecord } from "@/lib/results/get-resultados-v2-data";
 import {
   ResumenRankingCard,
   type RankingSummaryCardData,
@@ -16,6 +17,11 @@ import {
 import { ResultadosSummaryCard } from "@/components/results/resultados-summary-card";
 import { ResultadosTableCard } from "@/components/results/resultados-table-card";
 import { ResultadosGraph } from "@/components/results/resultados-graph";
+import {
+  ResultadosScatterGraph,
+  type ResultadosScatterGraphData,
+} from "@/components/results/resultados-scatter-graph";
+import { ExportReportButton } from "@/components/profile/export-report-button";
 
 type SalesForceMatchRow = {
   id: string;
@@ -88,6 +94,13 @@ type ProfileRelationRow = {
   manager_status_id: string | null;
   period_month: string;
   is_current: boolean;
+  profile_email: string | null;
+  territorio: string | null;
+};
+
+type TeamMemberRow = {
+  no_empleado: number | null;
+  territorio_individual: string | null;
 };
 
 type MatchSource =
@@ -218,6 +231,42 @@ async function getTeamContactData(teamId: string): Promise<TeamContactData | nul
   };
 }
 
+async function getTeamContactDataByManagerTerritory(params: {
+  periodMonth: string | null;
+  territorioManager: string | null;
+}): Promise<TeamContactData | null> {
+  const normalizedPeriod = normalizePeriodMonthInput(params.periodMonth ?? "");
+  const managerTerritory = String(params.territorioManager ?? "").trim();
+  if (!normalizedPeriod || !managerTerritory) return null;
+
+  const adminClient = createAdminClient();
+  if (!adminClient) return null;
+
+  const statusResult = await adminClient
+    .from("sales_force_status")
+    .select("team_id")
+    .eq("period_month", normalizedPeriod)
+    .ilike("territorio_padre", managerTerritory)
+    .eq("is_deleted", false);
+
+  if (statusResult.error) return null;
+
+  const teamIds = Array.from(
+    new Set(
+      (statusResult.data ?? [])
+        .map((row) => String(row.team_id ?? "").trim())
+        .filter((value) => value.length > 0),
+    ),
+  ).sort((a, b) => a.localeCompare(b, "es"));
+
+  for (const teamId of teamIds) {
+    const contact = await getTeamContactData(teamId);
+    if (contact) return contact;
+  }
+
+  return null;
+}
+
 function getInitials(value: string): string {
   const normalized = String(value ?? "").trim();
   if (!normalized) return "--";
@@ -254,9 +303,12 @@ function safeCoverage(numerator: number, denominator: number) {
 }
 
 async function getRankingSummaryCardData(params: {
+  role: string | null;
   empleado: number | null;
   periodMonth: string | null;
   territorioIndividual: string | null;
+  managerTerritorio: string | null;
+  managerTeamId: string | null;
 }): Promise<RankingSummaryCardData> {
   const emptyData: RankingSummaryCardData = {
     periodMonth: params.periodMonth,
@@ -283,18 +335,11 @@ async function getRankingSummaryCardData(params: {
     message: null,
   };
 
-  if (!params.empleado) {
-    return {
-      ...emptyData,
-      message: "No se encontró empleado para calcular criterios de ranking.",
-    };
-  }
-
   const normalizedPeriod = normalizePeriodMonthInput(params.periodMonth ?? "");
   if (!normalizedPeriod) {
     return {
       ...emptyData,
-      message: "No se encontró periodo para calcular criterios de ranking.",
+      message: "No se encontro periodo para calcular criterios de ranking.",
     };
   }
 
@@ -306,57 +351,215 @@ async function getRankingSummaryCardData(params: {
     };
   }
 
-  let [kpiResult, icvaResult] = await Promise.all([
-    adminClient
-      .from("ranking_kpi_local_ytd_agg")
-      .select("period_month, total_visitas_top, total_objetivos, garantia")
-      .eq("empleado", params.empleado)
-      .eq("tier", "T1")
-      .eq("period_month", normalizedPeriod),
-    adminClient
-      .from("ranking_icva_48hrs_agg")
-      .select("period_month, total_calls, icva_calls, on_time_call, on_time_icva")
-      .eq("empleado", params.empleado)
-      .eq("period_month", normalizedPeriod),
-  ]);
+  const chunkArray = <T,>(items: T[], size: number): T[][] => {
+    const output: T[][] = [];
+    for (let index = 0; index < items.length; index += size) {
+      output.push(items.slice(index, index + size));
+    }
+    return output;
+  };
 
-  const kpiRowsByEmpleado = (kpiResult.data ?? []) as RankingKpiLocalYtdAggRow[];
-  const icvaRowsByEmpleado = (icvaResult.data ?? []) as RankingIcva48hrsAggRow[];
-  const hasEmpleadoMatch = kpiRowsByEmpleado.length > 0 || icvaRowsByEmpleado.length > 0;
+  const collectRankingRowsByEmployees = async (employees: number[]) => {
+    const employeeChunks = chunkArray(employees, 200);
+    const kpiRows: RankingKpiLocalYtdAggRow[] = [];
+    const icvaRows: RankingIcva48hrsAggRow[] = [];
 
-  const normalizedTerritorio = String(params.territorioIndividual ?? "").trim();
-  let usedFallbackByTerritorio = false;
+    for (const chunk of employeeChunks) {
+      const [kpiChunkResult, icvaChunkResult] = await Promise.all([
+        adminClient
+          .from("ranking_kpi_local_ytd_agg")
+          .select("period_month, total_visitas_top, total_objetivos, garantia")
+          .eq("tier", "T1")
+          .eq("period_month", normalizedPeriod)
+          .in("empleado", chunk),
+        adminClient
+          .from("ranking_icva_48hrs_agg")
+          .select("period_month, total_calls, icva_calls, on_time_call, on_time_icva")
+          .eq("period_month", normalizedPeriod)
+          .in("empleado", chunk),
+      ]);
 
-  if (!hasEmpleadoMatch && normalizedTerritorio.length > 0) {
-    usedFallbackByTerritorio = true;
-    [kpiResult, icvaResult] = await Promise.all([
-      adminClient
-        .from("ranking_kpi_local_ytd_agg")
-        .select("period_month, total_visitas_top, total_objetivos, garantia")
-        .eq("tier", "T1")
-        .eq("period_month", normalizedPeriod)
-        .ilike("territorio_individual", normalizedTerritorio),
-      adminClient
-        .from("ranking_icva_48hrs_agg")
-        .select("period_month, total_calls, icva_calls, on_time_call, on_time_icva")
-        .eq("period_month", normalizedPeriod)
-        .ilike("territorio_individual", normalizedTerritorio),
-    ]);
+      if (kpiChunkResult.error || icvaChunkResult.error) {
+        return {
+          ok: false as const,
+          error:
+            kpiChunkResult.error?.message ??
+            icvaChunkResult.error?.message ??
+            "No se pudieron cargar agregados de ranking.",
+          kpiRows: [] as RankingKpiLocalYtdAggRow[],
+          icvaRows: [] as RankingIcva48hrsAggRow[],
+        };
+      }
+
+      kpiRows.push(...((kpiChunkResult.data ?? []) as RankingKpiLocalYtdAggRow[]));
+      icvaRows.push(...((icvaChunkResult.data ?? []) as RankingIcva48hrsAggRow[]));
+    }
+
+    return { ok: true as const, kpiRows, icvaRows };
+  };
+
+  const collectRankingRowsByTerritorios = async (territorios: string[]) => {
+    const territoryChunks = chunkArray(territorios, 200);
+    const kpiRows: RankingKpiLocalYtdAggRow[] = [];
+    const icvaRows: RankingIcva48hrsAggRow[] = [];
+
+    for (const chunk of territoryChunks) {
+      const [kpiChunkResult, icvaChunkResult] = await Promise.all([
+        adminClient
+          .from("ranking_kpi_local_ytd_agg")
+          .select("period_month, total_visitas_top, total_objetivos, garantia")
+          .eq("tier", "T1")
+          .eq("period_month", normalizedPeriod)
+          .in("territorio_individual", chunk),
+        adminClient
+          .from("ranking_icva_48hrs_agg")
+          .select("period_month, total_calls, icva_calls, on_time_call, on_time_icva")
+          .eq("period_month", normalizedPeriod)
+          .in("territorio_individual", chunk),
+      ]);
+
+      if (kpiChunkResult.error || icvaChunkResult.error) {
+        return {
+          ok: false as const,
+          error:
+            kpiChunkResult.error?.message ??
+            icvaChunkResult.error?.message ??
+            "No se pudieron cargar agregados de ranking.",
+          kpiRows: [] as RankingKpiLocalYtdAggRow[],
+          icvaRows: [] as RankingIcva48hrsAggRow[],
+        };
+      }
+
+      kpiRows.push(...((kpiChunkResult.data ?? []) as RankingKpiLocalYtdAggRow[]));
+      icvaRows.push(...((icvaChunkResult.data ?? []) as RankingIcva48hrsAggRow[]));
+    }
+
+    return { ok: true as const, kpiRows, icvaRows };
+  };
+
+  let kpiRows: RankingKpiLocalYtdAggRow[] = [];
+  let icvaRows: RankingIcva48hrsAggRow[] = [];
+  let message: string | null = null;
+
+  if (params.role === "manager") {
+    const managerTerritorio = String(params.managerTerritorio ?? "").trim();
+    const managerTeamId = String(params.managerTeamId ?? "").trim();
+
+    let membersQuery = adminClient
+      .from("sales_force_status")
+      .select("no_empleado, territorio_individual")
+      .eq("period_month", normalizedPeriod)
+      .eq("is_deleted", false)
+      .eq("is_active", true);
+
+    if (managerTerritorio) {
+      membersQuery = membersQuery.ilike("territorio_padre", managerTerritorio);
+    } else if (managerTeamId) {
+      membersQuery = membersQuery.eq("team_id", managerTeamId);
+    } else {
+      return {
+        ...emptyData,
+        periodMonth: normalizedPeriod,
+        message: "No se encontro territorio/team del manager para calcular su equipo.",
+      };
+    }
+
+    const membersResult = await membersQuery;
+    if (membersResult.error) {
+      return {
+        ...emptyData,
+        periodMonth: normalizedPeriod,
+        message: membersResult.error.message,
+      };
+    }
+
+    const members = (membersResult.data ?? []) as TeamMemberRow[];
+    const memberEmployees = Array.from(
+      new Set(
+        members
+          .map((row) => Number(row.no_empleado ?? 0))
+          .filter((value) => Number.isFinite(value) && value > 0),
+      ),
+    );
+    const memberTerritorios = Array.from(
+      new Set(
+        members
+          .map((row) => String(row.territorio_individual ?? "").trim())
+          .filter((value) => value.length > 0),
+      ),
+    );
+
+    if (memberEmployees.length === 0 && memberTerritorios.length === 0) {
+      return {
+        ...emptyData,
+        periodMonth: normalizedPeriod,
+        message: "No se encontraron integrantes activos del equipo para este manager.",
+      };
+    }
+
+    if (memberEmployees.length > 0) {
+      const byEmployees = await collectRankingRowsByEmployees(memberEmployees);
+      if (!byEmployees.ok) {
+        return {
+          ...emptyData,
+          periodMonth: normalizedPeriod,
+          message: byEmployees.error,
+        };
+      }
+      kpiRows = byEmployees.kpiRows;
+      icvaRows = byEmployees.icvaRows;
+    }
+
+    if ((kpiRows.length === 0 && icvaRows.length === 0) && memberTerritorios.length > 0) {
+      const byTerritorios = await collectRankingRowsByTerritorios(memberTerritorios);
+      if (!byTerritorios.ok) {
+        return {
+          ...emptyData,
+          periodMonth: normalizedPeriod,
+          message: byTerritorios.error,
+        };
+      }
+      kpiRows = byTerritorios.kpiRows;
+      icvaRows = byTerritorios.icvaRows;
+      message = `Agregado del equipo (${memberTerritorios.length} territorios).`;
+    } else {
+      message = `Agregado del equipo (${memberEmployees.length} integrantes).`;
+    }
+  } else {
+    if (!params.empleado) {
+      return {
+        ...emptyData,
+        message: "No se encontro empleado para calcular criterios de ranking.",
+      };
+    }
+
+    const byEmpleado = await collectRankingRowsByEmployees([params.empleado]);
+    if (!byEmpleado.ok) {
+      return {
+        ...emptyData,
+        periodMonth: normalizedPeriod,
+        message: byEmpleado.error,
+      };
+    }
+
+    kpiRows = byEmpleado.kpiRows;
+    icvaRows = byEmpleado.icvaRows;
+
+    const normalizedTerritorio = String(params.territorioIndividual ?? "").trim();
+    if ((kpiRows.length === 0 && icvaRows.length === 0) && normalizedTerritorio.length > 0) {
+      const byTerritorio = await collectRankingRowsByTerritorios([normalizedTerritorio]);
+      if (!byTerritorio.ok) {
+        return {
+          ...emptyData,
+          periodMonth: normalizedPeriod,
+          message: byTerritorio.error,
+        };
+      }
+      kpiRows = byTerritorio.kpiRows;
+      icvaRows = byTerritorio.icvaRows;
+      message = `No hubo match por empleado; se aplico fallback por territorio_individual (${normalizedTerritorio}).`;
+    }
   }
-
-  if (kpiResult.error || icvaResult.error) {
-    return {
-      ...emptyData,
-      periodMonth: normalizedPeriod,
-      message:
-        kpiResult.error?.message ??
-        icvaResult.error?.message ??
-        "No se pudieron cargar agregados de ranking.",
-    };
-  }
-
-  const kpiRows = (kpiResult.data ?? []) as RankingKpiLocalYtdAggRow[];
-  const icvaRows = (icvaResult.data ?? []) as RankingIcva48hrsAggRow[];
 
   const visitas = kpiRows.reduce((acc, row) => acc + toPositiveNumber(row.total_visitas_top), 0);
   const objetivo = kpiRows.reduce((acc, row) => acc + toPositiveNumber(row.total_objetivos), 0);
@@ -393,9 +596,246 @@ async function getRankingSummaryCardData(params: {
       coverage: docCoverage,
       threshold: 0.9,
     },
-    message: usedFallbackByTerritorio
-      ? `No hubo match por empleado; se aplicó fallback por territorio_individual (${normalizedTerritorio}).`
-      : null,
+    message,
+  };
+}
+
+type RankingScatterCpdRow = {
+  territorio_individual: string | null;
+  nombre: string | null;
+  total_visitas: number | null;
+};
+
+type RankingScatterCpaRow = {
+  territorio_individual: string | null;
+  total_visitas_top: number | null;
+  total_objetivos: number | null;
+};
+
+function toCoveragePercent(value: number | null | undefined): number {
+  const numeric = Number(value ?? 0);
+  if (!Number.isFinite(numeric)) return 0;
+  return numeric <= 3 ? numeric * 100 : numeric;
+}
+
+function normalizeTerritoryKey(value: string | null | undefined): string {
+  return String(value ?? "").trim().toUpperCase().replace(/\s+/g, "");
+}
+
+function quadrantColor(x: number, y: number, xTarget: number, yTarget: number): string {
+  if (y >= yTarget && x >= xTarget) return "#16a34a";
+  if (y >= yTarget && x < xTarget) return "#f59e0b";
+  if (y < yTarget && x < xTarget) return "#dc2626";
+  return "#d4a017";
+}
+
+async function getRankingScatterGraphData(params: {
+  accountRole: string | null;
+  periodMonth: string | null;
+  managerTerritory: string | null;
+  managerTeamId: string | null;
+  coverageResults: ResultadoRecord[];
+}): Promise<ResultadosScatterGraphData | null> {
+  if (params.accountRole !== "manager") return null;
+
+  const normalizedPeriod = normalizePeriodMonthInput(params.periodMonth ?? "");
+  if (!normalizedPeriod) return null;
+
+  const adminClient = createAdminClient();
+  if (!adminClient) return null;
+
+  const managerTerritory = String(params.managerTerritory ?? "").trim();
+  const managerTeamId = String(params.managerTeamId ?? "").trim();
+
+  let membersQuery = adminClient
+    .from("sales_force_status")
+    .select("territorio_individual")
+    .eq("period_month", normalizedPeriod)
+    .eq("is_deleted", false)
+    .eq("is_active", true);
+
+  if (managerTerritory) {
+    membersQuery = membersQuery.ilike("territorio_padre", managerTerritory);
+  } else if (managerTeamId) {
+    membersQuery = membersQuery.eq("team_id", managerTeamId);
+  } else {
+    return {
+      points: [],
+      yTarget: 100,
+      defaultXMetric: "cpa_t1",
+      message: "No hay territorio/team del manager para construir la grafica.",
+    };
+  }
+
+  const membersResult = await membersQuery;
+  if (membersResult.error) {
+    return {
+      points: [],
+      yTarget: 100,
+      defaultXMetric: "cpa_t1",
+      message: membersResult.error.message,
+    };
+  }
+
+  const territories = Array.from(
+    new Set(
+      ((membersResult.data ?? []) as Array<{ territorio_individual: string | null }>)
+        .map((row) => String(row.territorio_individual ?? "").trim())
+        .filter((value) => value.length > 0),
+    ),
+  );
+
+  if (territories.length === 0) {
+    return {
+      points: [],
+      yTarget: 100,
+      defaultXMetric: "cpa_t1",
+      message: "No se encontraron integrantes activos del equipo.",
+    };
+  }
+
+  const chunkArray = <T,>(items: T[], size: number): T[][] => {
+    const output: T[][] = [];
+    for (let index = 0; index < items.length; index += size) {
+      output.push(items.slice(index, index + size));
+    }
+    return output;
+  };
+
+  const coverageByTerritory = new Map<string, { objetivo: number; resultado: number; coverageSum: number; coverageCount: number }>();
+  for (const row of params.coverageResults) {
+    const rawTerritory = String(row.representante ?? row.ruta ?? "").trim();
+    const territoryKey = normalizeTerritoryKey(rawTerritory);
+    if (!territoryKey) continue;
+
+    const current = coverageByTerritory.get(territoryKey) ?? {
+      objetivo: 0,
+      resultado: 0,
+      coverageSum: 0,
+      coverageCount: 0,
+    };
+
+    const objetivo = Number(row.objetivo ?? 0);
+    const resultado = Number(row.resultado ?? 0);
+    current.objetivo += Number.isFinite(objetivo) ? objetivo : 0;
+    current.resultado += Number.isFinite(resultado) ? resultado : 0;
+    current.coverageSum += toCoveragePercent(row.cobertura);
+    current.coverageCount += 1;
+    coverageByTerritory.set(territoryKey, current);
+  }
+
+  const cpdRows: RankingScatterCpdRow[] = [];
+  const cpaRows: RankingScatterCpaRow[] = [];
+  for (const chunk of chunkArray(territories, 200)) {
+    const cpdResult = await adminClient
+      .from("ranking_kpi_local_ytd_agg")
+      .select("territorio_individual, nombre, total_visitas")
+      .eq("period_month", normalizedPeriod)
+      .in("territorio_individual", chunk);
+    if (!cpdResult.error) {
+      cpdRows.push(...((cpdResult.data ?? []) as RankingScatterCpdRow[]));
+    }
+
+    const cpaResult = await adminClient
+      .from("ranking_kpi_local_ytd_agg")
+      .select("territorio_individual, total_visitas_top, total_objetivos")
+      .eq("period_month", normalizedPeriod)
+      .eq("tier", "T1")
+      .in("territorio_individual", chunk);
+    if (!cpaResult.error) {
+      cpaRows.push(...((cpaResult.data ?? []) as RankingScatterCpaRow[]));
+    }
+  }
+
+  const cpdByTerritory = new Map<string, { nombre: string; totalVisitas: number }>();
+  for (const row of cpdRows) {
+    const key = normalizeTerritoryKey(row.territorio_individual);
+    if (!key) continue;
+    const current = cpdByTerritory.get(key) ?? {
+      nombre: String(row.nombre ?? "").trim() || key,
+      totalVisitas: 0,
+    };
+    current.totalVisitas += Number(row.total_visitas ?? 0);
+    if (!current.nombre && row.nombre) current.nombre = String(row.nombre).trim();
+    cpdByTerritory.set(key, current);
+  }
+
+  const cpaByTerritory = new Map<string, { visitasTop: number; objetivos: number }>();
+  for (const row of cpaRows) {
+    const key = normalizeTerritoryKey(row.territorio_individual);
+    if (!key) continue;
+    const current = cpaByTerritory.get(key) ?? { visitasTop: 0, objetivos: 0 };
+    current.visitasTop += Number(row.total_visitas_top ?? 0);
+    current.objetivos += Number(row.total_objetivos ?? 0);
+    cpaByTerritory.set(key, current);
+  }
+
+  const modelRows = territories.map((territory) => {
+    const key = normalizeTerritoryKey(territory);
+    const coverageData = coverageByTerritory.get(key);
+    const cpdData = cpdByTerritory.get(key);
+    const cpaData = cpaByTerritory.get(key);
+
+    const cobertura =
+      coverageData && coverageData.objetivo > 0
+        ? (coverageData.resultado / coverageData.objetivo) * 100
+        : coverageData && coverageData.coverageCount > 0
+          ? coverageData.coverageSum / coverageData.coverageCount
+          : 0;
+
+    const cpd = cpdData ? cpdData.totalVisitas / 20 : null;
+    const cpaT1 =
+      cpaData && cpaData.objetivos > 0
+        ? (cpaData.visitasTop / cpaData.objetivos) * 100
+        : null;
+
+    return {
+      id: key,
+      territory,
+      label: cpdData?.nombre ?? territory,
+      cobertura,
+      cpd,
+      cpaT1,
+    };
+  });
+
+  const hasCpdData = modelRows.some((row) => Number.isFinite(Number(row.cpd ?? NaN)));
+  const hasCpaData = modelRows.some((row) => Number.isFinite(Number(row.cpaT1 ?? NaN)));
+  const defaultXMetric: "cpd" | "cpa_t1" = hasCpdData ? "cpd" : "cpa_t1";
+  const yTarget = 100;
+
+  const provisionalXValues = modelRows
+    .map((row) => (defaultXMetric === "cpd" ? Number(row.cpd ?? NaN) : Number(row.cpaT1 ?? NaN)))
+    .filter((value) => Number.isFinite(value));
+  const provisionalMean =
+    provisionalXValues.length > 0
+      ? provisionalXValues.reduce((sum, value) => sum + value, 0) / provisionalXValues.length
+      : 0;
+
+  const points = modelRows
+    .map((row) => {
+      const xValue = defaultXMetric === "cpd" ? Number(row.cpd ?? NaN) : Number(row.cpaT1 ?? NaN);
+      const yValue = row.cobertura;
+      if (!Number.isFinite(xValue) || !Number.isFinite(yValue)) return null;
+      return {
+        id: row.id,
+        label: `${row.label} (${row.territory})`,
+        cpd: row.cpd,
+        cpaT1: row.cpaT1,
+        y: yValue,
+        color: quadrantColor(xValue, yValue, provisionalMean, yTarget),
+      };
+    })
+    .filter((point): point is NonNullable<typeof point> => Boolean(point));
+
+  return {
+    points,
+    yTarget,
+    defaultXMetric,
+    message:
+      hasCpdData || hasCpaData
+        ? "Cobertura = suma(resultado) / suma(objetivo). CPD = total_visitas / 20. CPA T1 = sum(total_visitas_top) / sum(total_objetivos) con tier T1."
+        : "No hay datos KPI para construir CPD/CPA T1.",
   };
 }
 
@@ -417,7 +857,9 @@ async function getCurrentProfileRelation(userId: string, role: string | null) {
         sales_force_status_id,
         manager_status_id,
         period_month,
-        is_current
+        is_current,
+        profile_email,
+        territorio
       `,
     )
     .eq("user_id", userId)
@@ -561,6 +1003,102 @@ async function getManagerMatchById(statusId: string) {
 
   return {
     row: result.data ?? null,
+    source: "relation:manager" as MatchSource,
+    error: null as string | null,
+  };
+}
+
+async function getManagerMatchByRelationHints(params: {
+  relation: ProfileRelationRow;
+  profileEmail: string | null;
+}) {
+  const adminClient = createAdminClient();
+  if (!adminClient) {
+    return {
+      row: null as ManagerMatchRow | null,
+      source: "none" as MatchSource,
+      error: "Admin client no disponible.",
+    };
+  }
+
+  const relationPeriod = normalizePeriodMonthInput(params.relation.period_month);
+  const relationTerritory = String(params.relation.territorio ?? "").trim();
+  const relationEmail = String(params.relation.profile_email ?? "").trim();
+  const fallbackEmail = String(params.profileEmail ?? "").trim();
+  const emailCandidates = Array.from(
+    new Set(
+      [relationEmail, fallbackEmail].filter((value) => value.length > 0),
+    ),
+  );
+
+  if (relationPeriod && relationTerritory) {
+    const byTerritory = await adminClient
+      .from("manager_status")
+      .select(
+        `
+          id,
+          period_month,
+          territorio_manager,
+          nombre_manager,
+          correo_manager,
+          no_empleado_manager,
+          team_id,
+          is_active,
+          is_deleted
+        `,
+      )
+      .eq("period_month", relationPeriod)
+      .ilike("territorio_manager", relationTerritory)
+      .eq("is_deleted", false)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<ManagerMatchRow>();
+
+    if (!byTerritory.error && byTerritory.data) {
+      return {
+        row: byTerritory.data,
+        source: "relation:manager" as MatchSource,
+        error: null as string | null,
+      };
+    }
+  }
+
+  if (relationPeriod && emailCandidates.length > 0) {
+    for (const email of emailCandidates) {
+      const byEmail = await adminClient
+        .from("manager_status")
+        .select(
+          `
+            id,
+            period_month,
+            territorio_manager,
+            nombre_manager,
+            correo_manager,
+            no_empleado_manager,
+            team_id,
+            is_active,
+            is_deleted
+          `,
+        )
+        .eq("period_month", relationPeriod)
+        .ilike("correo_manager", email)
+        .eq("is_deleted", false)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle<ManagerMatchRow>();
+
+      if (!byEmail.error && byEmail.data) {
+        return {
+          row: byEmail.data,
+          source: "relation:manager" as MatchSource,
+          error: null as string | null,
+        };
+      }
+    }
+  }
+
+  return {
+    row: null as ManagerMatchRow | null,
     source: "relation:manager" as MatchSource,
     error: null as string | null,
   };
@@ -735,6 +1273,44 @@ async function getLatestManagerMatch(userId: string, email: string | null) {
         matchedBy: "email" as MatchSource,
       };
     }
+
+    const byProfileEmail = await adminClient
+      .from("manager_status")
+      .select(
+        `
+          id,
+          period_month,
+          territorio_manager,
+          nombre_manager,
+          correo_manager,
+          no_empleado_manager,
+          team_id,
+          is_active,
+          is_deleted
+        `,
+        { count: "exact" },
+      )
+      .ilike("profile_email", email)
+      .eq("is_deleted", false)
+      .order("period_month", { ascending: false })
+      .limit(1)
+      .maybeSingle<ManagerMatchRow>();
+
+    if (!byProfileEmail.error) {
+      return {
+        row: byProfileEmail.data ?? null,
+        total: byProfileEmail.count ?? (byProfileEmail.data ? 1 : 0),
+        error: null as string | null,
+        matchedBy: "email" as MatchSource,
+      };
+    }
+
+    return {
+      row: null as ManagerMatchRow | null,
+      total: 0,
+      error: byUserId.error.message || byEmail.error.message || byProfileEmail.error.message,
+      matchedBy: "none" as MatchSource,
+    };
   }
 
   return {
@@ -756,6 +1332,7 @@ export default async function MiCuentaPage() {
   const profileUserId = effectiveUserId ?? user.id;
   const profileEmail = effectiveEmail ?? user.email ?? null;
   const profileResultsTable = process.env.BQ_RESULTS_PROFILE_TABLE?.trim() || "resultados_v2_con_ajustes";
+  let accountRole = role;
 
   let userMatch: Awaited<ReturnType<typeof getLatestSalesForceMatch>> | null = null;
   let managerMatch: Awaited<ReturnType<typeof getLatestManagerMatch>> | null = null;
@@ -764,7 +1341,7 @@ export default async function MiCuentaPage() {
   let teamContact: TeamContactData | null = null;
 
   try {
-    if (role === "user") {
+    if (accountRole === "user") {
       const relation = await getCurrentProfileRelation(profileUserId, role);
       if (relation.error) fetchError = relation.error;
 
@@ -779,17 +1356,94 @@ export default async function MiCuentaPage() {
       } else {
         userMatch = await getLatestSalesForceMatch(profileUserId);
       }
-    } else if (role === "manager") {
+
+      // Fallback: hay perfiles con global_role=user que en realidad operan como manager.
+      if (!userMatch?.row) {
+        const managerRelation = await getCurrentProfileRelation(profileUserId, "manager");
+        if (managerRelation.error) fetchError = fetchError ?? managerRelation.error;
+
+        if (managerRelation.row?.manager_status_id) {
+          const linked = await getManagerMatchById(managerRelation.row.manager_status_id);
+          if (linked.row) {
+            managerMatch = {
+              row: linked.row,
+              total: 1,
+              error: linked.error,
+              matchedBy: linked.source,
+            };
+            accountRole = "manager";
+          } else {
+            const hinted = await getManagerMatchByRelationHints({
+              relation: managerRelation.row,
+              profileEmail,
+            });
+            if (hinted.row) {
+              managerMatch = {
+                row: hinted.row,
+                total: 1,
+                error: hinted.error,
+                matchedBy: hinted.source,
+              };
+              accountRole = "manager";
+            }
+          }
+        } else if (managerRelation.row) {
+          const hinted = await getManagerMatchByRelationHints({
+            relation: managerRelation.row,
+            profileEmail,
+          });
+          if (hinted.row) {
+            managerMatch = {
+              row: hinted.row,
+              total: 1,
+              error: hinted.error,
+              matchedBy: hinted.source,
+            };
+            accountRole = "manager";
+          }
+        } else {
+          const latestManager = await getLatestManagerMatch(profileUserId, profileEmail);
+          if (latestManager.row) {
+            managerMatch = latestManager;
+            accountRole = "manager";
+          }
+        }
+      }
+    } else if (accountRole === "manager") {
       const relation = await getCurrentProfileRelation(profileUserId, role);
       if (relation.error) fetchError = relation.error;
 
       if (relation.row?.manager_status_id) {
         const linked = await getManagerMatchById(relation.row.manager_status_id);
+        if (linked.row) {
+          managerMatch = {
+            row: linked.row,
+            total: 1,
+            error: linked.error,
+            matchedBy: linked.source,
+          };
+        } else {
+          const hinted = await getManagerMatchByRelationHints({
+            relation: relation.row,
+            profileEmail,
+          });
+          managerMatch = {
+            row: hinted.row,
+            total: hinted.row ? 1 : 0,
+            error: linked.error ?? hinted.error,
+            matchedBy: hinted.row ? hinted.source : linked.source,
+          };
+        }
+      } else if (relation.row) {
+        const hinted = await getManagerMatchByRelationHints({
+          relation: relation.row,
+          profileEmail,
+        });
         managerMatch = {
-          row: linked.row,
-          total: linked.row ? 1 : 0,
-          error: linked.error,
-          matchedBy: linked.source,
+          row: hinted.row,
+          total: hinted.row ? 1 : 0,
+          error: hinted.error,
+          matchedBy: hinted.source,
         };
       } else {
         managerMatch = await getLatestManagerMatch(profileUserId, profileEmail);
@@ -807,20 +1461,25 @@ export default async function MiCuentaPage() {
   }
 
   const contactTeamId =
-    role === "user"
+    accountRole === "user"
       ? (userMatch?.row?.team_id ?? "").trim()
-      : role === "manager"
+      : accountRole === "manager"
         ? (managerMatch?.row?.team_id ?? "").trim()
         : "";
 
   if (contactTeamId) {
     teamContact = await getTeamContactData(contactTeamId);
+  } else if (accountRole === "manager") {
+    teamContact = await getTeamContactDataByManagerTerritory({
+      periodMonth: managerMatch?.row?.period_month ?? null,
+      territorioManager: managerMatch?.row?.territorio_manager ?? null,
+    });
   }
 
   let resultadosData = await getResultadosV2Data({
-    role,
+    role: accountRole,
     profileUserId,
-    maxRows: role === "user" ? 80 : 150,
+    maxRows: accountRole === "user" ? 80 : 150,
     readTableId: profileResultsTable,
   });
 
@@ -838,45 +1497,72 @@ export default async function MiCuentaPage() {
   }
 
   const resultadosDetailLevel =
-    role === "admin" || role === "super_admin" || role === "viewer"
+    accountRole === "admin" || accountRole === "super_admin" || accountRole === "viewer"
       ? "full"
-      : role === "manager"
+      : accountRole === "manager"
         ? "team"
         : "basic";
   const contactMailto = teamContact ? buildContactMailto(teamContact) : null;
   const rankingEmpleado =
-    role === "user"
+    accountRole === "user"
       ? (userMatch?.row?.no_empleado ?? null)
-      : role === "manager"
+      : accountRole === "manager"
         ? (managerMatch?.row?.no_empleado_manager ?? null)
         : null;
   const rankingPeriodMonth =
-    role === "user"
+    accountRole === "user"
       ? (userMatch?.row?.period_month ?? null)
-      : role === "manager"
+      : accountRole === "manager"
         ? (managerMatch?.row?.period_month ?? null)
         : null;
   const rankingSummaryData = await getRankingSummaryCardData({
+    role: accountRole,
     empleado: rankingEmpleado,
     periodMonth: rankingPeriodMonth,
     territorioIndividual:
-      role === "user"
+      accountRole === "user"
         ? (userMatch?.row?.territorio_individual ?? null)
         : null,
+    managerTerritorio:
+      accountRole === "manager"
+        ? (managerMatch?.row?.territorio_manager ?? null)
+        : null,
+    managerTeamId:
+      accountRole === "manager"
+        ? (managerMatch?.row?.team_id ?? null)
+        : null,
+  });
+  const rankingScatterData = await getRankingScatterGraphData({
+    accountRole,
+    periodMonth: rankingPeriodMonth,
+    managerTerritory:
+      accountRole === "manager"
+        ? (managerMatch?.row?.territorio_manager ?? null)
+        : null,
+    managerTeamId:
+      accountRole === "manager"
+        ? (managerMatch?.row?.team_id ?? null)
+        : null,
+    coverageResults: resultadosData.rows,
   });
 
   return (
     <section>
-      <div className="mx-auto w-full max-w-5xl rounded-2xl border border-[#d8e3f8] bg-white p-6 shadow-[0_12px_30px_rgba(0,32,104,0.08)] sm:p-8">
-        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#445f95]">Cuenta</p>
-        <h1 className="mt-2 text-3xl font-semibold leading-tight text-[#002b7f]">Mi cuenta</h1>
+      <div className="print-report-surface mx-auto w-full max-w-5xl rounded-2xl border border-[#d8e3f8] bg-white p-6 shadow-[0_12px_30px_rgba(0,32,104,0.08)] sm:p-8">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#445f95]">Cuenta</p>
+            <h1 className="mt-2 text-3xl font-semibold leading-tight text-[#002b7f]">Mi cuenta</h1>
+          </div>
+          {role === "user" ? <ExportReportButton /> : null}
+        </div>
         <p className="mt-3 text-sm text-[#4b5f86]">Estado de vinculacion del perfil contra catalogos operativos.</p>
 
         <div className="mt-6 grid gap-4">
           <div className="rounded-xl border border-[#e3ebfa] bg-[#f8fbff] p-4 sm:p-5">
             <p className="text-sm font-semibold text-[#1e3a8a]">Contexto actual</p>
             <p className="mt-2 text-sm text-[#334155]">
-              Rol: <span className="font-semibold">{role ?? "sin-definir"}</span> | Usuario:{" "}
+              Rol: <span className="font-semibold">{accountRole ?? "sin-definir"}</span> | Usuario:{" "}
               <span className="font-semibold">{profileEmail ?? profileUserId}</span>
             </p>
             {isImpersonating ? (
@@ -891,7 +1577,7 @@ export default async function MiCuentaPage() {
             </div>
           ) : null}
 
-          {role === "user" ? (
+          {accountRole === "user" ? (
             <div className="rounded-xl border border-[#e3ebfa] bg-[#f8fbff] p-4 sm:p-5">
               <p className="text-sm font-semibold text-[#1e3a8a]">Relación actual</p>
               {!userMatch?.row ? (
@@ -943,7 +1629,7 @@ export default async function MiCuentaPage() {
             </div>
           ) : null}
 
-          {role === "manager" ? (
+          {accountRole === "manager" ? (
             <div className="rounded-xl border border-[#e3ebfa] bg-[#f8fbff] p-4 sm:p-5">
               <p className="text-sm font-semibold text-[#1e3a8a]">Relación actual</p>
               {!managerMatch?.row ? (
@@ -981,7 +1667,7 @@ export default async function MiCuentaPage() {
             </div>
           ) : null}
 
-          {role === "user" || role === "manager" ? (
+          {accountRole === "user" || accountRole === "manager" ? (
             <div className="rounded-xl border border-[#e3ebfa] bg-[#f8fbff] p-4 sm:p-5">
               <p className="text-sm font-semibold text-[#1e3a8a]">Contacto</p>
               {!teamContact ? (
@@ -1026,9 +1712,6 @@ export default async function MiCuentaPage() {
                           <p>
                             Correo: <span className="font-semibold">{teamContact.email ?? "-"}</span>
                           </p>
-                          <p>
-                            CC: <span className="font-semibold">{teamContact.ccEmail ?? "no configurado"}</span>
-                          </p>
                         </div>
                         <div className="flex items-start justify-start md:justify-end">
                           {teamContact.pictureUrl ? (
@@ -1052,7 +1735,7 @@ export default async function MiCuentaPage() {
               )}
             </div>
           ) : null}
-          {role === "viewer" ? (
+          {accountRole === "viewer" ? (
             <div className="rounded-xl border border-[#e3ebfa] bg-[#f8fbff] p-4 sm:p-5">
               <p className="text-sm font-semibold text-[#1e3a8a]">Rol viewer</p>
               <p className="mt-2 text-sm text-[#475467]">
@@ -1071,6 +1754,7 @@ export default async function MiCuentaPage() {
           <ResumenRankingCard
             title="Seguimiento Criterios de Ranking"
             data={rankingSummaryData}
+            scope={accountRole === "manager" ? "team" : "individual"}
           />
 
           <ResultadosSummaryCard
@@ -1081,11 +1765,18 @@ export default async function MiCuentaPage() {
           />
 
           <ResultadosGraph
-            title="Visualiza tu pago"
+            title={accountRole === "manager" ? "Resultados del equipo" : "Visualiza tu pago"}
             rows={resultadosData.rows}
             detailLevel={resultadosDetailLevel}
             periodCode={resultadosData.periodCode}
           />
+
+          {accountRole === "manager" ? (
+            <ResultadosScatterGraph
+              title="Attainment vs CPD/CPA — Quadrant Analysis"
+              data={rankingScatterData}
+            />
+          ) : null}
 
           <ResultadosTableCard
             title="Detalle de resultados"
@@ -1106,3 +1797,4 @@ export default async function MiCuentaPage() {
     </section>
   );
 }
+

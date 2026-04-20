@@ -4,6 +4,7 @@ import { Fragment, useMemo, useState } from "react";
 import type { ResultadoRecord } from "@/lib/results/get-resultados-v2-data";
 
 type DetailLevel = "basic" | "team" | "full";
+type PaymentStatusFilter = "all" | "with_guarantee" | "with_payment" | "without_payment";
 
 type ResultadosTableCardProps = {
   rows: ResultadoRecord[];
@@ -68,6 +69,42 @@ function formatManagerLabel(row: ResultadoRecord) {
   return managerName || managerCode || "-";
 }
 
+function getPaymentStatus(row: ResultadoRecord): PaymentStatusFilter {
+  if (row.garantia === true) return "with_guarantee";
+  const pago = Number(row.pagoResultado ?? 0);
+  if (pago <= 0) return "without_payment";
+  return "with_payment";
+}
+
+function getPaymentStatusBadgeByStatus(status: PaymentStatusFilter) {
+  if (status === "with_guarantee") {
+    return {
+      label: "Con garantía",
+      className: "border-[#a6f4c5] bg-[#ecfdf3] text-[#067647]",
+    };
+  }
+  if (status === "without_payment") {
+    return {
+      label: "Sin pago",
+      className: "border-[#fecdca] bg-[#fef3f2] text-[#b42318]",
+    };
+  }
+  return {
+    label: "Con pago",
+    className: "border-[#86efac] bg-[#dcfce7] text-[#166534]",
+  };
+}
+
+function getGroupPaymentStatus(rows: ResultadoRecord[]): PaymentStatusFilter {
+  if (rows.some((row) => row.garantia === true)) return "with_guarantee";
+  const totalPago = sumPagoResultado(rows);
+  return totalPago > 0 ? "with_payment" : "without_payment";
+}
+
+function sumPagoResultado(rows: ResultadoRecord[]): number {
+  return rows.reduce((acc, row) => acc + (row.pagoResultado ?? 0), 0);
+}
+
 export function ResultadosTableCard({
   rows,
   detailLevel,
@@ -83,6 +120,7 @@ export function ResultadosTableCard({
   const [teamIdFilter, setTeamIdFilter] = useState("");
   const [lineaFilter, setLineaFilter] = useState("");
   const [managerFilter, setManagerFilter] = useState("");
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<PaymentStatusFilter>("all");
 
   const showTeamColumns = detailLevel === "team" || detailLevel === "full";
   const showGlobalColumns = detailLevel === "full";
@@ -165,8 +203,30 @@ export function ResultadosTableCard({
         })
       : filteredByStructured;
 
-    return [...filtered].sort((a, b) => (b.prodWeight ?? 0) - (a.prodWeight ?? 0));
-  }, [rows, nameFilter, teamIdFilter, lineaFilter, managerFilter, isAdminLikeMode]);
+    const filteredByPaymentStatus =
+      !isGroupedMode && paymentStatusFilter !== "all"
+        ? filtered.filter((row) => getPaymentStatus(row) === paymentStatusFilter)
+        : filtered;
+
+    if (isGroupedMode) {
+      return [...filteredByPaymentStatus].sort((a, b) => {
+        const pagoDelta = (b.pagoResultado ?? 0) - (a.pagoResultado ?? 0);
+        if (pagoDelta !== 0) return pagoDelta;
+        return (b.prodWeight ?? 0) - (a.prodWeight ?? 0);
+      });
+    }
+
+    return [...filteredByPaymentStatus].sort((a, b) => (b.prodWeight ?? 0) - (a.prodWeight ?? 0));
+  }, [
+    rows,
+    nameFilter,
+    teamIdFilter,
+    lineaFilter,
+    managerFilter,
+    paymentStatusFilter,
+    isAdminLikeMode,
+    isGroupedMode,
+  ]);
 
   const groupedByRoute = useMemo(() => {
     if (!isManagerMode) return [];
@@ -193,8 +253,18 @@ export function ResultadosTableCard({
       }
     }
 
-    return Array.from(map.values()).sort((a, b) => a.route.localeCompare(b.route));
-  }, [isManagerMode, sortedRows]);
+    const grouped = Array.from(map.values());
+    const filteredByGroupPayment =
+      paymentStatusFilter === "all"
+        ? grouped
+        : grouped.filter((group) => getGroupPaymentStatus(group.rows) === paymentStatusFilter);
+
+    return filteredByGroupPayment.sort((a, b) => {
+      const totalDelta = sumPagoResultado(b.rows) - sumPagoResultado(a.rows);
+      if (totalDelta !== 0) return totalDelta;
+      return a.route.localeCompare(b.route);
+    });
+  }, [isManagerMode, sortedRows, paymentStatusFilter]);
 
   const groupedByName = useMemo(() => {
     if (!isAdminLikeMode) return [];
@@ -240,8 +310,18 @@ export function ResultadosTableCard({
       }
     }
 
-    return Array.from(map.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
-  }, [isAdminLikeMode, sortedRows]);
+    const grouped = Array.from(map.values());
+    const filteredByGroupPayment =
+      paymentStatusFilter === "all"
+        ? grouped
+        : grouped.filter((group) => getGroupPaymentStatus(group.rows) === paymentStatusFilter);
+
+    return filteredByGroupPayment.sort((a, b) => {
+      const totalDelta = sumPagoResultado(b.rows) - sumPagoResultado(a.rows);
+      if (totalDelta !== 0) return totalDelta;
+      return a.displayName.localeCompare(b.displayName);
+    });
+  }, [isAdminLikeMode, sortedRows, paymentStatusFilter]);
 
   const colSpan = showGlobalColumns ? (showTeamColumns ? 9 : 8) : showTeamColumns ? 8 : 7;
 
@@ -393,18 +473,37 @@ export function ResultadosTableCard({
       <p className="text-sm font-semibold text-[#1e3a8a]">{title}</p>
 
       {isGroupedMode ? (
-        <div className="mt-3">
-          <label htmlFor="resultsNameFilter" className="mb-1 block text-xs font-medium text-[#475467]">
-            Filtrar por nombre, ruta o producto
-          </label>
-          <input
-            id="resultsNameFilter"
-            type="text"
-            value={nameFilter}
-            onChange={(event) => setNameFilter(event.target.value)}
-            placeholder="Ej. Mora, MXPCRM0102R1..."
-            className="h-10 w-full rounded-lg border border-[#d0d5dd] bg-white px-3 text-sm text-[#0f172a] focus:border-[#2563eb] focus:outline-none focus:ring-4 focus:ring-[#dbeafe]"
-          />
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
+          <div>
+            <label htmlFor="resultsNameFilter" className="mb-1 block text-xs font-medium text-[#475467]">
+              Filtrar por nombre, ruta o producto
+            </label>
+            <input
+              id="resultsNameFilter"
+              type="text"
+              value={nameFilter}
+              onChange={(event) => setNameFilter(event.target.value)}
+              placeholder="Ej. Mora, MXPCRM0102R1..."
+              className="h-10 w-full rounded-lg border border-[#d0d5dd] bg-white px-3 text-sm text-[#0f172a] focus:border-[#2563eb] focus:outline-none focus:ring-4 focus:ring-[#dbeafe]"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="resultsPaymentFilter" className="mb-1 block text-xs font-medium text-[#475467]">
+              Estado de pago
+            </label>
+            <select
+              id="resultsPaymentFilter"
+              value={paymentStatusFilter}
+              onChange={(event) => setPaymentStatusFilter(event.target.value as PaymentStatusFilter)}
+              className="h-10 w-full rounded-lg border border-[#d0d5dd] bg-white px-3 text-sm text-[#0f172a] focus:border-[#2563eb] focus:outline-none focus:ring-4 focus:ring-[#dbeafe]"
+            >
+              <option value="all">Todos</option>
+              <option value="with_guarantee">Con garantia</option>
+              <option value="with_payment">Con pago</option>
+              <option value="without_payment">Sin pago</option>
+            </select>
+          </div>
         </div>
       ) : null}
 
@@ -460,7 +559,8 @@ export function ResultadosTableCard({
               {groupedByRoute.map((group, groupIndex) => {
                 const routeKey = `${group.route}-${groupIndex}`;
                 const isCollapsed = collapsedRouteByKey[routeKey] ?? true;
-                const groupTotal = group.rows.reduce((acc, row) => acc + (row.pagoResultado ?? 0), 0);
+                const groupTotal = sumPagoResultado(group.rows);
+                const groupBadge = getPaymentStatusBadgeByStatus(getGroupPaymentStatus(group.rows));
 
                 return (
                   <section
@@ -471,6 +571,11 @@ export function ResultadosTableCard({
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold text-[#0f172a]">{group.displayName}</p>
                         <p className="truncate text-xs text-[#475467]">Ruta: {group.route}</p>
+                        <span
+                          className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${groupBadge.className}`}
+                        >
+                          {groupBadge.label}
+                        </span>
                       </div>
                       <div className="text-right">
                         <p className="text-xs text-[#475467]">Productos: {group.rows.length}</p>
@@ -503,9 +608,7 @@ export function ResultadosTableCard({
                                 {row.productName ?? "-"}
                               </p>
                               <p className="truncate text-xs text-[#475467]">{row.planTypeName ?? "-"}</p>
-                              {row.garantia ? (
-                                <p className="text-[11px] text-[#64748b]">Garantia</p>
-                              ) : null}
+                              {row.garantia ? <p className="text-[11px] text-[#64748b]">Garantia</p> : null}
                             </div>
 
                             <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-[#334155]">
@@ -567,7 +670,8 @@ export function ResultadosTableCard({
               {groupedByName.map((group, groupIndex) => {
                 const groupKey = `${group.key}-${groupIndex}`;
                 const isCollapsed = collapsedRouteByKey[groupKey] ?? true;
-                const groupTotal = group.rows.reduce((acc, row) => acc + (row.pagoResultado ?? 0), 0);
+                const groupTotal = sumPagoResultado(group.rows);
+                const groupBadge = getPaymentStatusBadgeByStatus(getGroupPaymentStatus(group.rows));
                 const routeSummary = group.routes.length ? group.routes.join(", ") : "-";
                 const teamSummary = group.teams.length ? group.teams.join(", ") : "-";
                 const managerSummary = group.managers.length ? group.managers.join(", ") : "-";
@@ -581,6 +685,11 @@ export function ResultadosTableCard({
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold text-[#0f172a]">{group.displayName}</p>
                         <p className="truncate text-xs text-[#475467]">Rutas: {routeSummary}</p>
+                        <span
+                          className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${groupBadge.className}`}
+                        >
+                          {groupBadge.label}
+                        </span>
                         <p className="truncate text-xs text-[#475467]">Team(s): {teamSummary}</p>
                         <p className="truncate text-xs text-[#475467]">Manager(es): {managerSummary}</p>
                       </div>
@@ -615,9 +724,7 @@ export function ResultadosTableCard({
                                   {row.productName ?? "-"}
                                 </p>
                                 <p className="truncate text-xs text-[#475467]">{row.planTypeName ?? "-"}</p>
-                                {row.garantia ? (
-                                  <p className="text-[11px] text-[#64748b]">Garantia</p>
-                                ) : null}
+                                {row.garantia ? <p className="text-[11px] text-[#64748b]">Garantia</p> : null}
                               </div>
 
                               <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-[#334155]">
@@ -749,12 +856,13 @@ export function ResultadosTableCard({
                 <tr className="bg-[#f8fbff] text-[#475467]">
                   {showGlobalColumns ? <th className="border-b border-[#e5e7eb] px-3 py-2">Nombre</th> : null}
                   {showTeamColumns ? <th className="border-b border-[#e5e7eb] px-3 py-2">Ruta</th> : null}
-                  <th className="border-b border-[#e5e7eb] px-3 py-2">Producto</th>
-                  <th className="border-b border-[#e5e7eb] px-3 py-2">Plan</th>
-                  <th className="border-b border-[#e5e7eb] px-3 py-2">Parrilla</th>
+                  <th className="border-b border-[#e5e7eb] px-3 py-2">Componente de pago</th>
+                  <th className="border-b border-[#e5e7eb] px-3 py-2">Peso en Parrilla</th>
+                  <th className="border-b border-[#e5e7eb] px-3 py-2">Peso en Parrilla</th>
                   <th className="border-b border-[#e5e7eb] px-3 py-2 text-right">Resultado</th>
                   <th className="border-b border-[#e5e7eb] px-3 py-2 text-right">Objetivo</th>
                   <th className="border-b border-[#e5e7eb] px-3 py-2 text-right">Cobertura</th>
+                  <th className="border-b border-[#e5e7eb] px-3 py-2 text-right">Porcentaje de pago</th>
                   <th className="border-b border-[#e5e7eb] px-3 py-2 text-right">Pago resultado</th>
                 </tr>
               </thead>
@@ -782,8 +890,9 @@ export function ResultadosTableCard({
                             {row.garantia ? <span className="text-[11px] text-[#64748b]">Garantia</span> : null}
                           </div>
                         </td>
-                        <td className="border-b border-[#f2f4f7] px-3 py-2 text-[#344054]">{row.planTypeName ?? "-"}</td>
+                        
                         <td className="border-b border-[#f2f4f7] px-3 py-2 text-[#344054]">{formatPercentage(row.prodWeight)}</td>
+                        <td className="border-b border-[#f2f4f7] px-3 py-2 text-[#344054]"> {formatCurrency(row.pagoVariable)}</td>
                         <td className="border-b border-[#f2f4f7] px-3 py-2 text-right text-[#344054]">
                           {formatNumberElement(row.resultado, row.elemento)}
                         </td>
@@ -791,6 +900,7 @@ export function ResultadosTableCard({
                           {formatNumberElement(row.objetivo, row.elemento)}
                         </td>
                         <td className="border-b border-[#f2f4f7] px-3 py-2 text-right text-[#344054]">{formatPercent(row.cobertura)}</td>
+                         <td className="border-b border-[#f2f4f7] px-3 py-2 text-right text-[#344054]">{formatPercent(row.coberturaPago)}</td>
                         <td className="border-b border-[#f2f4f7] px-3 py-2 text-right font-semibold text-[#0f172a]">
                           {formatCurrency(row.pagoResultado)}
                           {canShowDetalle ? (

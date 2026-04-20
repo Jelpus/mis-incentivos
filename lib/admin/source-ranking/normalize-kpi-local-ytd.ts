@@ -7,7 +7,6 @@ type SalesForceStatusRow = {
 };
 
 type FlatRow = Record<string, unknown>;
-const TIER_PRIORITY = ["T1", "T2", "T3", "NC"] as const;
 
 export type KpiLocalYtdRawRow = {
   period_month: string;
@@ -225,26 +224,6 @@ function buildYtdCodes(periodMonth: string, catCalenRows: FlatRow[]): Set<string
   );
 }
 
-function resolvePrimaryTier(tierCounts: Map<string, number>): string | null {
-  if (tierCounts.size === 0) return null;
-
-  let bestTier: string | null = null;
-  let bestCount = -1;
-  let bestPriority = Number.POSITIVE_INFINITY;
-
-  for (const [tier, count] of tierCounts.entries()) {
-    const priorityIndex = TIER_PRIORITY.indexOf(tier as (typeof TIER_PRIORITY)[number]);
-    const priority = priorityIndex >= 0 ? priorityIndex : 999;
-    if (count > bestCount || (count === bestCount && priority < bestPriority)) {
-      bestTier = tier;
-      bestCount = count;
-      bestPriority = priority;
-    }
-  }
-
-  return bestTier;
-}
-
 export function normalizeKpiLocalYtdRaw(params: {
   fileBuffer: Buffer;
   periodMonth: string;
@@ -410,7 +389,6 @@ export function aggregateKpiLocalYtdRawRows(rows: KpiLocalYtdRawRow[]): KpiAggre
     total_visitas: number;
     total_visitas_top: number;
     garantia: boolean;
-    tierCounts: Map<string, number>;
   };
 
   const grouped = new Map<string, AggGroup>();
@@ -419,28 +397,22 @@ export function aggregateKpiLocalYtdRawRows(rows: KpiLocalYtdRawRow[]): KpiAggre
     const territorio = row.matched_territorio_individual ?? row.territory_source;
     const empleado = row.matched_empleado ?? null;
     const nombre = row.matched_nombre ?? row.status_nombre_source ?? "Sin nombre";
-    const key = `${row.period_month}|${territorio.toUpperCase()}|${empleado ?? "na"}|${nombre.toUpperCase()}`;
+    const tier = String(row.tier_ok ?? "").trim().toUpperCase() || null;
+    const key = `${row.period_month}|${territorio.toUpperCase()}|${empleado ?? "na"}|${nombre.toUpperCase()}|${tier ?? "NA"}`;
 
     const current = grouped.get(key) ?? {
       period_month: row.period_month,
       territorio_individual: territorio,
       empleado,
       nombre,
-      tier: null,
+      tier,
       hcpIds: new Set<string>(),
       visitedHcpIds: new Set<string>(),
       total_objetivos: 0,
       total_visitas: 0,
       total_visitas_top: 0,
       garantia: false,
-      tierCounts: new Map<string, number>(),
     };
-
-    const tier = String(row.tier_ok ?? "").trim().toUpperCase();
-    if (tier) {
-      const count = current.tierCounts.get(tier) ?? 0;
-      current.tierCounts.set(tier, count + 1);
-    }
 
     const hcpId = String(row.salesforce_id ?? "").trim().toUpperCase();
     if (hcpId) {
@@ -462,14 +434,13 @@ export function aggregateKpiLocalYtdRawRows(rows: KpiLocalYtdRawRow[]): KpiAggre
       const noVisitedUnique = Math.max(0, totalHcps - visitedUnique);
       const callAdherance =
         group.total_objetivos > 0 ? group.total_visitas_top / group.total_objetivos : 0;
-      const tier = resolvePrimaryTier(group.tierCounts);
 
       return {
         period_month: group.period_month,
         territorio_individual: group.territorio_individual,
         empleado: group.empleado,
         nombre: group.nombre,
-        tier,
+        tier: group.tier,
         total_hcps: totalHcps,
         visited_unique: visitedUnique,
         no_visited_unique: noVisitedUnique,

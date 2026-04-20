@@ -26,6 +26,7 @@ export type RankingSummaryCardData = {
 type ResumenRankingCardProps = {
   title?: string;
   data: RankingSummaryCardData;
+  scope?: "individual" | "team";
 };
 
 function formatInteger(value: number) {
@@ -90,7 +91,13 @@ function MetricTile({
   );
 }
 
-export function ResumenRankingCard({ title = "Resumen de ranking", data }: ResumenRankingCardProps) {
+export function ResumenRankingCard({
+  title = "Resumen de ranking",
+  data,
+  scope = "individual",
+}: ResumenRankingCardProps) {
+  const isTeamScope = scope === "team";
+
   return (
     <section className="rounded-xl border border-[#e3ebfa] bg-white p-4 sm:p-5">
       <div className="flex items-start justify-between gap-3">
@@ -113,9 +120,9 @@ export function ResumenRankingCard({ title = "Resumen de ranking", data }: Resum
       <div className="mt-4 grid gap-3 md:grid-cols-3">
         <MetricTile
           title="Call Plan Adherence T1"
-          topLabel="Visitas"
+          topLabel={isTeamScope ? "Visitas totales" : "Visitas"}
           topValue={data.callPlanAdherence.visitas}
-          bottomLabel="Objetivo"
+          bottomLabel={isTeamScope ? "Objetivo total" : "Objetivo"}
           bottomValue={data.callPlanAdherence.objetivo}
           coverage={data.callPlanAdherence.coverage}
           threshold={data.callPlanAdherence.threshold}

@@ -7,6 +7,7 @@ import {
   getMissingRelationName,
   isMissingRelationError,
   normalizePeriodMonthInput,
+  sanitizeStoragePathChunk,
 } from "@/lib/admin/incentive-rules/shared";
 import {
   computeObjectivesPreview,
@@ -16,6 +17,16 @@ import {
 } from "@/lib/admin/objetivos/import-objectives";
 
 const MAX_OBJECTIVES_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+const DEFAULT_OBJECTIVES_FILES_BUCKET = "team-objective-files";
+
+type StoredObjectiveFileMetadata = {
+  source: "private" | "drilldown";
+  originalFileName: string;
+  storageBucket: string;
+  storagePath: string;
+  contentType: string | null;
+  sizeBytes: number;
+};
 
 export type PreviewObjetivosResult =
   | {
@@ -115,6 +126,90 @@ function isLegacyObjectiveUniqueConstraintError(error: { code?: string | null; m
   const message = String(error.message ?? "").toLowerCase();
   if (code !== "23505") return false;
   return message.includes("team_objective_targets_version_id_territorio_individual_pro");
+}
+
+function sanitizeUploadedFileName(fileName: string): string {
+  const safeName = sanitizeStoragePathChunk(fileName);
+  if (!safeName) return "file";
+  return safeName;
+}
+
+async function ensureStorageBucketReady(
+  supabase: NonNullable<ReturnType<typeof createAdminClient>>,
+  bucketName: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const bucketCheckResult = await supabase.storage.getBucket(bucketName);
+  if (bucketCheckResult.error) {
+    const message = String(bucketCheckResult.error.message ?? "").toLowerCase();
+    const notFound =
+      message.includes("not found") ||
+      message.includes("does not exist") ||
+      message.includes("bucket");
+
+    if (notFound) {
+      const createBucketResult = await supabase.storage.createBucket(bucketName, {
+        public: false,
+        fileSizeLimit: "50MB",
+      });
+
+      if (createBucketResult.error) {
+        return {
+          ok: false,
+          message: `No existe el bucket "${bucketName}" y no se pudo crear automaticamente: ${createBucketResult.error.message}`,
+        };
+      }
+
+      return { ok: true };
+    }
+
+    return {
+      ok: false,
+      message: `No se pudo validar bucket "${bucketName}": ${bucketCheckResult.error.message}`,
+    };
+  }
+
+  return { ok: true };
+}
+
+async function uploadObjectiveSourceFile(params: {
+  supabase: NonNullable<ReturnType<typeof createAdminClient>>;
+  bucketName: string;
+  periodMonth: string;
+  nextVersionNo: number;
+  source: "private" | "drilldown";
+  file: File;
+}): Promise<{ ok: true; file: StoredObjectiveFileMetadata } | { ok: false; message: string }> {
+  const safeFileName = sanitizeUploadedFileName(params.file.name);
+  const safeSourceChunk = sanitizeStoragePathChunk(params.source) || params.source;
+  const targetPath =
+    `${params.periodMonth.slice(0, 7)}/v${params.nextVersionNo}/` +
+    `${safeSourceChunk}/${Date.now()}-${safeFileName}`;
+  const fileBuffer = Buffer.from(await params.file.arrayBuffer());
+
+  const uploadResult = await params.supabase.storage.from(params.bucketName).upload(targetPath, fileBuffer, {
+    cacheControl: "3600",
+    upsert: true,
+    contentType: params.file.type || undefined,
+  });
+
+  if (uploadResult.error) {
+    return {
+      ok: false,
+      message: `No se pudo subir ${params.source === "private" ? "Objetivos Privados" : "Drill Down Cuotas"} a storage: ${uploadResult.error.message}`,
+    };
+  }
+
+  return {
+    ok: true,
+    file: {
+      source: params.source,
+      originalFileName: params.file.name,
+      storageBucket: params.bucketName,
+      storagePath: targetPath,
+      contentType: params.file.type || null,
+      sizeBytes: params.file.size,
+    },
+  };
 }
 
 async function runPreview(params: {
@@ -348,6 +443,15 @@ export async function uploadObjetivosImportAction(
   const preview = await runPreview({ formData });
   if (!preview.ok) return preview;
 
+  const privateFile = formData.get("private_file");
+  const drillDownFile = formData.get("drilldown_file");
+  if (!(privateFile instanceof File) || !(drillDownFile instanceof File)) {
+    return {
+      ok: false,
+      message: "Debes seleccionar ambos archivos: Objetivos Privados y Drill Down Cuotas.",
+    };
+  }
+
   if (!preview.summary.hasStatusData) {
     return {
       ok: false,
@@ -408,6 +512,53 @@ export async function uploadObjetivosImportAction(
   const currentVersionNo = Number(versionLookup.data?.[0]?.version_no ?? 0);
   const nextVersionNo = Number.isFinite(currentVersionNo) ? currentVersionNo + 1 : 1;
 
+  const bucketName =
+    process.env.SUPABASE_OBJECTIVES_FILES_BUCKET ??
+    process.env.NEXT_PUBLIC_SUPABASE_OBJECTIVES_FILES_BUCKET ??
+    DEFAULT_OBJECTIVES_FILES_BUCKET;
+
+  const bucketReadyResult = await ensureStorageBucketReady(supabase, bucketName);
+  if (!bucketReadyResult.ok) {
+    return {
+      ok: false,
+      message: bucketReadyResult.message,
+    };
+  }
+
+  const [privateUploadResult, drillDownUploadResult] = await Promise.all([
+    uploadObjectiveSourceFile({
+      supabase,
+      bucketName,
+      periodMonth: preview.periodMonth,
+      nextVersionNo,
+      source: "private",
+      file: privateFile,
+    }),
+    uploadObjectiveSourceFile({
+      supabase,
+      bucketName,
+      periodMonth: preview.periodMonth,
+      nextVersionNo,
+      source: "drilldown",
+      file: drillDownFile,
+    }),
+  ]);
+
+  if (!privateUploadResult.ok) {
+    return { ok: false, message: privateUploadResult.message };
+  }
+  if (!drillDownUploadResult.ok) {
+    return { ok: false, message: drillDownUploadResult.message };
+  }
+
+  const versionSummary = {
+    ...preview.summary,
+    sourceFiles: {
+      private: privateUploadResult.file,
+      drilldown: drillDownUploadResult.file,
+    },
+  };
+
   const insertVersionResult = await supabase
     .from("team_objective_target_versions")
     .insert({
@@ -420,7 +571,7 @@ export async function uploadObjetivosImportAction(
       valid_rows: preview.summary.validRows,
       invalid_rows: preview.summary.invalidRows,
       missing_required_count: preview.summary.missingRequiredCount,
-      summary: preview.summary,
+      summary: versionSummary,
       created_by: user.id,
     })
     .select("id")

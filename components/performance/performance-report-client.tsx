@@ -11,6 +11,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { ResultadosScatterGraph } from "@/components/results/resultados-scatter-graph";
 import type {
   PerformanceCoverageBin,
   PerformanceReportData,
@@ -357,10 +358,19 @@ function heatTextColor(percent: number) {
         Coverage_151_200_pct: row.totalRoutes ? (row.coverage_151_200 / row.totalRoutes) * 100 : 0,
         Coverage_201_250_pct: row.totalRoutes ? (row.coverage_201_250 / row.totalRoutes) * 100 : 0,
       }));
+      const scatterRows = (data.scatterGraph?.points ?? []).map((point) => ({
+        Territorio: point.id,
+        NombreYTerritorio: point.label,
+        Cobertura_pct: point.y,
+        CPD: point.cpd,
+        CPA_T1_pct: point.cpaT1,
+        Color: point.color,
+      }));
 
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), "Resumen");
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(binsRows), "Payout Distribution");
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(productRows), "Producto Heatmap");
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(scatterRows), "CPD_CPA_Scatter");
 
       const periodLabel = data.selectedPeriods.join("_") || "periodo";
       XLSX.writeFile(workbook, `performance_report_${periodLabel}.xlsx`);
@@ -751,6 +761,11 @@ function heatTextColor(percent: number) {
           </table>
         </div>
       </div>
+
+      <ResultadosScatterGraph
+        title="Attainment vs CPD/CPA - Quadrant Analysis"
+        data={data.scatterGraph}
+      />
 
       {error ? (
         <div className="rounded-xl border border-[#fecdca] bg-[#fff6f5] p-4 sm:p-5">

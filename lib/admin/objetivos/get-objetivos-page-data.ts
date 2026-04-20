@@ -16,9 +16,26 @@ type ObjectiveVersionRow = {
   valid_rows: number | null;
   invalid_rows: number | null;
   missing_required_count: number | null;
+  summary: Record<string, unknown> | null;
   created_at: string | null;
   created_by: string | null;
 };
+
+function hasStoredSourceFile(
+  summary: Record<string, unknown> | null,
+  source: "private" | "drilldown",
+): boolean {
+  if (!summary || typeof summary !== "object") return false;
+  const sourceFiles = summary.sourceFiles;
+  if (!sourceFiles || typeof sourceFiles !== "object") return false;
+  const sourceMetadata = (sourceFiles as Record<string, unknown>)[source];
+  if (!sourceMetadata || typeof sourceMetadata !== "object") return false;
+
+  const bucket = String((sourceMetadata as Record<string, unknown>).storageBucket ?? "").trim();
+  const path = String((sourceMetadata as Record<string, unknown>).storagePath ?? "").trim();
+
+  return Boolean(bucket && path);
+}
 
 function normalizePeriodCollection(values: unknown[]): string[] {
   return Array.from(
@@ -50,6 +67,8 @@ export type ObjetivosPageData = {
     versionNo: number;
     sourceFileName: string | null;
     sheetName: string | null;
+    hasPrivateFile: boolean;
+    hasDrillDownFile: boolean;
     totalRows: number;
     validRows: number;
     invalidRows: number;
@@ -105,7 +124,7 @@ async function loadObjetivosPageData(
   const versionsResult = await supabase
     .from("team_objective_target_versions")
     .select(
-      "id, version_no, source_file_name, sheet_name, total_rows, valid_rows, invalid_rows, missing_required_count, created_at, created_by",
+      "id, version_no, source_file_name, sheet_name, total_rows, valid_rows, invalid_rows, missing_required_count, summary, created_at, created_by",
     )
     .eq("period_month", periodMonth)
     .order("version_no", { ascending: false })
@@ -128,6 +147,8 @@ async function loadObjetivosPageData(
       versionNo: Number(row.version_no ?? 0),
       sourceFileName: row.source_file_name ?? null,
       sheetName: row.sheet_name ?? null,
+      hasPrivateFile: hasStoredSourceFile(row.summary, "private"),
+      hasDrillDownFile: hasStoredSourceFile(row.summary, "drilldown"),
       totalRows: Number(row.total_rows ?? 0),
       validRows: Number(row.valid_rows ?? 0),
       invalidRows: Number(row.invalid_rows ?? 0),
