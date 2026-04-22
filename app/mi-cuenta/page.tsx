@@ -283,14 +283,15 @@ function buildContactMailto(contact: TeamContactData): string | null {
 
   const subject = "Duda sobre pago de incentivos";
   const body =
-    "Hola, tengo una duda respecto al pago de incentivos. ¿Me puedes apoyar por favor?";
-  const query = new URLSearchParams();
-  query.set("subject", subject);
-  query.set("body", body);
+    "Hola, tengo una duda respecto al pago de incentivos. Me puedes apoyar por favor?";
+  const queryParts = [
+    `subject=${encodeURIComponent(subject)}`,
+    `body=${encodeURIComponent(body)}`,
+  ];
   if (contact.ccEmail) {
-    query.set("cc", contact.ccEmail);
+    queryParts.push(`cc=${encodeURIComponent(contact.ccEmail)}`);
   }
-  return `mailto:${contact.email}?${query.toString()}`;
+  return `mailto:${contact.email}?${queryParts.join("&")}`;
 }
 
 function toPositiveNumber(value: number | null | undefined) {
@@ -1742,4 +1743,5 @@ export default async function MiCuentaPage() {
     </section>
   );
 }
+
 
