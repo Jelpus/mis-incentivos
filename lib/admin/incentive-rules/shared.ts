@@ -1,7 +1,7 @@
 export function getCurrentPeriodMonth(): string {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, "0");
   return `${year}-${month}-01`;
 }
 
@@ -69,6 +69,7 @@ export function formatPeriodMonthLabel(value: string | null | undefined): string
   return new Intl.DateTimeFormat("es-MX", {
     month: "long",
     year: "numeric",
+    timeZone: "UTC",
   }).format(new Date(Date.UTC(year, month - 1, 1)));
 }
 

@@ -68,7 +68,7 @@ export function ResultadosSummaryCard({
         </div>
 
         <div className="rounded-lg border border-[#d9e5fb] bg-white p-3">
-          <p className="text-xs text-[#64748b]">Pago vs Base de Incentivos</p>
+          <p className="text-xs text-[#64748b]"> Porcentaje de pago promedio</p>
           <p className="mt-1 text-base font-semibold text-[#0f172a]">
             {formatPercent(summary.totalPagoResultado / summary.totalPagoVariable)}
           </p>

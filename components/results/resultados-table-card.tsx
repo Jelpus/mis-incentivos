@@ -858,9 +858,9 @@ export function ResultadosTableCard({
                   {showTeamColumns ? <th className="border-b border-[#e5e7eb] px-3 py-2">Ruta</th> : null}
                   <th className="border-b border-[#e5e7eb] px-3 py-2">Componente de pago</th>
                   <th className="border-b border-[#e5e7eb] px-3 py-2">Peso en Parrilla</th>
-                  <th className="border-b border-[#e5e7eb] px-3 py-2">Peso en Parrilla</th>
-                  <th className="border-b border-[#e5e7eb] px-3 py-2 text-right">Resultado</th>
+                  <th className="border-b border-[#e5e7eb] px-3 py-2">Monto en Parrilla</th>
                   <th className="border-b border-[#e5e7eb] px-3 py-2 text-right">Objetivo</th>
+                  <th className="border-b border-[#e5e7eb] px-3 py-2 text-right">Resultado</th>
                   <th className="border-b border-[#e5e7eb] px-3 py-2 text-right">Cobertura</th>
                   <th className="border-b border-[#e5e7eb] px-3 py-2 text-right">Porcentaje de pago</th>
                   <th className="border-b border-[#e5e7eb] px-3 py-2 text-right">Pago resultado</th>
@@ -894,11 +894,12 @@ export function ResultadosTableCard({
                         <td className="border-b border-[#f2f4f7] px-3 py-2 text-[#344054]">{formatPercentage(row.prodWeight)}</td>
                         <td className="border-b border-[#f2f4f7] px-3 py-2 text-[#344054]"> {formatCurrency(row.pagoVariable)}</td>
                         <td className="border-b border-[#f2f4f7] px-3 py-2 text-right text-[#344054]">
-                          {formatNumberElement(row.resultado, row.elemento)}
-                        </td>
-                        <td className="border-b border-[#f2f4f7] px-3 py-2 text-right text-[#344054]">
                           {formatNumberElement(row.objetivo, row.elemento)}
                         </td>
+                        <td className="border-b border-[#f2f4f7] px-3 py-2 text-right text-[#344054]">
+                          {formatNumberElement(row.resultado, row.elemento)}
+                        </td>
+                        
                         <td className="border-b border-[#f2f4f7] px-3 py-2 text-right text-[#344054]">{formatPercent(row.cobertura)}</td>
                          <td className="border-b border-[#f2f4f7] px-3 py-2 text-right text-[#344054]">{formatPercent(row.coberturaPago)}</td>
                         <td className="border-b border-[#f2f4f7] px-3 py-2 text-right font-semibold text-[#0f172a]">

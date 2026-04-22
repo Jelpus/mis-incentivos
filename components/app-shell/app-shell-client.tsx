@@ -199,6 +199,7 @@ type AppShellClientProps = {
 // Page title helper
 // ---------------------------------------------------------------------------
 function getTitle(pathname: string) {
+  if (pathname.startsWith("/admin/platform")) return "Platform";
   if (pathname.startsWith("/admin/control-acceso")) return "Control de acceso";
   if (pathname.startsWith("/admin/curvas-de-pago")) return "Curvas de pago";
   if (pathname.startsWith("/admin/incentive-rules")) return "Reglas de incentivos";
@@ -261,6 +262,7 @@ function getNavGroups(role: ProfileRole | null): NavGroup[] {
         items: [
           { href: "/admin/control-acceso", label: "Control de Acceso", icon: IconUsers },
           { href: "/admin/teams-admin", label: "Teams Admin", icon: IconUsers },
+          { href: "/admin/platform", label: "Platform", icon: IconSettings },
         ],
       },
     ];

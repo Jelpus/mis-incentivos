@@ -22,6 +22,7 @@ import {
   type ResultadosScatterGraphData,
 } from "@/components/results/resultados-scatter-graph";
 import { ExportReportButton } from "@/components/profile/export-report-button";
+import { TeamContact } from "@/components/profile/team-contact";
 
 type SalesForceMatchRow = {
   id: string;
@@ -1667,90 +1668,6 @@ export default async function MiCuentaPage() {
             </div>
           ) : null}
 
-          {accountRole === "user" || accountRole === "manager" ? (
-            <div className="rounded-xl border border-[#e3ebfa] bg-[#f8fbff] p-4 sm:p-5">
-              <p className="text-sm font-semibold text-[#1e3a8a]">Contacto</p>
-              {!teamContact ? (
-                <p className="mt-2 text-sm text-[#475467]">
-                  No hay un contacto asignado para el team actual.
-                </p>
-              ) : (
-                <div className="mt-2 space-y-2">
-                  <div className="flex items-start justify-between gap-3 rounded-xl border border-[#d9e5fb] bg-white p-3 sm:p-4">
-                    <p className="text-sm text-[#475467]">
-                      Si tienes alguna duda respecto al pago ponte en contacto con tu experto asignado.
-                    </p>
-                    {contactMailto ? (
-                      <a
-                        href={contactMailto}
-                        className="inline-flex shrink-0 items-center rounded-lg border border-[#d0d5dd] bg-white px-3 py-2 text-sm font-medium text-[#334155] transition hover:bg-[#f8fafc]"
-                      >
-                        Enviar correo al contacto
-                      </a>
-                    ) : (
-                      <p className="shrink-0 text-xs text-[#b42318]">Sin correo disponible</p>
-                    )}
-                  </div>
-                  <details className="group rounded-xl border border-[#d9e5fb] bg-white">
-                    <summary className="list-none cursor-pointer p-3 sm:p-4">
-                      <div className="mt-2 flex items-center gap-1 text-xs text-[#667085]">
-                        <span className="group-open:hidden">Ver detalles</span>
-                        <span className="hidden group-open:inline">Ocultar detalles</span>
-                      </div>
-                    </summary>
-                    <div className="border-t border-[#eef4ff] px-3 pb-3 pt-3 sm:px-4 sm:pb-4">
-                      <div className="grid gap-3 text-sm text-[#334155] md:grid-cols-3">
-                        <div className="space-y-1">
-                          <p>
-                            Nombre: <span className="font-semibold">{teamContact.name}</span>
-                          </p>
-                          <p>
-                            Team ID: <span className="font-semibold">{teamContact.teamId}</span>
-                          </p>
-                        </div>
-                        <div className="space-y-1">
-                          <p>
-                            Correo: <span className="font-semibold">{teamContact.email ?? "-"}</span>
-                          </p>
-                        </div>
-                        <div className="flex items-start justify-start md:justify-end">
-                          {teamContact.pictureUrl ? (
-                            <Image
-                              src={teamContact.pictureUrl}
-                              alt={teamContact.name}
-                              width={56}
-                              height={56}
-                              className="h-14 w-14 rounded-xl border border-[#d9e5fb] object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-[#d9e5fb] bg-white text-sm font-semibold text-[#334155]">
-                              {getInitials(teamContact.name)}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </details>
-                </div>
-              )}
-            </div>
-          ) : null}
-          {accountRole === "viewer" ? (
-            <div className="rounded-xl border border-[#e3ebfa] bg-[#f8fbff] p-4 sm:p-5">
-              <p className="text-sm font-semibold text-[#1e3a8a]">Rol viewer</p>
-              <p className="mt-2 text-sm text-[#475467]">
-                Este rol no requiere match operativo en <code>sales_force_status</code> ni en <code>manager_status</code>.
-              </p>
-            </div>
-          ) : null}
-
-          {resultadosData.message ? (
-            <div className="rounded-xl border border-[#d9e5fb] bg-[#f8fbff] p-4 sm:p-5">
-              <p className="text-sm text-[#475467]">{resultadosData.message}</p>
-
-            </div>
-          ) : null}
-
           <ResumenRankingCard
             title="Seguimiento Criterios de Ranking"
             data={rankingSummaryData}
@@ -1792,6 +1709,34 @@ export default async function MiCuentaPage() {
               Ver vista completa de resultados
             </Link>
           </div>
+
+          <TeamContact
+            accountRole={accountRole} 
+            teamContact={teamContact}
+            contactMailto={contactMailto}
+          />
+
+          {accountRole === "viewer" ? (
+            <div className="rounded-xl border border-[#e3ebfa] bg-[#f8fbff] p-4 sm:p-5">
+              <p className="text-sm font-semibold text-[#1e3a8a]">Rol viewer</p>
+              <p className="mt-2 text-sm text-[#475467]">
+                Este rol no requiere match operativo en <code>sales_force_status</code> ni en <code>manager_status</code>.
+              </p>
+            </div>
+          ) : null}
+
+          {resultadosData.message ? (
+            <div className="rounded-xl border border-[#d9e5fb] bg-[#f8fbff] p-4 sm:p-5">
+              <p className="text-sm text-[#475467]">{resultadosData.message}</p>
+
+            </div>
+          ) : null}
+
+
+
+
+
+
         </div>
       </div>
     </section>

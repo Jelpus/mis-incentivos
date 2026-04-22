@@ -136,10 +136,10 @@ export function ResumenRankingCard({
         />
 
         <MetricTile
-          title="Ayudas visuales"
-          topLabel="On time"
+          title="Porcentaje de utilización de ayudas visuales"
+          topLabel="Visitas con ayuda visual"
           topValue={data.ayudasVisuales.onTime}
-          bottomLabel="Total"
+          bottomLabel="Visitas totales promocionales"
           bottomValue={data.ayudasVisuales.total}
           coverage={data.ayudasVisuales.coverage}
           threshold={data.ayudasVisuales.threshold}
@@ -147,9 +147,9 @@ export function ResumenRankingCard({
 
         <MetricTile
           title="Documentación en 48 hrs"
-          topLabel="On time"
+          topLabel="Documentadas en 48 hrs"
           topValue={data.documentacion48h.onTime}
-          bottomLabel="Total"
+          bottomLabel="Total de visitas"
           bottomValue={data.documentacion48h.total}
           coverage={data.documentacion48h.coverage}
           threshold={data.documentacion48h.threshold}
