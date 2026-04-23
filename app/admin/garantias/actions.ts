@@ -662,10 +662,27 @@ export async function uploadGarantiasBatchAction(
     const ruleScopeRaw = getCellString(row, normalizedHeaderMap, ["rule_scope", "nivel_regla"]);
     const ruleScope = ruleScopeRaw === "single_rule" ? "single_rule" : "all_rules";
     const ruleKey = getCellString(row, normalizedHeaderMap, ["rule_key", "regla", "product_name"]);
+    const targetCoverageRaw = getCellString(row, normalizedHeaderMap, [
+      "target_coverage",
+      "coverage",
+      "porcentaje_garantia",
+      "garantia_pct",
+      "garantia_porcentaje",
+    ]);
+    const guaranteePaymentPreferenceRaw = getCellString(row, normalizedHeaderMap, [
+      "guarantee_payment_preference",
+      "payment_preference",
+      "preferencia_pago",
+      "preferencia",
+    ]);
     const note = getCellString(row, normalizedHeaderMap, ["note", "nota"]);
     const isActive = parseBooleanLike(
       getCellString(row, normalizedHeaderMap, ["is_active", "activo"]),
       true,
+    );
+    const targetCoverage = parseTargetCoverage(targetCoverageRaw);
+    const guaranteePaymentPreference = parseGuaranteePaymentPreference(
+      guaranteePaymentPreferenceRaw,
     );
 
     if (!noEmpleado) {
@@ -698,6 +715,22 @@ export async function uploadGarantiasBatchAction(
       invalidRows += 1;
       if (sampleErrors.length < 20) {
         sampleErrors.push(`Fila ${rowNumber}: rule_key requerido para single_rule.`);
+      }
+      continue;
+    }
+    if (targetCoverage === null) {
+      invalidRows += 1;
+      if (sampleErrors.length < 20) {
+        sampleErrors.push(`Fila ${rowNumber}: target_coverage invalido (debe ser 0-100).`);
+      }
+      continue;
+    }
+    if (guaranteePaymentPreference === null) {
+      invalidRows += 1;
+      if (sampleErrors.length < 20) {
+        sampleErrors.push(
+          `Fila ${rowNumber}: guarantee_payment_preference invalido (max_pay|prefer_real|prefer_guaranteed).`,
+        );
       }
       continue;
     }
@@ -746,8 +779,8 @@ export async function uploadGarantiasBatchAction(
       scope_label: representativeData.label,
       rule_scope: ruleScope,
       rule_key: ruleScope === "single_rule" ? ruleKey : null,
-      target_coverage: 100,
-      guarantee_payment_preference: "max_pay",
+      target_coverage: targetCoverage,
+      guarantee_payment_preference: guaranteePaymentPreference,
       is_active: isActive,
       note: note || null,
       created_by: user.id,

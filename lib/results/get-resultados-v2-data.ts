@@ -100,6 +100,10 @@ type QueryParam = {
   value: string | number | boolean | null;
 };
 
+type CalculationPeriodStatusRow = {
+  period_month: string | null;
+};
+
 function getResultsReadConfig(overrideTableId?: string | null) {
   const forcedTableId = String(overrideTableId ?? "").trim();
   const tableId =
@@ -164,6 +168,25 @@ function toPeriodMonthDate(periodCode: string | null | undefined): string | null
   const value = String(periodCode ?? "").trim();
   if (!/^\d{6}$/.test(value)) return null;
   return `${value.slice(0, 4)}-${value.slice(4, 6)}-01`;
+}
+
+async function getLatestFinalCalculationPeriodCode(): Promise<string | null> {
+  const adminClient = createAdminClient();
+  if (!adminClient) return null;
+
+  const result = await adminClient
+    .from("team_incentive_calculation_periods")
+    .select("period_month")
+    .eq("status", "final")
+    .order("period_month", { ascending: false })
+    .limit(1)
+    .maybeSingle<CalculationPeriodStatusRow>();
+
+  if (result.error) {
+    return null;
+  }
+
+  return toPeriodCode(result.data?.period_month ?? null);
 }
 
 async function buildManagerNameMap(params: {
@@ -437,6 +460,11 @@ export async function getResultadosV2PeriodSummary(params: {
     };
   }
 
+  const latestFinalPeriodCode = await getLatestFinalCalculationPeriodCode();
+  const allowedPeriods = latestFinalPeriodCode
+    ? context.availablePeriods.filter((period) => period <= latestFinalPeriodCode)
+    : context.availablePeriods;
+
   const tableRef = `\`${projectId}.${datasetId}.${tableId}\``;
   const summaryWhereSql = useStageFilter
     ? `${context.scopeWhereSql} AND stage = @stage`
@@ -464,6 +492,10 @@ export async function getResultadosV2PeriodSummary(params: {
 
   const periods = (summaryRows ?? [])
     .filter((row) => Boolean(row.periodo && /^\d{6}$/.test(row.periodo ?? "")))
+    .filter((row) => {
+      const periodCode = String(row.periodo ?? "");
+      return allowedPeriods.includes(periodCode);
+    })
     .map((row) => ({
       periodCode: String(row.periodo),
       rowCount: Number(row.row_count ?? 0),
@@ -547,14 +579,20 @@ export async function getResultadosV2Data(params: {
 
   const tableRef = `\`${projectId}.${datasetId}.${tableId}\``;
   const { scope, anchor, scopeWhereSql, scopeParams, availablePeriods } = context;
-  const defaultCandidatePeriods = filterPeriodsUpToBusinessCurrent(availablePeriods);
+  const latestFinalPeriodCode = await getLatestFinalCalculationPeriodCode();
+  const effectiveAvailablePeriods = latestFinalPeriodCode
+    ? availablePeriods.filter((period) => period <= latestFinalPeriodCode)
+    : availablePeriods;
+  const defaultCandidatePeriods = filterPeriodsUpToBusinessCurrent(
+    effectiveAvailablePeriods,
+  );
 
   const requestedPeriod = toPeriodCode(params.periodCode ?? null);
   const anchorPeriod = toPeriodCode(anchor?.periodMonth);
   let infoMessage: string | null = null;
 
   let selectedPeriod: string | null = null;
-  if (requestedPeriod && availablePeriods.includes(requestedPeriod)) {
+  if (requestedPeriod && effectiveAvailablePeriods.includes(requestedPeriod)) {
     selectedPeriod = requestedPeriod;
   } else if (anchorPeriod && defaultCandidatePeriods.includes(anchorPeriod)) {
     selectedPeriod = anchorPeriod;
@@ -571,10 +609,10 @@ export async function getResultadosV2Data(params: {
       ok: true,
       scope,
       periodCode: null,
-      availablePeriods,
+      availablePeriods: effectiveAvailablePeriods,
       summary: emptySummary,
       rows: [],
-      message: "No hay periodos disponibles en resultados_v2 para este alcance.",
+      message: "No hay periodos en estado final disponibles para este alcance.",
     };
   }
 
@@ -652,7 +690,7 @@ export async function getResultadosV2Data(params: {
     ok: true,
     scope,
     periodCode: selectedPeriod,
-    availablePeriods,
+    availablePeriods: effectiveAvailablePeriods,
     summary: {
       rowCount: Number(summary?.row_count ?? 0),
       totalPagoResultado: Number(summary?.total_pagoresultado ?? 0),
