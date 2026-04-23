@@ -192,6 +192,26 @@ function parseEmployeeNumber(value: string | null | undefined): number | null {
   return Math.trunc(parsed);
 }
 
+function parseTargetCoverage(value: string | null | undefined): number | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 100;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return null;
+  if (parsed < 0 || parsed > 100) return null;
+  return Math.round(parsed * 10000) / 10000;
+}
+
+function parseGuaranteePaymentPreference(
+  value: string | null | undefined,
+): "max_pay" | "prefer_real" | "prefer_guaranteed" | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "max_pay";
+  if (raw === "max_pay" || raw === "prefer_real" || raw === "prefer_guaranteed") {
+    return raw;
+  }
+  return null;
+}
+
 export async function createGarantiaAction(
   _prevState: ActionState,
   formData: FormData,
@@ -209,6 +229,10 @@ export async function createGarantiaAction(
   const ruleScope = String(formData.get("rule_scope") ?? "").trim();
   const ruleKeyInput = String(formData.get("rule_key") ?? "").trim();
   const ruleKeysInput = String(formData.get("rule_keys") ?? "").trim();
+  const targetCoverageInput = String(formData.get("target_coverage") ?? "").trim();
+  const guaranteePaymentPreferenceInput = String(
+    formData.get("guarantee_payment_preference") ?? "",
+  ).trim();
   const note = String(formData.get("note") ?? "").trim();
 
   const guaranteeStartMonth = normalizePeriodMonthInput(guaranteeStartInput);
@@ -249,6 +273,18 @@ export async function createGarantiaAction(
     return { ok: false, message: "Debes seleccionar o escribir una regla puntual." };
   }
 
+  const targetCoverage = parseTargetCoverage(targetCoverageInput);
+  if (targetCoverage === null) {
+    return { ok: false, message: "El % de garantia debe ser un numero entre 0 y 100." };
+  }
+
+  const guaranteePaymentPreference = parseGuaranteePaymentPreference(
+    guaranteePaymentPreferenceInput,
+  );
+  if (guaranteePaymentPreference === null) {
+    return { ok: false, message: "La preferencia de pago es invalida." };
+  }
+
   const supabase = createAdminClient();
   if (!supabase) {
     return { ok: false, message: "Admin client no disponible." };
@@ -264,7 +300,8 @@ export async function createGarantiaAction(
           scope_label: scopeLabel || null,
           rule_scope: "single_rule" as const,
           rule_key: ruleKey,
-          target_coverage: 100,
+          target_coverage: targetCoverage,
+          guarantee_payment_preference: guaranteePaymentPreference,
           is_active: true,
           note: note || null,
           created_by: user.id,
@@ -279,7 +316,8 @@ export async function createGarantiaAction(
             scope_label: scopeLabel || null,
             rule_scope: "all_rules" as const,
             rule_key: null,
-            target_coverage: 100,
+            target_coverage: targetCoverage,
+            guarantee_payment_preference: guaranteePaymentPreference,
             is_active: true,
             note: note || null,
             created_by: user.id,
@@ -402,6 +440,10 @@ export async function updateGarantiaAction(
   const ruleScope = String(formData.get("rule_scope") ?? "").trim();
   const ruleKeyInput = String(formData.get("rule_key") ?? "").trim();
   const ruleKeysInput = String(formData.get("rule_keys") ?? "").trim();
+  const targetCoverageInput = String(formData.get("target_coverage") ?? "").trim();
+  const guaranteePaymentPreferenceInput = String(
+    formData.get("guarantee_payment_preference") ?? "",
+  ).trim();
   const note = String(formData.get("note") ?? "").trim();
 
   const guaranteeStartMonth = normalizePeriodMonthInput(guaranteeStartInput);
@@ -441,6 +483,18 @@ export async function updateGarantiaAction(
     return { ok: false, message: "Debes seleccionar una regla puntual." };
   }
 
+  const targetCoverage = parseTargetCoverage(targetCoverageInput);
+  if (targetCoverage === null) {
+    return { ok: false, message: "El % de garantia debe ser un numero entre 0 y 100." };
+  }
+
+  const guaranteePaymentPreference = parseGuaranteePaymentPreference(
+    guaranteePaymentPreferenceInput,
+  );
+  if (guaranteePaymentPreference === null) {
+    return { ok: false, message: "La preferencia de pago es invalida." };
+  }
+
   const supabase = createAdminClient();
   if (!supabase) {
     return { ok: false, message: "Admin client no disponible." };
@@ -456,6 +510,8 @@ export async function updateGarantiaAction(
       scope_label: scopeLabel || null,
       rule_scope: ruleScope,
       rule_key: ruleScope === "single_rule" ? selectedRuleKey : null,
+      target_coverage: targetCoverage,
+      guarantee_payment_preference: guaranteePaymentPreference,
       note: note || null,
       updated_by: user.id,
       updated_at: new Date().toISOString(),
@@ -691,6 +747,7 @@ export async function uploadGarantiasBatchAction(
       rule_scope: ruleScope,
       rule_key: ruleScope === "single_rule" ? ruleKey : null,
       target_coverage: 100,
+      guarantee_payment_preference: "max_pay",
       is_active: isActive,
       note: note || null,
       created_by: user.id,

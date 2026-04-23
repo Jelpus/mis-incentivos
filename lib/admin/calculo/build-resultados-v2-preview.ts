@@ -42,6 +42,8 @@ type GuaranteeRow = {
   scope_value: string | null;
   rule_scope: "all_rules" | "single_rule";
   rule_key: string | null;
+  target_coverage: number | null;
+  guarantee_payment_preference: "max_pay" | "prefer_real" | "prefer_guaranteed" | null;
   is_active: boolean | null;
 };
 
@@ -181,6 +183,14 @@ function toNumber(value: unknown): number {
 
 function round6(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+function normalizeGuaranteeCoveragePercent(value: unknown): number {
+  const parsed = toNumber(value);
+  if (!Number.isFinite(parsed)) return 100;
+  if (parsed < 0) return 0;
+  if (parsed > 100) return 100;
+  return parsed;
 }
 
 function round2(value: number): number {
@@ -523,7 +533,9 @@ export async function buildResultadosV2PreviewWithOptions(
   const guaranteesResult = await queryWithRetry(() =>
     supabase
       .from("team_incentive_guarantees")
-      .select("scope_type, scope_value, rule_scope, rule_key, is_active")
+      .select(
+        "scope_type, scope_value, rule_scope, rule_key, target_coverage, guarantee_payment_preference, is_active",
+      )
       .eq("is_active", true)
       .lte("guarantee_start_month", periodMonth)
       .gte("guarantee_end_month", periodMonth),
@@ -686,8 +698,23 @@ export async function buildResultadosV2PreviewWithOptions(
         if (!ruleKey || normalizeKey(ruleKey) !== normalizeKey(row.productName)) continue;
       }
 
+      const guaranteeCoveragePercent = normalizeGuaranteeCoveragePercent(
+        guarantee.target_coverage,
+      );
+      const guaranteedPayout = round6(
+        pagoVariable * (guaranteeCoveragePercent / 100),
+      );
+      const paymentPreference = String(
+        guarantee.guarantee_payment_preference ?? "max_pay",
+      ).trim();
       garantia = true;
-      pagoResultado = pagoVariable;
+      if (paymentPreference === "prefer_real") {
+        // Keep calculated payout.
+      } else if (paymentPreference === "prefer_guaranteed") {
+        pagoResultado = guaranteedPayout;
+      } else {
+        pagoResultado = Math.max(pagoResultado, guaranteedPayout);
+      }
       garantiasAplicadas += 1;
       break;
     }

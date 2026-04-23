@@ -17,6 +17,8 @@ create table if not exists public.team_incentive_guarantees (
   rule_scope text not null default 'all_rules' check (rule_scope in ('all_rules', 'single_rule')),
   rule_key text null,
   target_coverage numeric(8, 4) not null default 100 check (target_coverage > 0),
+  guarantee_payment_preference text not null default 'max_pay'
+    check (guarantee_payment_preference in ('max_pay', 'prefer_real', 'prefer_guaranteed')),
   is_active boolean not null default true,
   note text null,
   created_at timestamptz not null default now(),
@@ -60,3 +62,31 @@ create unique index if not exists team_incentive_guarantees_unique_active
     coalesce(rule_key, '')
   )
   where is_active = true;
+
+-- Migration for existing environments:
+alter table if exists public.team_incentive_guarantees
+  add column if not exists guarantee_payment_preference text;
+
+alter table if exists public.team_incentive_guarantees
+  alter column guarantee_payment_preference set default 'max_pay';
+
+update public.team_incentive_guarantees
+set guarantee_payment_preference = 'max_pay'
+where guarantee_payment_preference is null
+   or trim(guarantee_payment_preference) = '';
+
+alter table if exists public.team_incentive_guarantees
+  alter column guarantee_payment_preference set not null;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'team_incentive_guarantees_payment_preference_chk'
+  ) then
+    alter table public.team_incentive_guarantees
+      add constraint team_incentive_guarantees_payment_preference_chk
+      check (guarantee_payment_preference in ('max_pay', 'prefer_real', 'prefer_guaranteed'));
+  end if;
+end $$;

@@ -41,8 +41,14 @@ type Props = {
   versions: VersionRow[];
 };
 
+const MAX_COMBINED_FILES_SIZE_BYTES = 75 * 1024 * 1024;
+
 function formatDateTime(value: string | null) {
   return formatDateTimeNoTimezoneShift(value, "es-MX", "-");
+}
+
+function formatFileSizeMb(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
 function formatSourceLabel(sourceType: "private" | "drilldown") {
@@ -231,6 +237,14 @@ export function ObjetivosManagementCard({
       });
       return null;
     }
+    if (selectedPrivateFile.size + selectedDrillDownFile.size > MAX_COMBINED_FILES_SIZE_BYTES) {
+      setPreviewState({
+        ok: false,
+        message:
+          "La suma de ambos archivos excede 75MB. Reduce tamano para evitar errores de red al validar.",
+      });
+      return null;
+    }
 
     const formData = new FormData();
     formData.append("period_month", periodInput);
@@ -252,12 +266,24 @@ export function ObjetivosManagementCard({
         const result = await previewObjetivosImportAction(null, formData);
         setPreviewState(result);
       } catch (error) {
+        const combinedSizeBytes =
+          (selectedPrivateFile?.size ?? 0) + (selectedDrillDownFile?.size ?? 0);
+        const combinedSizeLabel = formatFileSizeMb(combinedSizeBytes);
+        const maxSizeLabel = formatFileSizeMb(MAX_COMBINED_FILES_SIZE_BYTES);
+        const isNetworkStyleError =
+          error instanceof TypeError ||
+          String(error instanceof Error ? error.message : error)
+            .toLowerCase()
+            .includes("failed to fetch");
+
         setPreviewState({
           ok: false,
           message:
-            error instanceof Error
-              ? `No se pudo procesar preview: ${error.message}`
-              : "No se pudo procesar preview.",
+            isNetworkStyleError
+              ? `No se pudo validar archivos (error de red/request). Puede ser conectividad o error interno del servidor. Tamano combinado actual: ${combinedSizeLabel} (limite recomendado: ${maxSizeLabel}).`
+              : error instanceof Error
+                ? `No se pudo procesar preview: ${error.message}`
+                : "No se pudo procesar preview.",
         });
       }
     });

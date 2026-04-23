@@ -24,6 +24,7 @@ type GarantiaRow = {
   rule_scope: "all_rules" | "single_rule";
   rule_key: string | null;
   target_coverage: number;
+  guarantee_payment_preference: "max_pay" | "prefer_real" | "prefer_guaranteed";
   is_active: boolean;
   note: string | null;
   created_at: string;
@@ -71,6 +72,14 @@ function getScopeTypeLabel(scopeType: GarantiaRow["scope_type"]) {
   return "Representante";
 }
 
+function getPaymentPreferenceLabel(
+  preference: GarantiaRow["guarantee_payment_preference"],
+) {
+  if (preference === "prefer_real") return "Preferir pago real";
+  if (preference === "prefer_guaranteed") return "Preferir pago garantizado";
+  return "Respetar pago mas alto";
+}
+
 export function GarantiasManagementCard({ periodMonth, availablePeriods, rows, options }: Props) {
   const router = useRouter();
   const [createState, createFormAction, createPending] =
@@ -92,6 +101,9 @@ export function GarantiasManagementCard({ periodMonth, availablePeriods, rows, o
   const [dynamicRules, setDynamicRules] = useState<string[]>(options.rules);
   const [rulesLoading, setRulesLoading] = useState(false);
   const [note, setNote] = useState("");
+  const [targetCoverage, setTargetCoverage] = useState("100");
+  const [guaranteePaymentPreference, setGuaranteePaymentPreference] =
+    useState<GarantiaRow["guarantee_payment_preference"]>("max_pay");
   const [guaranteeStartMonth, setGuaranteeStartMonth] = useState(formatPeriodMonthForInput(periodMonth));
   const [guaranteeEndMonth, setGuaranteeEndMonth] = useState(formatPeriodMonthForInput(periodMonth));
   const [search, setSearch] = useState("");
@@ -106,6 +118,9 @@ export function GarantiasManagementCard({ periodMonth, availablePeriods, rows, o
   const [editRulesLoading, setEditRulesLoading] = useState(false);
   const [editStartMonth, setEditStartMonth] = useState(formatPeriodMonthForInput(periodMonth));
   const [editEndMonth, setEditEndMonth] = useState(formatPeriodMonthForInput(periodMonth));
+  const [editTargetCoverage, setEditTargetCoverage] = useState("100");
+  const [editGuaranteePaymentPreference, setEditGuaranteePaymentPreference] =
+    useState<GarantiaRow["guarantee_payment_preference"]>("max_pay");
   const [editNote, setEditNote] = useState("");
   const periodOptions = useMemo(() => {
     const unique = Array.from(
@@ -249,6 +264,8 @@ export function GarantiasManagementCard({ periodMonth, availablePeriods, rows, o
     setEditDynamicRules(options.rules);
     setEditStartMonth(formatPeriodMonthForInput(row.guarantee_start_month));
     setEditEndMonth(formatPeriodMonthForInput(row.guarantee_end_month));
+    setEditTargetCoverage(String(row.target_coverage ?? 100));
+    setEditGuaranteePaymentPreference(row.guarantee_payment_preference ?? "max_pay");
     setEditNote(row.note ?? "");
   }
 
@@ -267,7 +284,7 @@ export function GarantiasManagementCard({ periodMonth, availablePeriods, rows, o
 
       if (!normalized) return true;
 
-      const content = `${row.guarantee_start_month} ${row.guarantee_end_month} ${row.scope_type} ${row.scope_value} ${row.scope_label ?? ""} ${row.rule_scope} ${row.rule_key ?? ""} ${row.note ?? ""}`.toLowerCase();
+      const content = `${row.guarantee_start_month} ${row.guarantee_end_month} ${row.scope_type} ${row.scope_value} ${row.scope_label ?? ""} ${row.rule_scope} ${row.rule_key ?? ""} ${row.target_coverage} ${row.guarantee_payment_preference} ${row.note ?? ""}`.toLowerCase();
       return content.includes(normalized);
     });
   }, [rows, search, periodFilterMonth]);
@@ -277,12 +294,12 @@ export function GarantiasManagementCard({ periodMonth, availablePeriods, rows, o
       <div>
         <h2 className="text-lg font-semibold text-neutral-950">Gestion de garantias</h2>
         <p className="mt-1 text-sm text-neutral-600">
-          Una garantia fuerza cobertura 100% en el alcance seleccionado.
+          Define cobertura minima por alcance (default 100%) y vigencia.
         </p>
       </div>
 
       <form action={createFormAction} className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           <div>
             <label className="text-xs font-medium uppercase tracking-wide text-neutral-500">
               Inicio garantia
@@ -409,6 +426,43 @@ export function GarantiasManagementCard({ periodMonth, availablePeriods, rows, o
                     ? "Puedes seleccionar multiples reglas (Ctrl/Cmd o seleccion tactil)."
                     : "No hay reglas disponibles para este alcance."}
             </p>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+              % garantia
+            </label>
+            <input
+              name="target_coverage"
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              value={targetCoverage}
+              onChange={(event) => setTargetCoverage(event.target.value)}
+              className="mt-1 h-10 w-full rounded-xl border border-neutral-300 bg-white px-3 text-sm"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+              Preferencia pago
+            </label>
+            <select
+              name="guarantee_payment_preference"
+              value={guaranteePaymentPreference}
+              onChange={(event) =>
+                setGuaranteePaymentPreference(
+                  event.target.value as GarantiaRow["guarantee_payment_preference"],
+                )
+              }
+              className="mt-1 h-10 w-full rounded-xl border border-neutral-300 bg-white px-3 text-sm"
+            >
+              <option value="max_pay">Respetar pago mas alto</option>
+              <option value="prefer_real">Preferir pago real</option>
+              <option value="prefer_guaranteed">Preferir pago garantizado</option>
+            </select>
           </div>
         </div>
 
@@ -555,6 +609,9 @@ export function GarantiasManagementCard({ periodMonth, availablePeriods, rows, o
                   </td>
                   <td className="px-3 py-2 text-neutral-700">
                     {row.rule_scope === "all_rules" ? "Todo el plan" : row.rule_key ?? "-"}
+                    <p className="mt-1 text-xs text-neutral-500">
+                      {getPaymentPreferenceLabel(row.guarantee_payment_preference)}
+                    </p>
                     {row.note ? <p className="mt-1 text-xs text-neutral-500">{row.note}</p> : null}
                   </td>
                   <td className="px-3 py-2 text-neutral-700">{row.target_coverage}%</td>
@@ -648,7 +705,7 @@ export function GarantiasManagementCard({ periodMonth, availablePeriods, rows, o
               <input type="hidden" name="scope_label" value={editScopeLabel} />
               <input type="hidden" name="rule_keys" value={JSON.stringify(editSelectedRuleKeys)} />
 
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
                 <div>
                   <label className="text-xs font-medium uppercase tracking-wide text-neutral-500">
                     Inicio garantia
@@ -719,6 +776,43 @@ export function GarantiasManagementCard({ periodMonth, availablePeriods, rows, o
                         {option.label}
                       </option>
                     ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+                    % garantia
+                  </label>
+                  <input
+                    name="target_coverage"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={editTargetCoverage}
+                    onChange={(event) => setEditTargetCoverage(event.target.value)}
+                    className="mt-1 h-10 w-full rounded-xl border border-neutral-300 bg-white px-3 text-sm"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+                    Preferencia pago
+                  </label>
+                  <select
+                    name="guarantee_payment_preference"
+                    value={editGuaranteePaymentPreference}
+                    onChange={(event) =>
+                      setEditGuaranteePaymentPreference(
+                        event.target.value as GarantiaRow["guarantee_payment_preference"],
+                      )
+                    }
+                    className="mt-1 h-10 w-full rounded-xl border border-neutral-300 bg-white px-3 text-sm"
+                  >
+                    <option value="max_pay">Respetar pago mas alto</option>
+                    <option value="prefer_real">Preferir pago real</option>
+                    <option value="prefer_guaranteed">Preferir pago garantizado</option>
                   </select>
                 </div>
               </div>

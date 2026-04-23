@@ -17,6 +17,7 @@ import {
 } from "@/lib/admin/objetivos/import-objectives";
 
 const MAX_OBJECTIVES_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+const MAX_OBJECTIVES_COMBINED_SIZE_BYTES = 75 * 1024 * 1024; // keep below Next Server Actions 80MB
 const DEFAULT_OBJECTIVES_FILES_BUCKET = "team-objective-files";
 
 type StoredObjectiveFileMetadata = {
@@ -215,191 +216,220 @@ async function uploadObjectiveSourceFile(params: {
 async function runPreview(params: {
   formData: FormData;
 }) {
-  const periodInput = String(params.formData.get("period_month") ?? "").trim();
-  const privateSheetNameInput = String(params.formData.get("private_sheet_name") ?? "").trim();
-  const drillDownSheetNameInput = String(params.formData.get("drilldown_sheet_name") ?? "").trim();
-  const privateFile = params.formData.get("private_file");
-  const drillDownFile = params.formData.get("drilldown_file");
+  try {
+    const periodInput = String(params.formData.get("period_month") ?? "").trim();
+    const privateSheetNameInput = String(params.formData.get("private_sheet_name") ?? "").trim();
+    const drillDownSheetNameInput = String(params.formData.get("drilldown_sheet_name") ?? "").trim();
+    const privateFile = params.formData.get("private_file");
+    const drillDownFile = params.formData.get("drilldown_file");
 
-  const periodMonth = normalizePeriodMonthInput(periodInput);
-  if (!periodMonth) {
-    return { ok: false as const, message: "Periodo invalido. Usa formato YYYY-MM o YYYY-MM-01." };
-  }
+    const periodMonth = normalizePeriodMonthInput(periodInput);
+    if (!periodMonth) {
+      return { ok: false as const, message: "Periodo invalido. Usa formato YYYY-MM o YYYY-MM-01." };
+    }
 
-  if (!(privateFile instanceof File) || !(drillDownFile instanceof File)) {
-    return {
-      ok: false as const,
-      message: "Debes seleccionar ambos archivos: Objetivos Privados y Drill Down Cuotas.",
-    };
-  }
-  if (privateFile.size <= 0 || drillDownFile.size <= 0) {
-    return { ok: false as const, message: "Uno de los archivos esta vacio." };
-  }
-  if (
-    privateFile.size > MAX_OBJECTIVES_FILE_SIZE_BYTES ||
-    drillDownFile.size > MAX_OBJECTIVES_FILE_SIZE_BYTES
-  ) {
-    return { ok: false as const, message: "Uno de los archivos excede el limite de 50MB." };
-  }
-
-  const supabase = createAdminClient();
-  if (!supabase) {
-    return { ok: false as const, message: "Admin client no disponible." };
-  }
-
-  const statusPeriodValidation = await supabase
-    .from("sales_force_status")
-    .select("id", { count: "exact", head: true })
-    .eq("period_month", periodMonth)
-    .eq("is_deleted", false);
-
-  if (statusPeriodValidation.error) {
-    return {
-      ok: false as const,
-      message: `No se pudo validar el periodo en Status: ${statusPeriodValidation.error.message}`,
-    };
-  }
-  if ((statusPeriodValidation.count ?? 0) === 0) {
-    return {
-      ok: false as const,
-      message: "No existe informacion en sales_force_status para el periodo seleccionado.",
-    };
-  }
-
-  const [privateFileBuffer, drillDownFileBuffer] = await Promise.all([
-    privateFile.arrayBuffer(),
-    drillDownFile.arrayBuffer(),
-  ]);
-  const privateParsedInput = parseObjectivesFile({
-    fileBuffer: Buffer.from(privateFileBuffer),
-    selectedPeriodMonth: periodMonth,
-    sourceFileName: privateFile.name,
-    requestedSheetName: privateSheetNameInput || null,
-  });
-  const drillDownParsedInput = parseDrillDownObjectivesFile({
-    fileBuffer: Buffer.from(drillDownFileBuffer),
-    selectedPeriodMonth: periodMonth,
-    sourceFileName: drillDownFile.name,
-    requestedSheetName: drillDownSheetNameInput || null,
-  });
-  const parsedInput = mergeObjectivesSources([
-    {
-      source: "private",
-      fileName: privateFile.name,
-      sheetName: privateParsedInput.sheetName,
-      parsed: privateParsedInput,
-    },
-    {
-      source: "drilldown",
-      fileName: drillDownFile.name,
-      sheetName: drillDownParsedInput.sheetName,
-      parsed: drillDownParsedInput,
-    },
-  ]);
-
-  const [statusRowsResult, versionRowsResult] = await Promise.all([
-    supabase
-      .from("sales_force_status")
-      .select("territorio_individual, team_id, is_active, is_vacant")
-      .eq("period_month", periodMonth)
-      .eq("is_deleted", false),
-    supabase
-      .from("team_incentive_rule_versions")
-      .select("team_id, version_no, created_at, rule_definition_id")
-      .eq("period_month", periodMonth),
-  ]);
-
-  if (statusRowsResult.error) {
-    return {
-      ok: false as const,
-      message: `No se pudo cargar sales_force_status: ${statusRowsResult.error.message}`,
-    };
-  }
-  if (versionRowsResult.error) {
-    if (isMissingRelationError(versionRowsResult.error)) {
-      const tableName = getMissingRelationName(versionRowsResult.error) ?? "team_incentive_rule_versions";
+    if (!(privateFile instanceof File) || !(drillDownFile instanceof File)) {
       return {
         ok: false as const,
-        message: `No existe ${tableName}. Sin reglas versionadas no se puede validar cobertura de objetivos.`,
+        message: "Debes seleccionar ambos archivos: Objetivos Privados y Drill Down Cuotas.",
       };
     }
-    return {
-      ok: false as const,
-      message: `No se pudieron cargar versiones de reglas: ${versionRowsResult.error.message}`,
-    };
-  }
+    if (privateFile.size <= 0 || drillDownFile.size <= 0) {
+      return { ok: false as const, message: "Uno de los archivos esta vacio." };
+    }
+    if (
+      privateFile.size > MAX_OBJECTIVES_FILE_SIZE_BYTES ||
+      drillDownFile.size > MAX_OBJECTIVES_FILE_SIZE_BYTES
+    ) {
+      return { ok: false as const, message: "Uno de los archivos excede el limite de 50MB." };
+    }
+    if (privateFile.size + drillDownFile.size > MAX_OBJECTIVES_COMBINED_SIZE_BYTES) {
+      return {
+        ok: false as const,
+        message:
+          "La suma de ambos archivos excede el limite operativo para validacion (75MB). Reduce tamano o divide la carga.",
+      };
+    }
 
-  const definitionIds = Array.from(
-    new Set(
-      (versionRowsResult.data ?? [])
-        .map((row) => String(row.rule_definition_id ?? "").trim())
-        .filter((value) => value.length > 0),
-    ),
-  );
+    const supabase = createAdminClient();
+    if (!supabase) {
+      return { ok: false as const, message: "Admin client no disponible." };
+    }
 
-  let ruleItemRows: Array<{
-    definition_id: string | null;
-    product_name: string | null;
-    plan_type_name: string | null;
-  }> = [];
+    const statusPeriodValidation = await supabase
+      .from("sales_force_status")
+      .select("id", { count: "exact", head: true })
+      .eq("period_month", periodMonth)
+      .eq("is_deleted", false);
 
-  if (definitionIds.length > 0) {
-    const itemRowsResult = await supabase
-      .from("team_rule_definition_items")
-      .select("definition_id, product_name, plan_type_name")
-      .in("definition_id", definitionIds);
+    if (statusPeriodValidation.error) {
+      return {
+        ok: false as const,
+        message: `No se pudo validar el periodo en Status: ${statusPeriodValidation.error.message}`,
+      };
+    }
+    if ((statusPeriodValidation.count ?? 0) === 0) {
+      return {
+        ok: false as const,
+        message: "No existe informacion en sales_force_status para el periodo seleccionado.",
+      };
+    }
 
-    if (itemRowsResult.error) {
-      if (isMissingRelationError(itemRowsResult.error)) {
-        const tableName = getMissingRelationName(itemRowsResult.error) ?? "team_rule_definition_items";
+    const [privateFileBuffer, drillDownFileBuffer] = await Promise.all([
+      privateFile.arrayBuffer(),
+      drillDownFile.arrayBuffer(),
+    ]);
+    let privateParsedInput: ReturnType<typeof parseObjectivesFile>;
+    let drillDownParsedInput: ReturnType<typeof parseDrillDownObjectivesFile>;
+    try {
+      privateParsedInput = parseObjectivesFile({
+        fileBuffer: Buffer.from(privateFileBuffer),
+        selectedPeriodMonth: periodMonth,
+        sourceFileName: privateFile.name,
+        requestedSheetName: privateSheetNameInput || null,
+      });
+      drillDownParsedInput = parseDrillDownObjectivesFile({
+        fileBuffer: Buffer.from(drillDownFileBuffer),
+        selectedPeriodMonth: periodMonth,
+        sourceFileName: drillDownFile.name,
+        requestedSheetName: drillDownSheetNameInput || null,
+      });
+    } catch (error) {
+      return {
+        ok: false as const,
+        message:
+          error instanceof Error
+            ? `No se pudieron leer/parsear los archivos. Detalle: ${error.message}`
+            : "No se pudieron leer/parsear los archivos.",
+      };
+    }
+    const parsedInput = mergeObjectivesSources([
+      {
+        source: "private",
+        fileName: privateFile.name,
+        sheetName: privateParsedInput.sheetName,
+        parsed: privateParsedInput,
+      },
+      {
+        source: "drilldown",
+        fileName: drillDownFile.name,
+        sheetName: drillDownParsedInput.sheetName,
+        parsed: drillDownParsedInput,
+      },
+    ]);
+
+    const [statusRowsResult, versionRowsResult] = await Promise.all([
+      supabase
+        .from("sales_force_status")
+        .select("territorio_individual, team_id, is_active, is_vacant")
+        .eq("period_month", periodMonth)
+        .eq("is_deleted", false),
+      supabase
+        .from("team_incentive_rule_versions")
+        .select("team_id, version_no, created_at, rule_definition_id")
+        .eq("period_month", periodMonth),
+    ]);
+
+    if (statusRowsResult.error) {
+      return {
+        ok: false as const,
+        message: `No se pudo cargar sales_force_status: ${statusRowsResult.error.message}`,
+      };
+    }
+    if (versionRowsResult.error) {
+      if (isMissingRelationError(versionRowsResult.error)) {
+        const tableName = getMissingRelationName(versionRowsResult.error) ?? "team_incentive_rule_versions";
         return {
           ok: false as const,
-          message: `No existe ${tableName}. Crea el esquema normalizado de reglas para validar objetivos.`,
+          message: `No existe ${tableName}. Sin reglas versionadas no se puede validar cobertura de objetivos.`,
         };
       }
       return {
         ok: false as const,
-        message: `No se pudieron cargar items de reglas: ${itemRowsResult.error.message}`,
+        message: `No se pudieron cargar versiones de reglas: ${versionRowsResult.error.message}`,
       };
     }
 
-    ruleItemRows = (itemRowsResult.data ?? []) as Array<{
+    const definitionIds = Array.from(
+      new Set(
+        (versionRowsResult.data ?? [])
+          .map((row) => String(row.rule_definition_id ?? "").trim())
+          .filter((value) => value.length > 0),
+      ),
+    );
+
+    let ruleItemRows: Array<{
       definition_id: string | null;
       product_name: string | null;
       plan_type_name: string | null;
-    }>;
+    }> = [];
+
+    if (definitionIds.length > 0) {
+      const itemRowsResult = await supabase
+        .from("team_rule_definition_items")
+        .select("definition_id, product_name, plan_type_name")
+        .in("definition_id", definitionIds);
+
+      if (itemRowsResult.error) {
+        if (isMissingRelationError(itemRowsResult.error)) {
+          const tableName = getMissingRelationName(itemRowsResult.error) ?? "team_rule_definition_items";
+          return {
+            ok: false as const,
+            message: `No existe ${tableName}. Crea el esquema normalizado de reglas para validar objetivos.`,
+          };
+        }
+        return {
+          ok: false as const,
+          message: `No se pudieron cargar items de reglas: ${itemRowsResult.error.message}`,
+        };
+      }
+
+      ruleItemRows = (itemRowsResult.data ?? []) as Array<{
+        definition_id: string | null;
+        product_name: string | null;
+        plan_type_name: string | null;
+      }>;
+    }
+
+    const computed = computeObjectivesPreview({
+      parsedInput,
+      selectedPeriodMonth: periodMonth,
+      statusRows: (statusRowsResult.data ?? []) as Array<{
+        territorio_individual: string | null;
+        team_id: string | null;
+        is_active: boolean | null;
+        is_vacant: boolean | null;
+      }>,
+      ruleVersionRows: (versionRowsResult.data ?? []) as Array<{
+        team_id: string | null;
+        version_no: number | null;
+        created_at: string | null;
+        rule_definition_id: string | null;
+      }>,
+      ruleItemRows,
+    });
+
+    return {
+      ok: true as const,
+      uploadedFileName: `${privateFile.name} | ${drillDownFile.name}`,
+      periodMonth,
+      sheetName: parsedInput.sheetName,
+      summary: {
+        ...computed.summary,
+        hasStatusData: computed.hasStatusData,
+        hasRuleDefinitions: computed.hasRuleDefinitions,
+      },
+      validRowsForInsert: computed.validRowsForInsert,
+    };
+  } catch (error) {
+    return {
+      ok: false as const,
+      message:
+        error instanceof Error
+          ? `Error interno durante preview: ${error.message}`
+          : "Error interno durante preview.",
+    };
   }
-
-  const computed = computeObjectivesPreview({
-    parsedInput,
-    selectedPeriodMonth: periodMonth,
-    statusRows: (statusRowsResult.data ?? []) as Array<{
-      territorio_individual: string | null;
-      team_id: string | null;
-      is_active: boolean | null;
-      is_vacant: boolean | null;
-    }>,
-    ruleVersionRows: (versionRowsResult.data ?? []) as Array<{
-      team_id: string | null;
-      version_no: number | null;
-      created_at: string | null;
-      rule_definition_id: string | null;
-    }>,
-    ruleItemRows,
-  });
-
-  return {
-    ok: true as const,
-    uploadedFileName: `${privateFile.name} | ${drillDownFile.name}`,
-    periodMonth,
-    sheetName: parsedInput.sheetName,
-    summary: {
-      ...computed.summary,
-      hasStatusData: computed.hasStatusData,
-      hasRuleDefinitions: computed.hasRuleDefinitions,
-    },
-    validRowsForInsert: computed.validRowsForInsert,
-  };
 }
 
 export async function previewObjetivosImportAction(

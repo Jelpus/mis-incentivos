@@ -24,6 +24,7 @@ type GuaranteeRow = {
   rule_scope: "all_rules" | "single_rule";
   rule_key: string | null;
   target_coverage: number;
+  guarantee_payment_preference: "max_pay" | "prefer_real" | "prefer_guaranteed";
   is_active: boolean;
   note: string | null;
   created_at: string;
@@ -125,6 +126,7 @@ export async function getGarantiasPageData(
           rule_scope,
           rule_key,
           target_coverage,
+          guarantee_payment_preference,
           is_active,
           note,
           created_at,
@@ -143,7 +145,12 @@ export async function getGarantiasPageData(
   let rows: GuaranteeRow[] = [];
 
   if (guaranteesResult.error) {
-    if (isMissingRelationError(guaranteesResult.error)) {
+    const normalizedMessage = String(guaranteesResult.error.message ?? "").toLowerCase();
+    if (normalizedMessage.includes("guarantee_payment_preference")) {
+      storageReady = false;
+      storageMessage =
+        "Falta columna guarantee_payment_preference en team_incentive_guarantees. Actualiza esquema con docs/team-incentive-guarantees-schema.sql.";
+    } else if (isMissingRelationError(guaranteesResult.error)) {
       storageReady = false;
       const tableName = getMissingRelationName(guaranteesResult.error) ?? "team_incentive_guarantees";
       storageMessage =

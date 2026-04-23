@@ -39,7 +39,7 @@ export default async function AdminGarantiasPage({ searchParams }: PageProps) {
             Gestion de garantias
           </h1>
           <p className="mt-2 max-w-4xl text-sm text-neutral-600">
-            Configura excepciones para forzar cobertura al 100% por linea, team o representante.
+            Configura excepciones por linea, team o representante, con % de garantia y preferencia de pago.
           </p>
         </header>
   
