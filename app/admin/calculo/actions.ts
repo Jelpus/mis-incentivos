@@ -7,6 +7,7 @@ import { getMissingRelationName, isMissingRelationError, normalizePeriodMonthInp
 import { runCalculoProcess } from "@/lib/admin/calculo/run-calculo-process";
 import { buildResultadosV2Preview, buildResultadosV2PreviewWithOptions } from "@/lib/admin/calculo/build-resultados-v2-preview";
 import { persistResultadosV2 } from "@/lib/admin/calculo/persist-resultados-v2";
+import { sendPublishEmailsForPeriod, type PublishEmailsSummary } from "@/lib/notifications/publish-emails";
 import type { CalculoProcessRunResult } from "@/lib/admin/calculo/run-calculo-process";
 import type { ResultadosV2PreviewResult } from "@/lib/admin/calculo/build-resultados-v2-preview";
 
@@ -290,6 +291,7 @@ export async function updateCalculoStatusAction(
     }
     | undefined;
   let skippedAsignacionByStreamingBuffer = false;
+  let publishEmailsSummary: PublishEmailsSummary | undefined;
 
   if (actionInput === "calcular") {
     try {
@@ -383,6 +385,20 @@ export async function updateCalculoStatusAction(
     }
   }
   if (actionInput === "publicar") {
+    try {
+      publishEmailsSummary = await sendPublishEmailsForPeriod({
+        supabase,
+        periodMonth,
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        message:
+          error instanceof Error
+            ? `No se pudo enviar correos de publicacion: ${error.message}`
+            : "No se pudo enviar correos de publicacion.",
+      };
+    }
     updatePayload.published_at = now;
   }
   if (actionInput === "despublicar") {
@@ -416,6 +432,8 @@ export async function updateCalculoStatusAction(
           ? skippedAsignacionByStreamingBuffer
             ? `Confirmado (${periodMonth.slice(0, 7)}): resultados_v2 subidos (${resultadosPersistedSummary?.rowsCount ?? 0} filas, pago_resultado=${(resultadosPersistedSummary?.totalPagoResultado ?? 0).toFixed(6)}). Nota: asignacionUnidades no se refresco por streaming buffer de BigQuery; reintenta confirmar en unos minutos para refrescar esa tabla. Estatus=${effectiveNextStatus}.`
             : `Confirmado (${periodMonth.slice(0, 7)}): asignacionUnidades y resultados_v2 subidos (${resultadosPersistedSummary?.rowsCount ?? 0} filas resultados_v2, pago_resultado=${(resultadosPersistedSummary?.totalPagoResultado ?? 0).toFixed(6)}). Estatus=${effectiveNextStatus}.`
+          : actionInput === "publicar"
+            ? `Periodo ${periodMonth.slice(0, 7)} publicado. Correos managers: ${publishEmailsSummary?.managers.sent ?? 0}/${publishEmailsSummary?.managers.attempted ?? 0}. Correos fuerza de ventas: ${publishEmailsSummary?.salesForce.sent ?? 0}/${publishEmailsSummary?.salesForce.attempted ?? 0}.${(publishEmailsSummary?.failures.length ?? 0) > 0 ? ` Fallidos: ${publishEmailsSummary?.failures.slice(0, 3).join(" | ")}` : ""}`
           : `Periodo ${periodMonth.slice(0, 7)} actualizado a ${effectiveNextStatus}.`,
     periodMonth,
     nextStatus: effectiveNextStatus,
