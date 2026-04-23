@@ -31,6 +31,7 @@ function formatLastLogin(value: string | null) {
 export function PlatformOverviewClient({ users, kpi }: PlatformOverviewClientProps) {
   const [search, setSearch] = useState("");
   const [inviteByEmail, setInviteByEmail] = useState<Record<string, InviteStatus>>({});
+  const [exporting, setExporting] = useState(false);
 
   const filteredUsers = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -98,6 +99,35 @@ export function PlatformOverviewClient({ users, kpi }: PlatformOverviewClientPro
     }
   }
 
+  async function exportUsersExcel() {
+    setExporting(true);
+    try {
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.utils.book_new();
+
+      const rows = filteredUsers.map((user) => ({
+        Correo: user.email,
+        Nombre: user.nombre ?? "",
+        Territorio: user.territorio ?? "",
+        NumeroEmpleado: user.numeroEmpleado ?? "",
+        Activo: user.isActive ? "Si" : "No",
+        Registro: user.isRegistered ? "Registrado" : "No registrado",
+        UltimoLogin: formatLastLogin(user.lastLogin),
+      }));
+
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.json_to_sheet(rows),
+        "Detalle_usuarios",
+      );
+
+      const dateLabel = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(workbook, `detalle_usuarios_${dateLabel}.xlsx`);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -151,12 +181,22 @@ export function PlatformOverviewClient({ users, kpi }: PlatformOverviewClientPro
       <section className="rounded-2xl border border-[#dbe5f8] bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <h2 className="text-lg font-semibold text-[#0f172a]">Detalle de usuarios</h2>
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar por correo, nombre, territorio o empleado"
-            className="h-10 w-full rounded-lg border border-[#d0d5dd] px-3 text-sm text-[#0f172a] focus:border-[#2563eb] focus:outline-none focus:ring-4 focus:ring-[#dbeafe] md:w-[28rem]"
-          />
+          <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
+            <button
+              type="button"
+              onClick={exportUsersExcel}
+              disabled={exporting || filteredUsers.length === 0}
+              className="inline-flex h-10 items-center justify-center rounded-lg border border-[#bfdbfe] bg-[#eff6ff] px-4 text-sm font-semibold text-[#1d4ed8] transition hover:bg-[#dbeafe] disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {exporting ? "Exportando..." : "Exportar Excel"}
+            </button>
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Buscar por correo, nombre, territorio o empleado"
+              className="h-10 w-full rounded-lg border border-[#d0d5dd] px-3 text-sm text-[#0f172a] focus:border-[#2563eb] focus:outline-none focus:ring-4 focus:ring-[#dbeafe] md:w-[28rem]"
+            />
+          </div>
         </div>
 
         <div className="mt-4 overflow-x-auto">
