@@ -19,7 +19,7 @@ export function ExportReportButton() {
       disabled={isPreparing}
       className="no-print inline-flex items-center rounded-lg border border-[#d0d5dd] bg-white px-3 py-2 text-sm font-medium text-[#334155] transition hover:bg-[#f8fafc] disabled:cursor-not-allowed disabled:opacity-70"
     >
-      {isPreparing ? "Preparing..." : "Export Report"}
+      {isPreparing ? "Preparando..." : "Descarga en PDF"}
     </button>
   );
 }
