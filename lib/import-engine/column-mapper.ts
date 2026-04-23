@@ -64,6 +64,12 @@ const FIELD_ALIASES: Record<string, string[]> = {
     "location",
   ],
   fecha_ingreso: ["fecha_ingreso", "fecha ingreso", "ingreso", "fecha_alta"],
+  valid_since_period: [
+    "valid_since_period",
+    "valid since period",
+    "pago_desde",
+    "pago desde",
+  ],
   team_id: ["team_id", "team", "equipo", "crm_team", "id_team"],
   base_incentivos: [
     "base_incentivos",

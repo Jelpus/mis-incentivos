@@ -28,6 +28,7 @@ type ExistingSalesForceRecord = {
   correo_electronico: string | null;
   ciudad: string | null;
   fecha_ingreso: string | null;
+  valid_since_period: string | null;
   team_id: string | null;
   base_incentivos: number | null;
 };
@@ -41,6 +42,8 @@ type PreviewSalesForceBatchResult = {
   updateRows: number;
   noopRows: number;
 };
+
+const DEFAULT_VALID_SINCE_PERIOD = "2026-01-01";
 
 function cleanMappedData(mappedData: Record<string, unknown>) {
   const cleaned: Record<string, unknown> = {};
@@ -91,6 +94,7 @@ function comparableSalesForceData(data: {
   correo_electronico?: unknown;
   ciudad?: unknown;
   fecha_ingreso?: unknown;
+  valid_since_period?: unknown;
   team_id?: unknown;
   base_incentivos?: unknown;
   is_vacant?: unknown;
@@ -107,6 +111,7 @@ function comparableSalesForceData(data: {
     correo_electronico: data.correo_electronico ?? null,
     ciudad: data.ciudad ?? null,
     fecha_ingreso: data.fecha_ingreso ?? null,
+    valid_since_period: data.valid_since_period ?? null,
     team_id: data.team_id ?? null,
     base_incentivos: data.base_incentivos ?? null,
   };
@@ -208,6 +213,7 @@ export async function previewSalesForceImportBatch(
       correo_electronico,
       ciudad,
       fecha_ingreso,
+      valid_since_period,
       team_id,
       base_incentivos
     `)
@@ -248,6 +254,14 @@ export async function previewSalesForceImportBatch(
     const rawData = (row.raw_data ?? {}) as Record<string, unknown>;
     const mappedData = mapRawRowToTargetFields(rawData, mappingSnapshot);
     const cleanedData = cleanMappedData(mappedData);
+
+    if (
+      cleanedData.valid_since_period === null ||
+      cleanedData.valid_since_period === undefined ||
+      cleanedData.valid_since_period === ""
+    ) {
+      cleanedData.valid_since_period = DEFAULT_VALID_SINCE_PERIOD;
+    }
 
     const inferredVacancy = inferVacancyFromName(cleanedData.nombre_completo);
     cleanedData.is_vacant = cleanedData.is_vacant === true || inferredVacancy;
