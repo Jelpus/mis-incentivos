@@ -54,6 +54,8 @@ type SaveManagerStatusResult =
   | { ok: true; message: string }
   | { ok: false; message: string };
 
+const DEFAULT_VALID_SINCE_PERIOD = "2026-01-01";
+
 function isAdminRole(role: string | null, isActive: boolean | null): boolean {
   return isActive !== false && (role === "admin" || role === "super_admin");
 }
@@ -750,6 +752,27 @@ function parseOptionalNumber(value: FormDataEntryValue | null): number | null {
   return parsed;
 }
 
+function normalizeDateInput(value: string): string | null {
+  const raw = value.trim();
+  if (!raw) return null;
+
+  if (/^\d{4}-\d{2}$/.test(raw)) {
+    return `${raw}-01`;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return raw;
+  }
+
+  const compactMatch = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compactMatch) {
+    const [, year, month, day] = compactMatch;
+    return `${year}-${month}-${day}`;
+  }
+
+  return null;
+}
+
 function isValidEmail(value: string): boolean {
   return /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(value);
 }
@@ -780,11 +803,16 @@ export async function saveSalesForceStatusAction(
   const correo = String(formData.get("correo_electronico") ?? "").trim();
   const ciudad = String(formData.get("ciudad") ?? "").trim();
   const fechaIngreso = String(formData.get("fecha_ingreso") ?? "").trim();
+  const validSincePeriodInput = String(
+    formData.get("valid_since_period") ?? "",
+  ).trim();
   const isActiveRow = String(formData.get("is_active") ?? "") === "on";
   const isVacant = String(formData.get("is_vacant") ?? "") === "on";
 
   const noEmpleado = parseOptionalInteger(formData.get("no_empleado"));
   const baseIncentivos = parseOptionalNumber(formData.get("base_incentivos"));
+  const validSincePeriod =
+    normalizeDateInput(validSincePeriodInput) ?? DEFAULT_VALID_SINCE_PERIOD;
 
   if (mode !== "create" && mode !== "edit") {
     return {
@@ -880,6 +908,7 @@ export async function saveSalesForceStatusAction(
     correo_electronico: correo || null,
     ciudad: ciudad || null,
     fecha_ingreso: fechaIngreso || null,
+    valid_since_period: validSincePeriod,
     team_id: teamId,
     base_incentivos: baseIncentivos,
     is_active: isActiveRow,

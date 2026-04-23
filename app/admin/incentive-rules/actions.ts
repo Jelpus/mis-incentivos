@@ -1958,7 +1958,6 @@ export async function uploadTeamRulesFromExcelAction(
     source_type: string;
     created_by: string;
     rule_definition_id: string;
-    rule_definition: Record<string, unknown>;
   }> = [];
 
   for (const [teamId, rules] of rulesByTeam.entries()) {
@@ -2008,7 +2007,6 @@ export async function uploadTeamRulesFromExcelAction(
       source_type: "excel_import",
       created_by: user.id,
       rule_definition_id: definitionId,
-      rule_definition: definition,
     });
   }
 
