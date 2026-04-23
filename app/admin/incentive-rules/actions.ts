@@ -500,7 +500,7 @@ function normalizeRowsForBigQuery(params: {
         trimestre_anterior: null,
         semestre: null,
         ytd: ytdValue,
-        metric: "UNIDADES",
+        metric: "YTD",
         fuente: "B2B",
         periodo: periodMonthInput,
         meses: monthValues,
