@@ -91,26 +91,6 @@ export async function uploadSourceRankingFileAction(
     return { ok: false, message: "Admin client no disponible." };
   }
 
-  const statusPeriodValidation = await supabase
-    .from("sales_force_status")
-    .select("id", { count: "exact", head: true })
-    .eq("period_month", periodMonth)
-    .eq("is_deleted", false);
-
-  if (statusPeriodValidation.error) {
-    return {
-      ok: false,
-      message: `No se pudo validar el periodo en Status: ${statusPeriodValidation.error.message}`,
-    };
-  }
-
-  if ((statusPeriodValidation.count ?? 0) === 0) {
-    return {
-      ok: false,
-      message: "No existe informacion en sales_force_status para el periodo seleccionado.",
-    };
-  }
-
   const bucketName =
     process.env.SUPABASE_SOURCE_RANKING_BUCKET ??
     process.env.NEXT_PUBLIC_SUPABASE_SOURCE_RANKING_BUCKET ??
@@ -168,7 +148,7 @@ export async function uploadSourceRankingFileAction(
     if (statusRowsResult.error) {
       return {
         ok: false,
-        message: `No se pudo cargar status para normalizar KPI Local YTD: ${statusRowsResult.error.message}`,
+        message: `No se pudo cargar status para normalizar el archivo: ${statusRowsResult.error.message}`,
       };
     }
 

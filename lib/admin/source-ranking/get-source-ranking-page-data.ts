@@ -83,9 +83,7 @@ export async function getSourceRankingPageData(
   );
   const requestedPeriod = normalizePeriodMonthInput(periodMonthInput);
   const periodMonth =
-    requestedPeriod && availableStatusPeriods.includes(requestedPeriod)
-      ? requestedPeriod
-      : latestAvailablePeriodMonth ?? getCurrentPeriodMonth();
+    requestedPeriod ?? latestAvailablePeriodMonth ?? getCurrentPeriodMonth();
 
   let storageReady = true;
   let storageMessage: string | null = null;
@@ -143,4 +141,3 @@ export async function getSourceRankingPageData(
     },
   };
 }
-

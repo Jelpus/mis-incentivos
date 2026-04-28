@@ -610,7 +610,7 @@ function normalizeRowsForBigQuery(params: {
         trimestre: null,
         trimestre_anterior: null,
         semestre: null,
-        ytd: ytdValue,
+        ytd: readNumberFromRow(row, normalizedHeaderMap, ["billed_quantity"]) ?? 0,
         metric: "UNIDADES",
         fuente: "DF",
         periodo: periodMonthInput,

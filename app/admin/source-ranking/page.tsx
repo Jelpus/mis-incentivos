@@ -34,9 +34,6 @@ export default async function AdminSourceRankingPage({ searchParams }: PageProps
   const data = await getSourceRankingPageData(selectedPeriodInput);
 
   const periodInput = formatPeriodMonthForInput(data.periodMonth);
-  const availableStatusPeriodInputs = Array.from(
-    new Set(data.availableStatusPeriods.map((period) => formatPeriodMonthForInput(period))),
-  );
 
   return (
     <main className="min-h-screen bg-neutral-50">
@@ -47,7 +44,7 @@ export default async function AdminSourceRankingPage({ searchParams }: PageProps
             Data Source Ranking
           </h1>
           <p className="mt-2 max-w-4xl text-sm text-neutral-600">
-            Carga de fuentes base para ranking. Controlado por periodo valido de <code>sales_force_status</code>.
+            Carga de fuentes base para ranking. El admin define libremente el periodo de trabajo.
           </p>
         </header>
 
@@ -56,13 +53,12 @@ export default async function AdminSourceRankingPage({ searchParams }: PageProps
             <div>
               <h2 className="text-lg font-semibold text-neutral-950">Periodo de trabajo</h2>
               <p className="mt-1 text-sm text-neutral-600">
-                Solo se permiten periodos existentes en <code>sales_force_status</code>.
+                Este periodo aplica por igual para ambos archivos del ranking.
               </p>
             </div>
             <StatusPeriodPicker
               value={periodInput}
               paramName="period"
-              options={availableStatusPeriodInputs}
             />
           </div>
         </section>
@@ -72,4 +68,3 @@ export default async function AdminSourceRankingPage({ searchParams }: PageProps
     </main>
   );
 }
-

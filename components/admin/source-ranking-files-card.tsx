@@ -246,7 +246,7 @@ function SourceRankingFileUploadRowItem({
 
             {!isPending && !state?.ok ? (
               <p className="mt-3 text-xs text-neutral-500">
-                Tip: revisa que el archivo no supere 50MB, que el periodo exista en status y que la estructura de hojas sea valida.
+                Tip: revisa que el archivo no supere 50MB y que la estructura de hojas sea valida.
               </p>
             ) : null}
           </div>
