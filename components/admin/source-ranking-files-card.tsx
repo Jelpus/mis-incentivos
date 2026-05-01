@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition, type ChangeEvent } from "react";
-import { uploadSourceRankingFileAction } from "@/app/admin/source-ranking/actions";
+import {
+  createSourceRankingFileDownloadUrlAction,
+  uploadSourceRankingFileAction,
+} from "@/app/admin/source-ranking/actions";
 import { formatDateTimeNoTimezoneShift } from "@/lib/date-time";
 
 type SourceRankingFileRow = {
@@ -56,6 +59,7 @@ function SourceRankingFileUploadRowItem({
 }) {
   const [state, setState] = useState<UploadState>(null);
   const [isPending, startTransition] = useTransition();
+  const [isDownloading, startDownloadTransition] = useTransition();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showProgressModal, setShowProgressModal] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
@@ -76,7 +80,7 @@ function SourceRankingFileUploadRowItem({
         "Validando archivo y periodo...",
         "Subiendo archivo a storage...",
         "Normalizando ICVA + 48 hrs...",
-        "Ejecutando fuzzy match por nombre...",
+        "Cruzando nombres contra KPI Local YTD...",
         "Actualizando tablas raw y agregada...",
       ];
     }
@@ -134,6 +138,23 @@ function SourceRankingFileUploadRowItem({
     });
   }
 
+  function handleDownloadLatest() {
+    startDownloadTransition(async () => {
+      const result = await createSourceRankingFileDownloadUrlAction({
+        periodMonth: periodMonthInput,
+        fileCode: row.fileCode,
+      });
+
+      if (!result.ok) {
+        setState({ ok: false, message: result.message });
+        return;
+      }
+
+      window.open(result.url, "_blank", "noopener,noreferrer");
+      setState({ ok: true, message: `Descarga lista: ${result.fileName}`, periodMonth: periodMonthInput, fileCode: row.fileCode, uploadedPath: "" });
+    });
+  }
+
   return (
     <>
       <tr className="border-b border-neutral-100">
@@ -171,6 +192,18 @@ function SourceRankingFileUploadRowItem({
               className="inline-flex items-center justify-center rounded-xl bg-neutral-900 px-3 py-2 text-xs font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isPending ? (row.uploaded ? "Reemplazando..." : "Subiendo...") : row.uploaded ? "Reemplazar" : "Subir"}
+            </button>
+            <button
+              type="button"
+              onClick={handleDownloadLatest}
+              disabled={isDownloading}
+              className="inline-flex items-center justify-center rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isDownloading
+                ? "Preparando descarga..."
+                : row.uploaded
+                  ? "Descargar ultimo"
+                  : "Descargar plantilla previa"}
             </button>
             {state ? (
               <p className={`text-xs ${state.ok ? "text-emerald-700" : "text-red-700"}`}>
@@ -262,8 +295,8 @@ export function SourceRankingFilesCard({ periodMonthInput, sourceFiles }: Props)
       <div>
         <h2 className="text-xl font-semibold text-neutral-950">Archivos requeridos</h2>
         <p className="mt-2 max-w-4xl text-sm leading-6 text-neutral-600">
-          Carga los dos insumos base para ranking del periodo. Esta etapa solo guarda los archivos y su metadata;
-          la normalizacion y consolidacion en BigQuery se agregan en el siguiente paso.
+          Carga los dos insumos base para ranking del periodo. KPI Local YTD define las rutas del cierre
+          usando STATUS.NOMBRE y STATUS.TERRITORIO; ICVA + 48 hrs se cruza contra ese KPI por nombre.
         </p>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3">

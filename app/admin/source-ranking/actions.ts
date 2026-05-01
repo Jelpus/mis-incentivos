@@ -16,6 +16,7 @@ import {
 } from "@/lib/admin/source-ranking/normalize-kpi-local-ytd";
 import {
   aggregateIcva48hrsRawRows,
+  type IcvaKpiReferenceRow,
   normalizeIcva48hrsRaw,
 } from "@/lib/admin/source-ranking/normalize-icva-48hrs";
 
@@ -31,6 +32,17 @@ export type UploadSourceRankingFileResult =
     normalizedRows?: number;
     aggregatedRows?: number;
     normalizationSummary?: string;
+  }
+  | {
+    ok: false;
+    message: string;
+  };
+
+export type DownloadSourceRankingFileResult =
+  | {
+    ok: true;
+    url: string;
+    fileName: string;
   }
   | {
     ok: false;
@@ -137,7 +149,7 @@ export async function uploadSourceRankingFileAction(
     | null = null;
 
   if (fileCodeInput === "kpi_local_ytd" || fileCodeInput === "icva_48hrs") {
-    const statusRowsResult = await supabase
+    let statusRowsResult = await supabase
       .from("sales_force_status")
       .select("territorio_individual, nombre_completo, no_empleado")
       .eq("period_month", periodMonth)
@@ -150,6 +162,41 @@ export async function uploadSourceRankingFileAction(
         ok: false,
         message: `No se pudo cargar status para normalizar el archivo: ${statusRowsResult.error.message}`,
       };
+    }
+
+    if ((statusRowsResult.data ?? []).length === 0) {
+      const latestStatusPeriodResult = await supabase
+        .from("sales_force_status")
+        .select("period_month")
+        .lte("period_month", periodMonth)
+        .eq("is_deleted", false)
+        .order("period_month", { ascending: false })
+        .limit(1);
+
+      if (latestStatusPeriodResult.error) {
+        return {
+          ok: false,
+          message: `No se pudo buscar ultimo status disponible: ${latestStatusPeriodResult.error.message}`,
+        };
+      }
+
+      const fallbackPeriod = String(latestStatusPeriodResult.data?.[0]?.period_month ?? "").trim();
+      if (fallbackPeriod) {
+        statusRowsResult = await supabase
+          .from("sales_force_status")
+          .select("territorio_individual, nombre_completo, no_empleado")
+          .eq("period_month", fallbackPeriod)
+          .eq("is_deleted", false)
+          .eq("is_active", true)
+          .eq("is_vacant", false);
+
+        if (statusRowsResult.error) {
+          return {
+            ok: false,
+            message: `No se pudo cargar status fallback para normalizar el archivo: ${statusRowsResult.error.message}`,
+          };
+        }
+      }
     }
 
     try {
@@ -166,10 +213,39 @@ export async function uploadSourceRankingFileAction(
           salesForceRows,
         });
       } else {
+        const kpiReferenceResult = await supabase
+          .from("ranking_kpi_local_ytd_raw")
+          .select("territory_source, status_nombre_source, matched_empleado, matched_nombre")
+          .eq("period_month", periodMonth);
+
+        if (kpiReferenceResult.error) {
+          if (isMissingRelationError(kpiReferenceResult.error)) {
+            const tableName = getMissingRelationName(kpiReferenceResult.error) ?? "ranking_kpi_local_ytd_raw";
+            return {
+              ok: false,
+              message: `Para cargar ICVA primero debe existir ${tableName}. Ejecuta docs/source-ranking-kpi-local-ytd-raw-schema.sql y carga KPI Local YTD.`,
+            };
+          }
+
+          return {
+            ok: false,
+            message: `No se pudo cargar KPI Local YTD como referencia para ICVA: ${kpiReferenceResult.error.message}`,
+          };
+        }
+
+        const kpiReferenceRows = (kpiReferenceResult.data ?? []) as IcvaKpiReferenceRow[];
+        if (kpiReferenceRows.length === 0) {
+          return {
+            ok: false,
+            message: "Carga primero KPI Local YTD para este periodo. ICVA necesita STATUS.NOMBRE y STATUS.TERRITORIO de KPI para asignar rutas.",
+          };
+        }
+
         icvaNormalization = normalizeIcva48hrsRaw({
           fileBuffer,
           periodMonth,
           salesForceRows,
+          kpiReferenceRows,
         });
       }
     } catch (error) {
@@ -402,24 +478,38 @@ export async function uploadSourceRankingFileAction(
     }
 
     const unmatchedFilePreviewList = icvaNormalization.summary.unmatchedFileNames;
-    const statusWithoutDataPreviewList = icvaNormalization.summary.statusWithoutDataNames;
+    const statusFallbackPreviewList = icvaNormalization.summary.statusFallbackMatchedNames;
+    const statusFallbackHintPreviewList = icvaNormalization.summary.statusFallbackKpiCandidateHints;
+    const referenceWithoutDataPreviewList = icvaNormalization.summary.kpiReferenceWithoutIcvaNames;
     const unmatchedFilePreview = unmatchedFilePreviewList.join(", ");
-    const statusWithoutDataPreview = statusWithoutDataPreviewList.join(", ");
+    const statusFallbackPreview = statusFallbackPreviewList.join(", ");
+    const statusFallbackHintPreview = statusFallbackHintPreviewList.join("; ");
+    const referenceWithoutDataPreview = referenceWithoutDataPreviewList.join(", ");
     const unmatchedFileRemaining =
       icvaNormalization.summary.unmatchedFileNames.length - unmatchedFilePreviewList.length;
-    const statusWithoutDataRemaining =
-      icvaNormalization.summary.statusWithoutDataNames.length - statusWithoutDataPreviewList.length;
+    const statusFallbackRemaining =
+      icvaNormalization.summary.statusFallbackMatchedNames.length - statusFallbackPreviewList.length;
+    const referenceWithoutDataRemaining =
+      icvaNormalization.summary.kpiReferenceWithoutIcvaNames.length - referenceWithoutDataPreviewList.length;
 
     normalizationSummary =
       `ICVA raw: ${icvaNormalization.rows.length} filas | agregado: ${aggregatedRows.length} reps | ` +
-      `match nombre: ${icvaNormalization.summary.nameMatchedRows} | sin match: ${icvaNormalization.summary.unmatchedRows}. ` +
+      `match nombre: ${icvaNormalization.summary.nameMatchedRows} ` +
+      `(KPI: ${icvaNormalization.summary.kpiMatchedRows}, status fallback: ${icvaNormalization.summary.statusFallbackMatchedRows}) | ` +
+      `sin match: ${icvaNormalization.summary.unmatchedRows}. ` +
+      (statusFallbackPreview
+        ? `Fallback status (mostrando ${statusFallbackPreviewList.length}): [${statusFallbackPreview}]${statusFallbackRemaining > 0 ? ` +${statusFallbackRemaining} mas` : ""}. `
+        : "") +
+      (statusFallbackHintPreview
+        ? `Mejor candidato KPI para fallback: [${statusFallbackHintPreview}]. `
+        : "") +
       `Sin relacion (archivo): ${icvaNormalization.summary.unmatchedFileNames.length}` +
       (unmatchedFilePreview
         ? ` (mostrando ${unmatchedFilePreviewList.length}): [${unmatchedFilePreview}]${unmatchedFileRemaining > 0 ? ` +${unmatchedFileRemaining} mas` : ""}`
         : "") +
-      `. Status sin data: ${icvaNormalization.summary.statusWithoutDataNames.length}` +
-      (statusWithoutDataPreview
-        ? ` (mostrando ${statusWithoutDataPreviewList.length}): [${statusWithoutDataPreview}]${statusWithoutDataRemaining > 0 ? ` +${statusWithoutDataRemaining} mas` : ""}`
+      `. Nombres KPI sin data ICVA: ${icvaNormalization.summary.kpiReferenceWithoutIcvaNames.length}` +
+      (referenceWithoutDataPreview
+        ? ` (mostrando ${referenceWithoutDataPreviewList.length}): [${referenceWithoutDataPreview}]${referenceWithoutDataRemaining > 0 ? ` +${referenceWithoutDataRemaining} mas` : ""}`
         : "");
   }
 
@@ -434,5 +524,104 @@ export async function uploadSourceRankingFileAction(
     normalizedRows: kpiNormalization?.rows.length ?? icvaNormalization?.rows.length,
     aggregatedRows: aggregatedRowsCount,
     normalizationSummary,
+  };
+}
+
+export async function createSourceRankingFileDownloadUrlAction(params: {
+  periodMonth: string;
+  fileCode: string;
+}): Promise<DownloadSourceRankingFileResult> {
+  const { user, role, isActive } = await getCurrentAuthContext();
+  if (!user || !isAdminRole(role, isActive)) {
+    return { ok: false, message: "No autorizado." };
+  }
+
+  const periodMonth = normalizePeriodMonthInput(params.periodMonth);
+  const fileCode = String(params.fileCode ?? "").trim().toLowerCase();
+  if (!periodMonth || !fileCode) {
+    return { ok: false, message: "Periodo o archivo invalido." };
+  }
+
+  const requiredFile = RANKING_REQUIRED_FILES.find((item) => item.fileCode === fileCode);
+  if (!requiredFile) {
+    return { ok: false, message: "Archivo no permitido para Source Ranking." };
+  }
+
+  const supabase = createAdminClient();
+  if (!supabase) {
+    return { ok: false, message: "Admin client no disponible." };
+  }
+
+  const metadataSelect = "original_file_name, storage_bucket, storage_path";
+  let metadataResult = await supabase
+    .from("ranking_source_files")
+    .select(metadataSelect)
+    .eq("period_month", periodMonth)
+    .eq("file_code", fileCode)
+    .maybeSingle<{
+      original_file_name: string | null;
+      storage_bucket: string | null;
+      storage_path: string | null;
+    }>();
+
+  if (metadataResult.error) {
+    if (isMissingRelationError(metadataResult.error)) {
+      const tableName = getMissingRelationName(metadataResult.error) ?? "ranking_source_files";
+      return {
+        ok: false,
+        message: `No existe la tabla ${tableName}. Revisa docs/source-ranking-files-schema.sql para crearla.`,
+      };
+    }
+
+    return {
+      ok: false,
+      message: `No se pudo cargar metadata del archivo: ${metadataResult.error.message}`,
+    };
+  }
+
+  if (!metadataResult.data) {
+    metadataResult = await supabase
+      .from("ranking_source_files")
+      .select(metadataSelect)
+      .eq("file_code", fileCode)
+      .order("uploaded_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{
+        original_file_name: string | null;
+        storage_bucket: string | null;
+        storage_path: string | null;
+      }>();
+
+    if (metadataResult.error) {
+      return {
+        ok: false,
+        message: `No se pudo buscar el ultimo archivo cargado: ${metadataResult.error.message}`,
+      };
+    }
+  }
+
+  const metadata = metadataResult.data;
+  const bucketName = String(metadata?.storage_bucket ?? "").trim();
+  const storagePath = String(metadata?.storage_path ?? "").trim();
+  const fileName = String(metadata?.original_file_name ?? "").trim() || `${requiredFile.fileCode}.xlsx`;
+  if (!bucketName || !storagePath) {
+    return { ok: false, message: "No hay archivo cargado para descargar." };
+  }
+
+  const signedUrlResult = await supabase.storage
+    .from(bucketName)
+    .createSignedUrl(storagePath, 60 * 10, { download: fileName });
+
+  if (signedUrlResult.error || !signedUrlResult.data?.signedUrl) {
+    return {
+      ok: false,
+      message: `No se pudo generar liga de descarga: ${signedUrlResult.error?.message ?? "sin URL"}`,
+    };
+  }
+
+  return {
+    ok: true,
+    url: signedUrlResult.data.signedUrl,
+    fileName,
   };
 }

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { formatPeriodMonthLabel } from "@/lib/admin/incentive-rules/shared";
+import { formatCoveragePercent, getCoverageBadgeClass } from "@/lib/ranking/coverage";
 
 type RankingMetric = {
   total: number;
@@ -34,7 +35,7 @@ function formatInteger(value: number) {
 }
 
 function formatPercent(value: number) {
-  return `${(value * 100).toFixed(1)}%`;
+  return formatCoveragePercent(value);
 }
 
 function MetricTile({
@@ -56,7 +57,6 @@ function MetricTile({
   threshold: number;
   badge?: string;
 }) {
-  const meetsTarget = coverage >= threshold;
   return (
     <article className="rounded-xl border border-[#d9e5fb] bg-[#f8fbff] p-4">
       <p className="text-sm font-semibold text-[#1e3a8a]">{title}</p>
@@ -70,11 +70,7 @@ function MetricTile({
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <span
-          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-            meetsTarget
-              ? "bg-emerald-100 text-emerald-700"
-              : "bg-amber-100 text-amber-800"
-          }`}
+          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getCoverageBadgeClass(coverage, threshold)}`}
         >
           Cobertura: {formatPercent(coverage)}
         </span>
@@ -105,7 +101,7 @@ export function ResumenRankingCard({
           <p className="text-sm font-semibold text-[#1e3a8a]">{title}</p>
           <p className="mt-1 text-xs text-[#667085]">
             {data.periodMonth
-              ? `Periodo: ${formatPeriodMonthLabel(data.periodMonth)}`
+              ? `YTD ${formatPeriodMonthLabel(data.periodMonth)}`
               : "Periodo no disponible"}
           </p>
         </div>

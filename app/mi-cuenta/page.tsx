@@ -104,6 +104,15 @@ type TeamMemberRow = {
   territorio_individual: string | null;
 };
 
+type RankingPeriodRow = {
+  period_month: string | null;
+};
+
+type RankingSourceFilePeriodRow = {
+  period_month: string | null;
+  file_code: string | null;
+};
+
 type MatchSource =
   | "relation:sales_force"
   | "relation:manager"
@@ -294,6 +303,89 @@ function buildContactMailto(contact: TeamContactData): string | null {
   return `mailto:${contact.email}?${queryParts.join("&")}`;
 }
 
+function normalizePeriodSet(rows: RankingPeriodRow[]): Set<string> {
+  return new Set(
+    rows
+      .map((row) => normalizePeriodMonthInput(String(row.period_month ?? "").trim()))
+      .filter((value): value is string => Boolean(value)),
+  );
+}
+
+async function getLatestAvailableRankingPeriodMonth(): Promise<string | null> {
+  const adminClient = createAdminClient();
+  if (!adminClient) return null;
+
+  const sourceFilesResult = await adminClient
+    .from("ranking_source_files")
+    .select("period_month, file_code")
+    .in("file_code", ["kpi_local_ytd", "icva_48hrs"])
+    .order("period_month", { ascending: false })
+    .limit(100);
+
+  if (!sourceFilesResult.error) {
+    const filesByPeriod = new Map<string, Set<string>>();
+    for (const row of (sourceFilesResult.data ?? []) as RankingSourceFilePeriodRow[]) {
+      const periodMonth = normalizePeriodMonthInput(String(row.period_month ?? "").trim());
+      const fileCode = String(row.file_code ?? "").trim().toLowerCase();
+      if (!periodMonth || !fileCode) continue;
+      const current = filesByPeriod.get(periodMonth) ?? new Set<string>();
+      current.add(fileCode);
+      filesByPeriod.set(periodMonth, current);
+    }
+
+    const latestCompleteSourcePeriod = Array.from(filesByPeriod.entries())
+      .filter(([, fileCodes]) => fileCodes.has("kpi_local_ytd") && fileCodes.has("icva_48hrs"))
+      .map(([periodMonth]) => periodMonth)
+      .sort((a, b) => b.localeCompare(a))[0];
+
+    if (latestCompleteSourcePeriod) return latestCompleteSourcePeriod;
+  }
+
+  const [kpiPeriodsResult, icvaPeriodsResult] = await Promise.all([
+    adminClient
+      .from("ranking_kpi_local_ytd_agg")
+      .select("period_month")
+      .order("period_month", { ascending: false })
+      .limit(24),
+    adminClient
+      .from("ranking_icva_48hrs_agg")
+      .select("period_month")
+      .order("period_month", { ascending: false })
+      .limit(24),
+  ]);
+
+  if (kpiPeriodsResult.error || icvaPeriodsResult.error) return null;
+
+  const kpiPeriods = normalizePeriodSet((kpiPeriodsResult.data ?? []) as RankingPeriodRow[]);
+  const icvaPeriods = normalizePeriodSet((icvaPeriodsResult.data ?? []) as RankingPeriodRow[]);
+
+  return Array.from(kpiPeriods)
+    .filter((periodMonth) => icvaPeriods.has(periodMonth))
+    .sort((a, b) => b.localeCompare(a))[0] ?? null;
+}
+
+async function getLatestStatusPeriodForRanking(
+  adminClient: NonNullable<ReturnType<typeof createAdminClient>>,
+  rankingPeriodMonth: string,
+): Promise<string> {
+  const normalizedRankingPeriod = normalizePeriodMonthInput(rankingPeriodMonth);
+  if (!normalizedRankingPeriod) return rankingPeriodMonth;
+
+  const latestStatusPeriodResult = await adminClient
+    .from("sales_force_status")
+    .select("period_month")
+    .lte("period_month", normalizedRankingPeriod)
+    .eq("is_deleted", false)
+    .order("period_month", { ascending: false })
+    .limit(1);
+
+  if (latestStatusPeriodResult.error) return normalizedRankingPeriod;
+
+  return normalizePeriodMonthInput(
+    String(latestStatusPeriodResult.data?.[0]?.period_month ?? "").trim(),
+  ) ?? normalizedRankingPeriod;
+}
+
 function toPositiveNumber(value: number | null | undefined) {
   const numeric = Number(value ?? 0);
   return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
@@ -446,11 +538,12 @@ async function getRankingSummaryCardData(params: {
   if (params.role === "manager") {
     const managerTerritorio = String(params.managerTerritorio ?? "").trim();
     const managerTeamId = String(params.managerTeamId ?? "").trim();
+    const statusPeriod = await getLatestStatusPeriodForRanking(adminClient, normalizedPeriod);
 
     let membersQuery = adminClient
       .from("sales_force_status")
       .select("no_empleado, territorio_individual")
-      .eq("period_month", normalizedPeriod)
+      .eq("period_month", statusPeriod)
       .eq("is_deleted", false)
       .eq("is_active", true);
 
@@ -525,7 +618,10 @@ async function getRankingSummaryCardData(params: {
       icvaRows = byTerritorios.icvaRows;
       message = `Agregado del equipo (${memberTerritorios.length} territorios).`;
     } else {
-      message = `Agregado del equipo (${memberEmployees.length} integrantes).`;
+      message =
+        statusPeriod === normalizedPeriod
+          ? `Agregado del equipo (${memberEmployees.length} integrantes).`
+          : `Agregado del equipo (${memberEmployees.length} integrantes, estructura status ${formatPeriodMonthLabel(statusPeriod)}).`;
     }
   } else {
     if (!params.empleado) {
@@ -648,11 +744,12 @@ async function getRankingScatterGraphData(params: {
 
   const managerTerritory = String(params.managerTerritory ?? "").trim();
   const managerTeamId = String(params.managerTeamId ?? "").trim();
+  const statusPeriod = await getLatestStatusPeriodForRanking(adminClient, normalizedPeriod);
 
   let membersQuery = adminClient
     .from("sales_force_status")
     .select("territorio_individual")
-    .eq("period_month", normalizedPeriod)
+    .eq("period_month", statusPeriod)
     .eq("is_deleted", false)
     .eq("is_active", true);
 
@@ -1511,12 +1608,14 @@ export default async function MiCuentaPage() {
       : accountRole === "manager"
         ? (managerMatch?.row?.no_empleado_manager ?? null)
         : null;
-  const rankingPeriodMonth =
+  const profileRankingPeriodMonth =
     accountRole === "user"
       ? (userMatch?.row?.period_month ?? null)
       : accountRole === "manager"
         ? (managerMatch?.row?.period_month ?? null)
         : null;
+  const latestRankingPeriodMonth = await getLatestAvailableRankingPeriodMonth();
+  const rankingPeriodMonth = latestRankingPeriodMonth ?? profileRankingPeriodMonth;
   const rankingSummaryData = await getRankingSummaryCardData({
     role: accountRole,
     empleado: rankingEmpleado,
