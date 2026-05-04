@@ -288,7 +288,34 @@ export function PerfilRankingClient({ data, initialTab = "concursos" }: Props) {
 
   return (
     <div className="mt-6 grid gap-4">
-      <div className="rounded-xl border border-[#e3ebfa] bg-[#f8fbff] p-4 sm:p-5">
+      
+
+      {data.message ? (
+        <div className="rounded-xl border border-[#fecdca] bg-[#fff6f5] p-4 text-sm text-[#7a271a]">
+          {data.message}
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap gap-2">
+        {TABS.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveTab(tab.key)}
+            className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${
+              activeTab === tab.key
+                ? "border-[#002b7f] bg-[#002b7f] text-white"
+                : "border-[#d0d5dd] bg-white text-[#334155] hover:bg-[#f8fafc]"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "performance" ? (
+
+        <div className="rounded-xl border border-[#e3ebfa] bg-[#f8fbff] p-4 sm:p-5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#445f95]">Periodo analizado</p>
@@ -317,31 +344,11 @@ export function PerfilRankingClient({ data, initialTab = "concursos" }: Props) {
           ) : null}
         </div>
       </div>
-
-      {data.message ? (
-        <div className="rounded-xl border border-[#fecdca] bg-[#fff6f5] p-4 text-sm text-[#7a271a]">
-          {data.message}
-        </div>
       ) : null}
 
-      <div className="flex flex-wrap gap-2">
-        {TABS.map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            onClick={() => setActiveTab(tab.key)}
-            className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${
-              activeTab === tab.key
-                ? "border-[#002b7f] bg-[#002b7f] text-white"
-                : "border-[#d0d5dd] bg-white text-[#334155] hover:bg-[#f8fafc]"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
       {activeTab === "performance" ? (
+
+
         <div className="rounded-xl border border-[#e3ebfa] bg-white p-4">
           <div className="grid gap-3 md:grid-cols-2">
             <input
