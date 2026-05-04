@@ -6,6 +6,7 @@ create table if not exists public.ranking_contests (
   payment_date date null,
   coverage_period_start date null,
   coverage_period_end date null,
+  order_value numeric null,
   is_active boolean not null default true,
   updated_by uuid null,
   created_at timestamptz not null default now(),
@@ -19,6 +20,9 @@ create table if not exists public.ranking_contests (
 
 alter table public.ranking_contests
   add column if not exists participation_scope text not null default 'ranking_groups';
+
+alter table public.ranking_contests
+  add column if not exists order_value numeric null;
 
 do $$
 begin

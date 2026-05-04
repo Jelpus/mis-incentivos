@@ -8,6 +8,8 @@ import {
   getRankingContestsData,
   type RankingContestsData,
 } from "@/lib/admin/reglas-ranking/get-ranking-contests-data";
+import { getRankingContestData } from "@/lib/ranking-contests/getRankingContestData";
+import type { RankingContestData } from "@/lib/ranking-contests/types";
 
 type PeriodRow = {
   period_month: string | null;
@@ -83,6 +85,7 @@ export type RankingPerformanceRow = {
   documentacion48h: RankingMetricDetail;
   metCount: number;
   averageCoverage: number;
+  meet: boolean;
 };
 
 export type PerfilRankingData = {
@@ -93,6 +96,7 @@ export type PerfilRankingData = {
   periodLabel: string;
   availablePeriods: string[];
   contestsData: RankingContestsData;
+  contestRankingData: RankingContestData;
   performanceRows: RankingPerformanceRow[];
   message: string | null;
   canAudit: boolean;
@@ -464,6 +468,7 @@ function buildPerformanceRows(kpiRows: KpiAggRow[], icvaRows: IcvaAggRow[]): Ran
         },
         metCount,
         averageCoverage: (callPlanCoverage + visualCoverage + docCoverage) / 3,
+        meet: metCount === 3,
       };
     })
     .sort((a, b) => {
@@ -480,9 +485,10 @@ export async function getPerfilRankingData(params: {
 }): Promise<PerfilRankingData> {
   const scope = resolveScope(params.role);
   const canAudit = params.role === "admin" || params.role === "super_admin";
-  const [contestsData, availablePeriods] = await Promise.all([
+  const [contestsData, availablePeriods, contestRankingData] = await Promise.all([
     getRankingContestsData(),
     getAvailableRankingPeriods(),
+    getRankingContestData(),
   ]);
 
   const requestedPeriod = normalizePeriodMonthInput(params.requestedPeriod ?? "");
@@ -499,6 +505,7 @@ export async function getPerfilRankingData(params: {
       periodLabel: "Periodo no disponible",
       availablePeriods,
       contestsData,
+      contestRankingData,
       performanceRows: [],
       message: "No hay periodos completos de source-ranking disponibles.",
       canAudit,
@@ -544,6 +551,7 @@ export async function getPerfilRankingData(params: {
       periodLabel: formatPeriodMonthLabel(periodMonth),
       availablePeriods,
       contestsData,
+      contestRankingData,
       performanceRows: [],
       message: "No hay relacion operativa para construir el ranking de este perfil.",
       canAudit,
@@ -566,6 +574,7 @@ export async function getPerfilRankingData(params: {
     periodLabel: formatPeriodMonthLabel(periodMonth),
     availablePeriods,
     contestsData,
+    contestRankingData,
     performanceRows,
     message: error,
     canAudit,

@@ -430,9 +430,11 @@ export async function upsertRankingContestAction(
   const paymentDateRaw = normalizeText(formData.get("payment_date"));
   const coverageStartRaw = normalizeText(formData.get("coverage_period_start"));
   const coverageEndRaw = normalizeText(formData.get("coverage_period_end"));
+  const orderValueRaw = normalizeText(formData.get("order_value"));
   const paymentDate = normalizePeriodInput(paymentDateRaw);
   const coverageStart = normalizePeriodInput(coverageStartRaw);
   const coverageEnd = normalizePeriodInput(coverageEndRaw);
+  const orderValue = parseOptionalNumber(orderValueRaw);
   const isActiveContest = parseBooleanCheckbox(formData.get("is_active"));
 
   const componentNames = formData.getAll("component_name[]").map((item) => normalizeText(item));
@@ -467,6 +469,9 @@ export async function upsertRankingContestAction(
   }
   if (coverageStart && coverageEnd && coverageStart > coverageEnd) {
     return { ok: false, message: "Periodo cobertura: inicio no puede ser mayor que fin." };
+  }
+  if (orderValueRaw && orderValue === null) {
+    return { ok: false, message: "Orden invalido. Usa un valor numerico." };
   }
 
   const components: Array<{
@@ -584,6 +589,7 @@ export async function upsertRankingContestAction(
     payment_date: paymentDate,
     coverage_period_start: coverageStart,
     coverage_period_end: coverageEnd,
+    order_value: orderValue,
     is_active: isActiveContest,
     updated_by: user.id,
   };

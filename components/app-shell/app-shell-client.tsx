@@ -271,7 +271,10 @@ function getNavGroups(role: ProfileRole | null): NavGroup[] {
   return [
     {
       title: "Cuenta",
-      items: [{ href: "/perfil", label: "Mi perfil", icon: IconUser }],
+      items: [
+        { href: "/mi-cuenta", label: "Mi cuenta", icon: IconUser },
+        { href: "/perfil", label: "Mi perfil", icon: IconUser }
+      ],
     },
     {
       title: "Incentivos",

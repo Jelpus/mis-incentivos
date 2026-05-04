@@ -5,12 +5,14 @@ import type { PerfilRankingData, RankingMetricDetail, RankingPerformanceRow } fr
 import type { RankingContestRow } from "@/lib/admin/reglas-ranking/get-ranking-contests-data";
 import { formatPeriodMonthLabel } from "@/lib/admin/incentive-rules/shared";
 import { formatCoveragePercent, getCoverageBadgeClass } from "@/lib/ranking/coverage";
+import { RankingConcurso } from "@/components/ranking/RankingConcurso";
 
 type TabKey = "concursos" | "performance" | "ranking";
 type MetricKey = "callPlanAdherence" | "ayudasVisuales" | "documentacion48h";
 
 type Props = {
   data: PerfilRankingData;
+  initialTab?: TabKey;
 };
 
 const TABS: Array<{ key: TabKey; label: string }> = [
@@ -238,7 +240,10 @@ function PerformanceTable({
           </thead>
           <tbody className="divide-y divide-[#edf2fb] bg-white">
             {rows.map((row) => (
-              <tr key={row.id} className="hover:bg-[#f8fbff]">
+              <tr
+                key={row.id}
+                className={`border-l-4 hover:bg-[#f8fbff] ${row.meet ? "border-green-500" : "border-red-500"}`}
+              >
                 <td className="px-4 py-3 font-semibold text-[#1e3a8a]">{row.nombre}</td>
                 <td className="px-4 py-3 text-[#334155]">{row.territorio}</td>
                 <td className="px-4 py-3">
@@ -260,20 +265,8 @@ function PerformanceTable({
   );
 }
 
-function RankingInDevelopment() {
-  return (
-    <div className="rounded-xl border border-dashed border-[#d8e3f8] bg-[#f8fbff] p-8 text-center">
-      <p className="text-base font-semibold text-[#1e3a8a]">Ranking en desarrollo</p>
-      <p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-[#667085]">
-        La conformacion final del ranking usa reglas y agrupaciones distintas a la tabla de performance.
-        Esta vista quedara disponible cuando exista el calculo oficial de posiciones por concurso.
-      </p>
-    </div>
-  );
-}
-
-export function PerfilRankingClient({ data }: Props) {
-  const [activeTab, setActiveTab] = useState<TabKey>("concursos");
+export function PerfilRankingClient({ data, initialTab = "concursos" }: Props) {
+  const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const [query, setQuery] = useState("");
   const [territoryFilter, setTerritoryFilter] = useState("");
 
@@ -348,7 +341,7 @@ export function PerfilRankingClient({ data }: Props) {
         ))}
       </div>
 
-      {activeTab !== "concursos" ? (
+      {activeTab === "performance" ? (
         <div className="rounded-xl border border-[#e3ebfa] bg-white p-4">
           <div className="grid gap-3 md:grid-cols-2">
             <input
@@ -378,7 +371,7 @@ export function PerfilRankingClient({ data }: Props) {
       ) : activeTab === "performance" ? (
         <PerformanceTable rows={filteredRows} periodMonth={data.periodMonth} canAudit={data.canAudit} />
       ) : (
-        <RankingInDevelopment />
+        <RankingConcurso data={data.contestRankingData} />
       )}
     </div>
   );

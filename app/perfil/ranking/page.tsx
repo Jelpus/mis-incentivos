@@ -6,6 +6,7 @@ import { PerfilRankingClient } from "@/components/profile/perfil-ranking-client"
 type RankingPageProps = {
   searchParams?: Promise<{
     period?: string;
+    tab?: string;
   }>;
 };
 
@@ -18,6 +19,7 @@ export default async function PerfilRankingPage({ searchParams }: RankingPagePro
   }
 
   const params = searchParams ? await searchParams : {};
+  const initialTab = params?.tab === "performance" || params?.tab === "ranking" ? params.tab : "concursos";
   const data = await getPerfilRankingData({
     role,
     profileUserId: effectiveUserId ?? user.id,
@@ -37,7 +39,7 @@ export default async function PerfilRankingPage({ searchParams }: RankingPagePro
           Concursos, performance y ranking con alcance segun rol.
         </p>
 
-        <PerfilRankingClient data={data} />
+        <PerfilRankingClient data={data} initialTab={initialTab} />
       </div>
     </section>
   );

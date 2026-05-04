@@ -33,6 +33,7 @@ type ContestFormValues = {
   paymentDate: string;
   coverageStart: string;
   coverageEnd: string;
+  orderValue: string;
   isActive: boolean;
   components: ComponentFormValues[];
   prizes: PrizeFormValues[];
@@ -64,6 +65,7 @@ const EMPTY_CONTEST_FORM: ContestFormValues = {
   paymentDate: "",
   coverageStart: "",
   coverageEnd: "",
+  orderValue: "",
   isActive: true,
   components: [emptyComponent()],
   prizes: [emptyPrize()],
@@ -85,6 +87,7 @@ function mapContest(c: RankingContestRow): ContestFormValues {
     paymentDate: c.paymentDate,
     coverageStart: c.coveragePeriodStart,
     coverageEnd: c.coveragePeriodEnd,
+    orderValue: c.orderValue,
     isActive: c.isActive,
     components: c.components.length > 0 ? c.components.map(mapComponent) : [emptyComponent()],
     prizes: c.prizes.length > 0 ? c.prizes.map(mapPrize) : [emptyPrize()],
@@ -604,7 +607,7 @@ function ContestForm({
           Cobertura y pago
         </SectionLabel>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <div>
             <FieldLabel>Inicio cobertura</FieldLabel>
             <input
@@ -632,6 +635,18 @@ function ContestForm({
               type="month"
               value={values.paymentDate}
               onChange={(e) => updateField("paymentDate", e.target.value)}
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <FieldLabel>Orden</FieldLabel>
+            <input
+              name="order_value"
+              type="number"
+              step="0.01"
+              value={values.orderValue}
+              onChange={(e) => updateField("orderValue", e.target.value)}
+              placeholder="0"
               className={inputCls}
             />
           </div>
@@ -706,8 +721,12 @@ function ContestDetails({ contest }: { contest: RankingContestRow }) {
   return (
     <div className="mt-4 space-y-5">
       {/* Meta grid */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {[
+          {
+            label: "Orden",
+            value: <span className="text-xs font-medium text-neutral-700">{contest.orderValue || "—"}</span>,
+          },
           {
             label: "Alcance",
             value: <ScopeChip scope={contest.scope} />,
