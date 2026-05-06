@@ -59,7 +59,7 @@ export function ContestRankingTable({ rows }: { rows: ContestRankingRow[] }) {
               <td className="px-4 py-3 text-right font-semibold text-[#002b7f]">{formatPoints(row.totalPoints)}</td>
               <td className="px-4 py-3 text-right">
                 <Link
-                  href={`/perfil/ranking/detalle?contestId=${encodeURIComponent(row.contestId)}&participantId=${encodeURIComponent(row.participantId)}`}
+                  href={`/perfil/ranking/detalle?contestId=${encodeURIComponent(row.contestId)}&participantId=${encodeURIComponent(row.participantId)}${row.rank ? `&rank=${encodeURIComponent(row.rank)}` : ""}`}
                   className="rounded-lg border border-[#c8d7f2] bg-white px-2.5 py-1 text-xs font-semibold text-[#1e3a8a] hover:bg-[#eef5ff]"
                 >
                   Ver

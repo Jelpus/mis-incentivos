@@ -101,7 +101,7 @@ export function calculateCoveragePoints(params: {
       teamId,
       productName,
     });
-    const weight = complement?.puntosRankingLvu ?? 0;
+    const weight = complement?.puntosRankingLvu ?? complement?.prodWeight ?? toNumber(params.result.prod_weight);
     return {
       period: String(params.result.periodo ?? "").trim(),
       teamId,
@@ -110,7 +110,7 @@ export function calculateCoveragePoints(params: {
       cappedCoverage,
       weight,
       formula: "lvu",
-      points: complement ? cappedCoverage * weight * 100 : 0,
+      points: cappedCoverage * weight * 100,
       missingComplement: !complement,
     };
   }

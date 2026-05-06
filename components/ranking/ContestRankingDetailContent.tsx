@@ -148,7 +148,7 @@ export function ContestRankingDetailContent({ row }: { row: ContestRankingRow })
                         </td>
                         <td className="px-3 py-2 font-semibold text-[#475467]">{detail.formula}</td>
                         <td className="px-3 py-2 text-right text-[#334155]">{formatPercent(detail.cappedCoverage)}</td>
-                        <td className="px-3 py-2 text-right text-[#334155]">{formatNumber(detail.weight)}</td>
+                        <td className="px-3 py-2 text-right text-[#334155]">{formatPercent(detail.weight)}</td>
                         <td className="px-3 py-2 text-right font-semibold text-[#002b7f]">{formatNumber(detail.points)}</td>
                       </tr>
                     ))}
