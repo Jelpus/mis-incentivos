@@ -121,6 +121,13 @@ export function RankingConcurso({ data }: { data: RankingContestData }) {
         </div>
       </div>
 
+      {selectedContest?.notes ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-amber-800">Nota del concurso</p>
+          <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-amber-900">{selectedContest.notes}</p>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
         {[
           { key: "qualified" as const, label: "Calificados" },

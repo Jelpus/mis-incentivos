@@ -22,6 +22,7 @@ export type RankingContest = {
   paymentDate: string | null;
   coveragePeriodStart: string | null;
   coveragePeriodEnd: string | null;
+  notes: string | null;
   isActive: boolean;
   components: RankingContestComponent[];
 };

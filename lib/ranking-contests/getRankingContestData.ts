@@ -75,6 +75,7 @@ async function getContestDefinitions(params?: {
         paymentDate: normalizeMonth(contest.paymentDate),
         coveragePeriodStart: normalizeMonth(contest.coveragePeriodStart),
         coveragePeriodEnd: normalizeMonth(contest.coveragePeriodEnd),
+        notes: contest.notes || null,
         isActive: contest.isActive,
         components: contest.components
           .filter((component) => component.isActive)
