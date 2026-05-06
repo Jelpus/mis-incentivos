@@ -168,7 +168,8 @@ export async function getRankingParticipationData(): Promise<RankingParticipatio
         isActive: row.is_active !== false,
       };
     })
-    .filter((row): row is RankingGroupRow => Boolean(row));
+    .filter((row): row is RankingGroupRow => Boolean(row && row.isActive));
+  const activeGroupIds = new Set(groups.map((group) => group.id));
 
   const participantsResult = await supabase
     .from("ranking_contest_participants")
@@ -192,6 +193,7 @@ export async function getRankingParticipationData(): Promise<RankingParticipatio
     const contestId = String(row.contest_id ?? "").trim();
     const groupId = String(row.ranking_group_id ?? "").trim();
     if (!contestId || !groupId) continue;
+    if (!activeGroupIds.has(groupId)) continue;
     const arr = participantMap.get(contestId) ?? [];
     arr.push(groupId);
     participantMap.set(contestId, arr);

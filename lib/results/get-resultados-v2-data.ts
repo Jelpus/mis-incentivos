@@ -170,14 +170,14 @@ function toPeriodMonthDate(periodCode: string | null | undefined): string | null
   return `${value.slice(0, 4)}-${value.slice(4, 6)}-01`;
 }
 
-async function getLatestFinalCalculationPeriodCode(): Promise<string | null> {
+async function getLatestVisibleCalculationPeriodCode(): Promise<string | null> {
   const adminClient = createAdminClient();
   if (!adminClient) return null;
 
   const result = await adminClient
     .from("team_incentive_calculation_periods")
     .select("period_month")
-    .eq("status", "final")
+    .in("status", ["final", "publicado"])
     .order("period_month", { ascending: false })
     .limit(1)
     .maybeSingle<CalculationPeriodStatusRow>();
@@ -460,9 +460,9 @@ export async function getResultadosV2PeriodSummary(params: {
     };
   }
 
-  const latestFinalPeriodCode = await getLatestFinalCalculationPeriodCode();
-  const allowedPeriods = latestFinalPeriodCode
-    ? context.availablePeriods.filter((period) => period <= latestFinalPeriodCode)
+  const latestVisiblePeriodCode = await getLatestVisibleCalculationPeriodCode();
+  const allowedPeriods = latestVisiblePeriodCode
+    ? context.availablePeriods.filter((period) => period <= latestVisiblePeriodCode)
     : context.availablePeriods;
 
   const tableRef = `\`${projectId}.${datasetId}.${tableId}\``;
@@ -579,9 +579,9 @@ export async function getResultadosV2Data(params: {
 
   const tableRef = `\`${projectId}.${datasetId}.${tableId}\``;
   const { scope, anchor, scopeWhereSql, scopeParams, availablePeriods } = context;
-  const latestFinalPeriodCode = await getLatestFinalCalculationPeriodCode();
-  const effectiveAvailablePeriods = latestFinalPeriodCode
-    ? availablePeriods.filter((period) => period <= latestFinalPeriodCode)
+  const latestVisiblePeriodCode = await getLatestVisibleCalculationPeriodCode();
+  const effectiveAvailablePeriods = latestVisiblePeriodCode
+    ? availablePeriods.filter((period) => period <= latestVisiblePeriodCode)
     : availablePeriods;
   const defaultCandidatePeriods = filterPeriodsUpToBusinessCurrent(
     effectiveAvailablePeriods,
@@ -612,7 +612,7 @@ export async function getResultadosV2Data(params: {
       availablePeriods: effectiveAvailablePeriods,
       summary: emptySummary,
       rows: [],
-      message: "No hay periodos en estado final disponibles para este alcance.",
+      message: "No hay periodos en estado final/publicado disponibles para este alcance.",
     };
   }
 

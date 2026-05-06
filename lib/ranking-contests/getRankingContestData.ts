@@ -122,7 +122,8 @@ async function getAllowedRankingGroupsByContest(params?: {
   const groupsResult = await supabase
     .from("ranking_groups")
     .select("id, name")
-    .in("id", groupIds);
+    .in("id", groupIds)
+    .eq("is_active", true);
 
   if (groupsResult.error) return result;
 
@@ -388,9 +389,9 @@ export async function getRankingContestData(params?: {
     const allowedGroups = allowedGroupsByContest.get(contest.id);
     const contestParticipants = participants.filter((participant) => {
       if (participant.scope !== contest.scope) return false;
-      if (contest.participationScope !== "ranking_groups") return true;
-      if (!allowedGroups || allowedGroups.size === 0) return false;
-      return allowedGroups.has(normalizeGroupKey(participant.rankingGroup));
+      if (allowedGroups && allowedGroups.size > 0) return allowedGroups.has(normalizeGroupKey(participant.rankingGroup));
+      if (contest.participationScope === "ranking_groups") return false;
+      return true;
     });
 
     const targetParticipants = targetParticipantId
