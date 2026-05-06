@@ -81,6 +81,15 @@ export function calculateCoveragePoints(params: {
   const cappedCoverage = Math.min(rawCoverage, 1.8);
   const teamId = String(params.result.team_id ?? "").trim() || null;
   const productName = String(params.result.product_name ?? "").trim() || null;
+  const complement = findComplementForProduct({
+    complements: params.rankingComplementsForTeam,
+    teamId,
+    productName,
+  });
+  const isLvuContest = LVU_CONTEST_IDS.has(params.contest.id);
+  const resolvedWeight = isLvuContest
+    ? complement?.puntosRankingLvu ?? complement?.prodWeight ?? toNumber(params.result.prod_weight)
+    : complement?.prodWeight ?? toNumber(params.result.prod_weight);
 
   if (isGuarantee(params.result.garantia)) {
     return {
@@ -88,20 +97,15 @@ export function calculateCoveragePoints(params: {
       teamId,
       productName,
       rawCoverage,
-      cappedCoverage,
-      weight: 1,
+      cappedCoverage: 1,
+      weight: resolvedWeight,
       formula: "guarantee",
-      points: 100,
+      points: resolvedWeight * 100,
     };
   }
 
-  if (LVU_CONTEST_IDS.has(params.contest.id)) {
-    const complement = findComplementForProduct({
-      complements: params.rankingComplementsForTeam,
-      teamId,
-      productName,
-    });
-    const weight = complement?.puntosRankingLvu ?? complement?.prodWeight ?? toNumber(params.result.prod_weight);
+  if (isLvuContest) {
+    const weight = resolvedWeight;
     return {
       period: String(params.result.periodo ?? "").trim(),
       teamId,
@@ -115,7 +119,7 @@ export function calculateCoveragePoints(params: {
     };
   }
 
-  const weight = toNumber(params.result.prod_weight);
+  const weight = resolvedWeight;
   return {
     period: String(params.result.periodo ?? "").trim(),
     teamId,
