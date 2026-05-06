@@ -34,6 +34,7 @@ type ContestFormValues = {
   coverageStart: string;
   coverageEnd: string;
   orderValue: string;
+  notes: string;
   isActive: boolean;
   components: ComponentFormValues[];
   prizes: PrizeFormValues[];
@@ -66,6 +67,7 @@ const EMPTY_CONTEST_FORM: ContestFormValues = {
   coverageStart: "",
   coverageEnd: "",
   orderValue: "",
+  notes: "",
   isActive: true,
   components: [emptyComponent()],
   prizes: [emptyPrize()],
@@ -88,6 +90,7 @@ function mapContest(c: RankingContestRow): ContestFormValues {
     coverageStart: c.coveragePeriodStart,
     coverageEnd: c.coveragePeriodEnd,
     orderValue: c.orderValue,
+    notes: c.notes,
     isActive: c.isActive,
     components: c.components.length > 0 ? c.components.map(mapComponent) : [emptyComponent()],
     prizes: c.prizes.length > 0 ? c.prizes.map(mapPrize) : [emptyPrize()],
@@ -590,6 +593,18 @@ function ContestForm({
             </div>
           </div>
         </div>
+
+        <div>
+          <FieldLabel>Notas</FieldLabel>
+          <textarea
+            name="notes"
+            value={values.notes}
+            onChange={(e) => updateField("notes", e.target.value)}
+            rows={3}
+            placeholder="Notas internas o texto descriptivo del concurso"
+            className={`${inputCls} resize-y`}
+          />
+        </div>
       </div>
 
       {/* Divider */}
@@ -761,6 +776,13 @@ function ContestDetails({ contest }: { contest: RankingContestRow }) {
           </div>
         ))}
       </div>
+
+      {contest.notes ? (
+        <div className="rounded-xl border border-neutral-100 bg-neutral-50 px-3 py-2.5">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Notas</p>
+          <p className="whitespace-pre-wrap text-xs leading-relaxed text-neutral-700">{contest.notes}</p>
+        </div>
+      ) : null}
 
       {/* Components table */}
       <div>

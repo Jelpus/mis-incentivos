@@ -56,6 +56,7 @@ export type RankingContestRow = {
   coveragePeriodStart: string;
   coveragePeriodEnd: string;
   orderValue: string;
+  notes: string;
   isActive: boolean;
   updatedAt: string;
   components: RankingContestComponentRow[];
@@ -76,7 +77,7 @@ export async function getRankingContestsData(): Promise<RankingContestsData> {
 
   const contestsResult = await supabase
     .from("ranking_contests")
-    .select("id, contest_name, scope, participation_scope, payment_date, coverage_period_start, coverage_period_end, order_value, is_active, updated_at")
+    .select("id, contest_name, scope, participation_scope, payment_date, coverage_period_start, coverage_period_end, order_value, notes, is_active, updated_at")
     .order("order_value", { ascending: true, nullsFirst: false })
     .order("updated_at", { ascending: false });
 
@@ -101,6 +102,7 @@ export async function getRankingContestsData(): Promise<RankingContestsData> {
     coverage_period_start: string | null;
     coverage_period_end: string | null;
     order_value: number | string | null;
+    notes: string | null;
     is_active: boolean | null;
     updated_at: string | null;
   };
@@ -122,6 +124,7 @@ export async function getRankingContestsData(): Promise<RankingContestsData> {
         coveragePeriodStart: normalizeDateToMonth(row.coverage_period_start),
         coveragePeriodEnd: normalizeDateToMonth(row.coverage_period_end),
         orderValue: formatMaxTwoDecimals(row.order_value),
+        notes: String(row.notes ?? "").trim(),
         isActive: row.is_active !== false,
         updatedAt: String(row.updated_at ?? "").trim(),
       };

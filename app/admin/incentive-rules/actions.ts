@@ -2027,7 +2027,44 @@ export async function uploadTeamRulesFromExcelAction(
     };
   }
 
+  const rankingComplementRows = validParsedRows.map((row) => ({
+    period_month: periodMonth,
+    team_id: row.teamId,
+    product_name: String(row.rule.product_name ?? "").trim(),
+    ranking: String(row.rule.ranking ?? "").trim() || null,
+    puntos_ranking_lvu: parseOptionalNumber(row.rule.puntos_ranking_lvu),
+    prod_weight: parseOptionalNumber(row.rule.prod_weight),
+    source_type: "team_rules_excel_import",
+    source_file_name: file.name,
+    source_sheet_name: finalSheetName,
+    updated_by: user.id,
+    is_active: true,
+  })).filter((row) => row.team_id && row.product_name);
+
+  if (rankingComplementRows.length > 0) {
+    const complementsResult = await supabase.from("ranking_rule_complements").upsert(
+      rankingComplementRows,
+      { onConflict: "period_month,team_id,product_name" },
+    );
+
+    if (complementsResult.error) {
+      if (isMissingRelationError(complementsResult.error)) {
+        const tableName = getMissingRelationName(complementsResult.error) ?? "ranking_rule_complements";
+        return {
+          ok: false,
+          message: `Reglas importadas, pero no existe la tabla ${tableName}. Ejecuta docs/ranking-rule-complements-schema.sql.`,
+        };
+      }
+
+      return {
+        ok: false,
+        message: `Reglas importadas, pero no se pudieron sincronizar complementos ranking: ${complementsResult.error.message}`,
+      };
+    }
+  }
+
   revalidatePath("/admin/incentive-rules");
+  revalidatePath("/admin/reglas-ranking");
   revalidateTag("admin-incentive-rules", "max");
   for (const teamId of validImportedTeamIds) {
     revalidatePath(`/admin/incentive-rules/${encodeURIComponent(teamId)}`);

@@ -431,6 +431,7 @@ export async function upsertRankingContestAction(
   const coverageStartRaw = normalizeText(formData.get("coverage_period_start"));
   const coverageEndRaw = normalizeText(formData.get("coverage_period_end"));
   const orderValueRaw = normalizeText(formData.get("order_value"));
+  const notes = normalizeText(formData.get("notes"));
   const paymentDate = normalizePeriodInput(paymentDateRaw);
   const coverageStart = normalizePeriodInput(coverageStartRaw);
   const coverageEnd = normalizePeriodInput(coverageEndRaw);
@@ -590,6 +591,7 @@ export async function upsertRankingContestAction(
     coverage_period_start: coverageStart,
     coverage_period_end: coverageEnd,
     order_value: orderValue,
+    notes: notes || null,
     is_active: isActiveContest,
     updated_by: user.id,
   };
