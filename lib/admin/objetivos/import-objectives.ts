@@ -35,6 +35,11 @@ type ParsedInputIssue = {
   reason: string;
 };
 
+export type DrillDownColumnMapping = Partial<Record<
+  "ruta" | "productName" | "cuota" | "mes" | "canal" | "producto" | "metodo" | "brick" | "cuenta" | "salesCredity",
+  string
+>>;
+
 export type ParsedObjectivesInput = {
   sheetName: string;
   totalRowsRead: number;
@@ -49,6 +54,12 @@ export type ParsedObjectivesInput = {
     invalidRows: number;
     skippedByPeriod: number;
   }>;
+  columnMappingRequest?: {
+    sourceType: "drilldown";
+    headers: string[];
+    requiredFields: Array<"ruta" | "productName" | "cuota" | "mes">;
+    missingFields: Array<"ruta" | "productName" | "cuota" | "mes">;
+  };
 };
 
 export type ParsedObjectivesSource = {
@@ -446,9 +457,9 @@ export function parseObjectivesFile(params: {
 
 function resolveDrillDownColumn(headerKey: string): "ruta" | "productName" | "cuota" | "mes" | "canal" | "producto" | "metodo" | "brick" | "cuenta" | "salesCredity" | null {
   if (headerKey === "RUTA" || headerKey === "TERRITORIO_INDIVIDUAL") return "ruta";
-  if (headerKey === "PRODUCT_NAME" || headerKey === "PRODUCTO_NOMBRE") return "productName";
-  if (headerKey === "CUOTA" || headerKey === "TARGET" || headerKey === "OBJETIVO") return "cuota";
-  if (headerKey === "MES" || headerKey === "MONTH") return "mes";
+  if (headerKey === "PRODUCT_NAME" || headerKey === "PRODUCTNAME" || headerKey === "PRODUCTO_NOMBRE") return "productName";
+  if (headerKey === "CUOTA" || headerKey === "CUOTA_YTD" || headerKey === "TARGET" || headerKey === "OBJETIVO") return "cuota";
+  if (headerKey === "MES" || headerKey === "MONTH" || headerKey === "PERIODO") return "mes";
   if (headerKey === "CHANNEL" || headerKey === "CANAL") return "canal";
   if (headerKey === "PRODUCT" || headerKey === "PRODUCTO") return "producto";
   if (headerKey === "METODO" || headerKey === "METODOLOGIA" || headerKey === "METHOD" || headerKey === "METODO_") return "metodo";
@@ -463,6 +474,7 @@ export function parseDrillDownObjectivesFile(params: {
   selectedPeriodMonth: string;
   sourceFileName?: string | null;
   requestedSheetName?: string | null;
+  columnMapping?: DrillDownColumnMapping | null;
 }): ParsedObjectivesInput {
   const workbook = parseExcelBuffer(params.fileBuffer);
   const firstSheet = workbook.sheetNames[0] ?? null;
@@ -523,16 +535,28 @@ export function parseDrillDownObjectivesFile(params: {
   const headerIndex = detectedHeader.headerRowIndex;
   const headers = detectedHeader.headers;
   const columnMap = new Map<number, "ruta" | "productName" | "cuota" | "mes" | "canal" | "producto" | "metodo" | "brick" | "cuenta" | "salesCredity">();
+  const normalizedHeaderByName = new Map<string, number>();
   headers.forEach((headerValue, columnIndex) => {
+    normalizedHeaderByName.set(normalizeHeader(headerValue), columnIndex);
     const parsed = resolveDrillDownColumn(normalizeHeader(headerValue));
     if (parsed) columnMap.set(columnIndex, parsed);
   });
 
+  for (const [field, headerName] of Object.entries(params.columnMapping ?? {}) as Array<[
+    "ruta" | "productName" | "cuota" | "mes" | "canal" | "producto" | "metodo" | "brick" | "cuenta" | "salesCredity",
+    string | undefined,
+  ]>) {
+    const normalizedHeaderName = normalizeHeader(String(headerName ?? ""));
+    if (!normalizedHeaderName) continue;
+    const columnIndex = normalizedHeaderByName.get(normalizedHeaderName);
+    if (columnIndex === undefined) continue;
+    columnMap.set(columnIndex, field);
+  }
+
   const mandatoryColumns: Array<"ruta" | "productName" | "cuota" | "mes"> = ["ruta", "productName", "cuota", "mes"];
-  const hasMandatory = mandatoryColumns.every((column) =>
-    Array.from(columnMap.values()).includes(column),
-  );
-  if (!hasMandatory) {
+  const mappedFields = Array.from(columnMap.values());
+  const missingFields = mandatoryColumns.filter((column) => !mappedFields.includes(column));
+  if (missingFields.length > 0) {
     return {
       sheetName: selectedSheetName,
       totalRowsRead: matrix.length,
@@ -554,6 +578,12 @@ export function parseDrillDownObjectivesFile(params: {
         },
       ],
       sourceBreakdown: [],
+      columnMappingRequest: {
+        sourceType: "drilldown",
+        headers: headers.filter((header) => String(header ?? "").trim().length > 0),
+        requiredFields: mandatoryColumns,
+        missingFields,
+      },
     };
   }
 

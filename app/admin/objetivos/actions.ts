@@ -11,6 +11,7 @@ import {
 } from "@/lib/admin/incentive-rules/shared";
 import {
   computeObjectivesPreview,
+  type DrillDownColumnMapping,
   mergeObjectivesSources,
   parseDrillDownObjectivesFile,
   parseObjectivesFile,
@@ -97,6 +98,12 @@ export type PreviewObjetivosResult =
   | {
     ok: false;
     message: string;
+    mappingRequired?: {
+      sourceType: "drilldown";
+      headers: string[];
+      requiredFields: Array<"ruta" | "productName" | "cuota" | "mes">;
+      missingFields: Array<"ruta" | "productName" | "cuota" | "mes">;
+    };
   };
 
 export type UploadObjetivosResult =
@@ -179,13 +186,14 @@ async function uploadObjectiveSourceFile(params: {
   nextVersionNo: number;
   source: "private" | "drilldown";
   file: File;
+  fileBuffer?: Buffer;
 }): Promise<{ ok: true; file: StoredObjectiveFileMetadata } | { ok: false; message: string }> {
   const safeFileName = sanitizeUploadedFileName(params.file.name);
   const safeSourceChunk = sanitizeStoragePathChunk(params.source) || params.source;
   const targetPath =
     `${params.periodMonth.slice(0, 7)}/v${params.nextVersionNo}/` +
     `${safeSourceChunk}/${Date.now()}-${safeFileName}`;
-  const fileBuffer = Buffer.from(await params.file.arrayBuffer());
+  const fileBuffer = params.fileBuffer ?? Buffer.from(await params.file.arrayBuffer());
 
   const uploadResult = await params.supabase.storage.from(params.bucketName).upload(targetPath, fileBuffer, {
     cacheControl: "3600",
@@ -215,6 +223,7 @@ async function uploadObjectiveSourceFile(params: {
 
 async function runPreview(params: {
   formData: FormData;
+  includeFileBuffers?: boolean;
 }) {
   try {
     const periodInput = String(params.formData.get("period_month") ?? "").trim();
@@ -279,6 +288,18 @@ async function runPreview(params: {
       privateFile.arrayBuffer(),
       drillDownFile.arrayBuffer(),
     ]);
+    const drillDownColumnMapping: DrillDownColumnMapping = {
+      ruta: String(params.formData.get("drilldown_map_ruta") ?? "").trim(),
+      productName: String(params.formData.get("drilldown_map_productName") ?? "").trim(),
+      cuota: String(params.formData.get("drilldown_map_cuota") ?? "").trim(),
+      mes: String(params.formData.get("drilldown_map_mes") ?? "").trim(),
+      canal: String(params.formData.get("drilldown_map_canal") ?? "").trim(),
+      producto: String(params.formData.get("drilldown_map_producto") ?? "").trim(),
+      metodo: String(params.formData.get("drilldown_map_metodo") ?? "").trim(),
+      brick: String(params.formData.get("drilldown_map_brick") ?? "").trim(),
+      cuenta: String(params.formData.get("drilldown_map_cuenta") ?? "").trim(),
+      salesCredity: String(params.formData.get("drilldown_map_salesCredity") ?? "").trim(),
+    };
     let privateParsedInput: ReturnType<typeof parseObjectivesFile>;
     let drillDownParsedInput: ReturnType<typeof parseDrillDownObjectivesFile>;
     try {
@@ -293,6 +314,7 @@ async function runPreview(params: {
         selectedPeriodMonth: periodMonth,
         sourceFileName: drillDownFile.name,
         requestedSheetName: drillDownSheetNameInput || null,
+        columnMapping: drillDownColumnMapping,
       });
     } catch (error) {
       return {
@@ -300,9 +322,19 @@ async function runPreview(params: {
         message:
           error instanceof Error
             ? `No se pudieron leer/parsear los archivos. Detalle: ${error.message}`
-            : "No se pudieron leer/parsear los archivos.",
+        : "No se pudieron leer/parsear los archivos.",
       };
     }
+
+    if (drillDownParsedInput.columnMappingRequest) {
+      return {
+        ok: false as const,
+        message:
+          "Faltan columnas requeridas en Drill Down Cuotas. Asigna las columnas detectadas y vuelve a validar.",
+        mappingRequired: drillDownParsedInput.columnMappingRequest,
+      };
+    }
+
     const parsedInput = mergeObjectivesSources([
       {
         source: "private",
@@ -420,6 +452,8 @@ async function runPreview(params: {
         hasRuleDefinitions: computed.hasRuleDefinitions,
       },
       validRowsForInsert: computed.validRowsForInsert,
+      privateFileBuffer: params.includeFileBuffers ? Buffer.from(privateFileBuffer) : null,
+      drillDownFileBuffer: params.includeFileBuffers ? Buffer.from(drillDownFileBuffer) : null,
     };
   } catch (error) {
     return {
@@ -470,7 +504,7 @@ export async function uploadObjetivosImportAction(
     String(formData.get("allow_with_alerts") ?? "").trim().toLowerCase() === "true";
   const changeNote = String(formData.get("change_note") ?? "").trim();
 
-  const preview = await runPreview({ formData });
+  const preview = await runPreview({ formData, includeFileBuffers: true });
   if (!preview.ok) return preview;
 
   const privateFile = formData.get("private_file");
@@ -563,6 +597,7 @@ export async function uploadObjetivosImportAction(
       nextVersionNo,
       source: "private",
       file: privateFile,
+      fileBuffer: preview.privateFileBuffer ?? undefined,
     }),
     uploadObjectiveSourceFile({
       supabase,
@@ -571,6 +606,7 @@ export async function uploadObjetivosImportAction(
       nextVersionNo,
       source: "drilldown",
       file: drillDownFile,
+      fileBuffer: preview.drillDownFileBuffer ?? undefined,
     }),
   ]);
 

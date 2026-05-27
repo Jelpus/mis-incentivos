@@ -42,6 +42,12 @@ type Props = {
 };
 
 const MAX_COMBINED_FILES_SIZE_BYTES = 75 * 1024 * 1024;
+type DrillDownRequiredField = "ruta" | "productName" | "cuota" | "mes";
+type DrillDownOptionalField = "canal" | "producto" | "metodo" | "brick" | "cuenta" | "salesCredity";
+type DrillDownMappingField = DrillDownRequiredField | DrillDownOptionalField;
+
+const DRILLDOWN_REQUIRED_FIELDS: DrillDownRequiredField[] = ["ruta", "productName", "cuota", "mes"];
+const DRILLDOWN_OPTIONAL_FIELDS: DrillDownOptionalField[] = ["canal", "producto", "metodo", "brick", "cuenta", "salesCredity"];
 
 function formatDateTime(value: string | null) {
   return formatDateTimeNoTimezoneShift(value, "es-MX", "-");
@@ -73,6 +79,22 @@ function formatInvalidCodeLabel(code: string) {
   return code;
 }
 
+function formatDrillDownFieldLabel(field: DrillDownMappingField) {
+  const labels: Record<DrillDownMappingField, string> = {
+    ruta: "RUTA",
+    productName: "PRODUCT_NAME",
+    cuota: "CUOTA",
+    mes: "MES",
+    canal: "CANAL",
+    producto: "PRODUCTO",
+    metodo: "METODO",
+    brick: "BRICK",
+    cuenta: "CUENTA",
+    salesCredity: "SALES CRED",
+  };
+  return labels[field];
+}
+
 function escapeCsvValue(value: string) {
   const normalized = value.replace(/"/g, "\"\"");
   return `"${normalized}"`;
@@ -93,6 +115,19 @@ export function ObjetivosManagementCard({
   const [drillDownSheetNames, setDrillDownSheetNames] = useState<string[]>([]);
   const [selectedDrillDownSheetName, setSelectedDrillDownSheetName] = useState("");
   const [drillDownSheetError, setDrillDownSheetError] = useState<string | null>(null);
+  const [drillDownHeaders, setDrillDownHeaders] = useState<string[]>([]);
+  const [drillDownColumnMapping, setDrillDownColumnMapping] = useState<Record<DrillDownMappingField, string>>({
+    ruta: "",
+    productName: "",
+    cuota: "",
+    mes: "",
+    canal: "",
+    producto: "",
+    metodo: "",
+    brick: "",
+    cuenta: "",
+    salesCredity: "",
+  });
   const [changeNote, setChangeNote] = useState("");
   const [previewState, setPreviewState] = useState<PreviewObjetivosResult | null>(null);
   const [uploadState, setUploadState] = useState<UploadObjetivosResult | null>(null);
@@ -199,6 +234,25 @@ export function ObjetivosManagementCard({
     }
   }
 
+  async function readHeadersFromFile(file: File | null, sheetName: string) {
+    if (!file || !sheetName) return { headers: [] as string[] };
+    try {
+      const { read, utils } = await import("xlsx");
+      const fileBuffer = await file.arrayBuffer();
+      const workbook = read(fileBuffer, { type: "array" });
+      const sheet = workbook.Sheets[sheetName];
+      if (!sheet) return { headers: [] as string[] };
+      const rows = utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
+      const headerRow = rows
+        .slice(0, 10)
+        .map((row) => row.map((cell) => String(cell ?? "").trim()))
+        .sort((a, b) => b.filter(Boolean).length - a.filter(Boolean).length)[0] ?? [];
+      return { headers: headerRow.filter(Boolean) };
+    } catch {
+      return { headers: [] as string[] };
+    }
+  }
+
   async function handlePrivateFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null;
     setSelectedPrivateFile(file);
@@ -222,11 +276,20 @@ export function ObjetivosManagementCard({
     setDrillDownSheetError(null);
     setDrillDownSheetNames([]);
     setSelectedDrillDownSheetName("");
+    setDrillDownHeaders([]);
 
     const parsed = await readSheetNamesFromFile(file);
     setDrillDownSheetNames(parsed.names);
     setSelectedDrillDownSheetName(parsed.names[0] ?? "");
     setDrillDownSheetError(parsed.error);
+    const headers = await readHeadersFromFile(file, parsed.names[0] ?? "");
+    setDrillDownHeaders(headers.headers);
+  }
+
+  async function handleDrillDownSheetChange(sheetName: string) {
+    setSelectedDrillDownSheetName(sheetName);
+    const headers = await readHeadersFromFile(selectedDrillDownFile, sheetName);
+    setDrillDownHeaders(headers.headers);
   }
 
   function buildFormData(allowWithAlerts: boolean): FormData | null {
@@ -252,6 +315,9 @@ export function ObjetivosManagementCard({
     formData.append("drilldown_file", selectedDrillDownFile);
     formData.append("private_sheet_name", selectedPrivateSheetName);
     formData.append("drilldown_sheet_name", selectedDrillDownSheetName);
+    for (const [field, header] of Object.entries(drillDownColumnMapping)) {
+      if (header) formData.append(`drilldown_map_${field}`, header);
+    }
     formData.append("allow_with_alerts", allowWithAlerts ? "true" : "false");
     formData.append("change_note", changeNote);
     return formData;
@@ -264,6 +330,9 @@ export function ObjetivosManagementCard({
     startPreview(async () => {
       try {
         const result = await previewObjetivosImportAction(null, formData);
+        if (!result.ok && result.mappingRequired) {
+          setDrillDownHeaders(result.mappingRequired.headers);
+        }
         setPreviewState(result);
       } catch (error) {
         const combinedSizeBytes =
@@ -314,12 +383,24 @@ export function ObjetivosManagementCard({
           router.refresh();
         }
       } catch (error) {
+        const combinedSizeBytes =
+          (selectedPrivateFile?.size ?? 0) + (selectedDrillDownFile?.size ?? 0);
+        const combinedSizeLabel = formatFileSizeMb(combinedSizeBytes);
+        const maxSizeLabel = formatFileSizeMb(MAX_COMBINED_FILES_SIZE_BYTES);
+        const isNetworkStyleError =
+          error instanceof TypeError ||
+          String(error instanceof Error ? error.message : error)
+            .toLowerCase()
+            .includes("failed to fetch");
+
         setUploadState({
           ok: false,
           message:
-            error instanceof Error
-              ? `No se pudo guardar version: ${error.message}`
-              : "No se pudo guardar version.",
+            isNetworkStyleError
+              ? `No se pudo guardar version (request interrumpida). Tamano combinado: ${combinedSizeLabel}; limite recomendado: ${maxSizeLabel}. Intenta de nuevo; si persiste, reduce el archivo o divide la carga.`
+              : error instanceof Error
+                ? `No se pudo guardar version: ${error.message}`
+                : "No se pudo guardar version.",
         });
       }
     });
@@ -426,7 +507,7 @@ export function ObjetivosManagementCard({
             <label className="text-xs font-medium uppercase tracking-wide text-neutral-500">Hoja Drill Down Cuotas</label>
             <select
               value={selectedDrillDownSheetName}
-              onChange={(event) => setSelectedDrillDownSheetName(event.target.value)}
+              onChange={(event) => void handleDrillDownSheetChange(event.target.value)}
               disabled={drillDownSheetNames.length === 0}
               className="mt-1 h-10 w-full rounded-xl border border-neutral-300 bg-white px-3 text-sm disabled:bg-neutral-100"
             >
@@ -442,6 +523,40 @@ export function ObjetivosManagementCard({
             </select>
           </div>
         </div>
+
+        {previewState && !previewState.ok && previewState.mappingRequired ? (
+          <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+            <h3 className="text-sm font-semibold text-amber-950">Matching de columnas Drill Down</h3>
+            <p className="mt-1 text-xs text-amber-900">
+              Asigna las columnas del archivo a los campos esperados y vuelve a validar.
+            </p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              {[...DRILLDOWN_REQUIRED_FIELDS, ...DRILLDOWN_OPTIONAL_FIELDS].map((field) => (
+                <label key={field} className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+                  {formatDrillDownFieldLabel(field)}
+                  {DRILLDOWN_REQUIRED_FIELDS.includes(field as DrillDownRequiredField) ? " *" : ""}
+                  <select
+                    value={drillDownColumnMapping[field]}
+                    onChange={(event) =>
+                      setDrillDownColumnMapping((current) => ({
+                        ...current,
+                        [field]: event.target.value,
+                      }))
+                    }
+                    className="mt-1 h-10 w-full rounded-xl border border-neutral-300 bg-white px-3 text-sm normal-case tracking-normal"
+                  >
+                    <option value="">Sin asignar</option>
+                    {drillDownHeaders.map((header) => (
+                      <option key={`${field}-${header}`} value={header}>
+                        {header}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         <div className="mt-3">
           <label className="text-xs font-medium uppercase tracking-wide text-neutral-500">Nota de cambio</label>
