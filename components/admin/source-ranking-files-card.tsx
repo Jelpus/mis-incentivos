@@ -5,6 +5,7 @@ import {
   createSourceRankingFileDownloadUrlAction,
   uploadSourceRankingFileAction,
 } from "@/app/admin/source-ranking/actions";
+import { formatPeriodMonthLabel } from "@/lib/admin/incentive-rules/shared";
 import { formatDateTimeNoTimezoneShift } from "@/lib/date-time";
 
 type SourceRankingFileRow = {
@@ -14,6 +15,7 @@ type SourceRankingFileRow = {
   uploaded: boolean;
   uploadedAt: string | null;
   originalFileName: string | null;
+  periodMonth: string | null;
 };
 
 type SourceRankingFilesState = {
@@ -26,7 +28,6 @@ type SourceRankingFilesState = {
 };
 
 type Props = {
-  periodMonthInput: string; // YYYY-MM
   sourceFiles: SourceRankingFilesState;
 };
 
@@ -50,13 +51,7 @@ function formatDateTime(value: string | null) {
   return formatDateTimeNoTimezoneShift(value, "es-MX", "-");
 }
 
-function SourceRankingFileUploadRowItem({
-  periodMonthInput,
-  row,
-}: {
-  periodMonthInput: string;
-  row: SourceRankingFileRow;
-}) {
+function SourceRankingFileUploadRowItem({ row }: { row: SourceRankingFileRow }) {
   const [state, setState] = useState<UploadState>(null);
   const [isPending, startTransition] = useTransition();
   const [isDownloading, startDownloadTransition] = useTransition();
@@ -67,7 +62,7 @@ function SourceRankingFileUploadRowItem({
   const steps = useMemo(() => {
     if (row.fileCode === "kpi_local_ytd") {
       return [
-        "Validando archivo y periodo...",
+        "Validando archivo...",
         "Subiendo archivo a storage...",
         "Normalizando BASE VISITAS YTD...",
         "Aplicando fuzzy match por nombre y fallback por territorio...",
@@ -77,18 +72,18 @@ function SourceRankingFileUploadRowItem({
 
     if (row.fileCode === "icva_48hrs") {
       return [
-        "Validando archivo y periodo...",
+        "Validando archivo...",
         "Subiendo archivo a storage...",
         "Normalizando ICVA + 48 hrs...",
-        "Cruzando nombres contra KPI Local YTD...",
+        "Cruzando empleado, territorio y nombre...",
         "Actualizando tablas raw y agregada...",
       ];
     }
 
     return [
-      "Validando archivo y periodo...",
+      "Validando archivo...",
       "Subiendo archivo a storage...",
-      "Actualizando metadata del periodo...",
+      "Actualizando metadata...",
     ];
   }, [row.fileCode]);
 
@@ -115,7 +110,6 @@ function SourceRankingFileUploadRowItem({
     }
 
     const formData = new FormData();
-    formData.append("period_month", periodMonthInput);
     formData.append("file_code", row.fileCode);
     formData.append("display_name", row.displayName);
     formData.append("file", selectedFile);
@@ -141,7 +135,6 @@ function SourceRankingFileUploadRowItem({
   function handleDownloadLatest() {
     startDownloadTransition(async () => {
       const result = await createSourceRankingFileDownloadUrlAction({
-        periodMonth: periodMonthInput,
         fileCode: row.fileCode,
       });
 
@@ -151,7 +144,13 @@ function SourceRankingFileUploadRowItem({
       }
 
       window.open(result.url, "_blank", "noopener,noreferrer");
-      setState({ ok: true, message: `Descarga lista: ${result.fileName}`, periodMonth: periodMonthInput, fileCode: row.fileCode, uploadedPath: "" });
+      setState({
+        ok: true,
+        message: `Descarga lista: ${result.fileName}`,
+        periodMonth: row.periodMonth ?? "",
+        fileCode: row.fileCode,
+        uploadedPath: "",
+      });
     });
   }
 
@@ -170,6 +169,9 @@ function SourceRankingFileUploadRowItem({
               </span>
               <p className="mt-2 truncate text-xs font-medium text-neutral-900">{row.originalFileName}</p>
               <p className="text-xs text-neutral-500">{formatDateTime(row.uploadedAt)}</p>
+              {row.periodMonth ? (
+                <p className="text-xs text-neutral-500">Periodo: {formatPeriodMonthLabel(row.periodMonth)}</p>
+              ) : null}
             </div>
           ) : (
             <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
@@ -250,7 +252,7 @@ function SourceRankingFileUploadRowItem({
                             : "border-neutral-300 bg-white text-neutral-500"
                       }`}
                     >
-                      {isDone ? "✓" : isActive ? "…" : index + 1}
+                      {isDone ? "OK" : isActive ? "..." : index + 1}
                     </span>
                     <p className={`${isDone ? "text-emerald-800" : isActive ? "text-blue-800" : "text-neutral-600"}`}>
                       {step}
@@ -289,14 +291,14 @@ function SourceRankingFileUploadRowItem({
   );
 }
 
-export function SourceRankingFilesCard({ periodMonthInput, sourceFiles }: Props) {
+export function SourceRankingFilesCard({ sourceFiles }: Props) {
   return (
     <section className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
       <div>
         <h2 className="text-xl font-semibold text-neutral-950">Archivos requeridos</h2>
         <p className="mt-2 max-w-4xl text-sm leading-6 text-neutral-600">
-          Carga los dos insumos base para ranking del periodo. KPI Local YTD define las rutas del cierre
-          usando STATUS.NOMBRE y STATUS.TERRITORIO; ICVA + 48 hrs se cruza contra ese KPI por nombre.
+          Carga los dos insumos base para ranking. KPI Local YTD define las rutas del cierre
+          usando STATUS.NOMBRE y STATUS.TERRITORIO; ICVA + 48 hrs se cruza por empleado, territorio y nombre.
         </p>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3">
@@ -333,7 +335,6 @@ export function SourceRankingFilesCard({ periodMonthInput, sourceFiles }: Props)
             {sourceFiles.rows.map((row) => (
               <SourceRankingFileUploadRowItem
                 key={row.fileCode}
-                periodMonthInput={periodMonthInput}
                 row={row}
               />
             ))}

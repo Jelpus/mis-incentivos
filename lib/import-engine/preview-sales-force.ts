@@ -57,6 +57,23 @@ function cleanMappedData(mappedData: Record<string, unknown>) {
   return cleaned;
 }
 
+function normalizeSalesForceVacancyFields(cleanedData: Record<string, unknown>) {
+  const inferredVacancy = inferVacancyFromName(cleanedData.nombre_completo);
+  const isVacant = cleanedData.is_vacant === true || inferredVacancy;
+  cleanedData.is_vacant = isVacant;
+
+  const noEmpleado = Number(cleanedData.no_empleado);
+  if (cleanedData.no_empleado === "" || !Number.isFinite(noEmpleado) || noEmpleado <= 0 || isVacant) {
+    cleanedData.no_empleado = null;
+  }
+
+  if (isVacant && !cleanedData.base_incentivos) {
+    cleanedData.base_incentivos = 0;
+  }
+
+  return { isVacant, inferredVacancy };
+}
+
 function buildWarnings(
   mappedData: Record<string, unknown>,
   cleanedData: Record<string, unknown>,
@@ -263,10 +280,7 @@ export async function previewSalesForceImportBatch(
       cleanedData.valid_since_period = DEFAULT_VALID_SINCE_PERIOD;
     }
 
-    const inferredVacancy = inferVacancyFromName(cleanedData.nombre_completo);
-    cleanedData.is_vacant = cleanedData.is_vacant === true || inferredVacancy;
-
-    const isVacant = cleanedData.is_vacant === true;
+    const { isVacant, inferredVacancy } = normalizeSalesForceVacancyFields(cleanedData);
 
     const conditionalErrors: ValidationIssue[] = [];
 
@@ -292,10 +306,6 @@ export async function previewSalesForceImportBatch(
           message: "Falta no_empleado",
         });
       }
-    }
-
-    if(isVacant && !cleanedData.base_incentivos){
-      cleanedData.base_incentivos = 0;
     }
 
     const validationErrors: ValidationIssue[] = [

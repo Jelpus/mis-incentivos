@@ -391,6 +391,12 @@ function toPositiveNumber(value: number | null | undefined) {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
 }
 
+function getYtdStartPeriod(periodMonth: string): string {
+  const normalized = normalizePeriodMonthInput(periodMonth);
+  if (!normalized) return periodMonth;
+  return `${normalized.slice(0, 4)}-01-01`;
+}
+
 function safeCoverage(numerator: number, denominator: number) {
   if (!Number.isFinite(denominator) || denominator <= 0) return 0;
   return numerator / denominator;
@@ -452,6 +458,7 @@ async function getRankingSummaryCardData(params: {
     }
     return output;
   };
+  const ytdStartPeriod = getYtdStartPeriod(normalizedPeriod);
 
   const collectRankingRowsByEmployees = async (employees: number[]) => {
     const employeeChunks = chunkArray(employees, 200);
@@ -469,7 +476,8 @@ async function getRankingSummaryCardData(params: {
         adminClient
           .from("ranking_icva_48hrs_agg")
           .select("period_month, total_calls, icva_calls, on_time_call, on_time_icva")
-          .eq("period_month", normalizedPeriod)
+          .gte("period_month", ytdStartPeriod)
+          .lte("period_month", normalizedPeriod)
           .in("empleado", chunk),
       ]);
 
@@ -508,7 +516,8 @@ async function getRankingSummaryCardData(params: {
         adminClient
           .from("ranking_icva_48hrs_agg")
           .select("period_month, total_calls, icva_calls, on_time_call, on_time_icva")
-          .eq("period_month", normalizedPeriod)
+          .gte("period_month", ytdStartPeriod)
+          .lte("period_month", normalizedPeriod)
           .in("territorio_individual", chunk),
       ]);
 

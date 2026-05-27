@@ -1,17 +1,9 @@
 import { redirect } from "next/navigation";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
-import { StatusPeriodPicker } from "@/components/admin/status-period-picker";
-import { formatPeriodMonthForInput } from "@/lib/admin/incentive-rules/shared";
 import { getSourceRankingPageData } from "@/lib/admin/source-ranking/get-source-ranking-page-data";
 import { SourceRankingFilesCard } from "@/components/admin/source-ranking-files-card";
 
-type PageProps = {
-  searchParams?: Promise<{
-    period?: string;
-  }>;
-};
-
-export default async function AdminSourceRankingPage({ searchParams }: PageProps) {
+export default async function AdminSourceRankingPage() {
   const { user, role, isActive } = await getCurrentAuthContext();
 
   if (!user) {
@@ -29,11 +21,7 @@ export default async function AdminSourceRankingPage({ searchParams }: PageProps
     redirect("/");
   }
 
-  const params = searchParams ? await searchParams : {};
-  const selectedPeriodInput = params?.period ?? null;
-  const data = await getSourceRankingPageData(selectedPeriodInput);
-
-  const periodInput = formatPeriodMonthForInput(data.periodMonth);
+  const data = await getSourceRankingPageData();
 
   return (
     <main className="min-h-screen bg-neutral-50">
@@ -44,26 +32,11 @@ export default async function AdminSourceRankingPage({ searchParams }: PageProps
             Data Source Ranking
           </h1>
           <p className="mt-2 max-w-4xl text-sm text-neutral-600">
-            Carga de fuentes base para ranking. El admin define libremente el periodo de trabajo.
+            Carga de fuentes base para ranking. Los periodos se derivan desde la estructura de los archivos.
           </p>
         </header>
 
-        <section className="rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-neutral-950">Periodo de trabajo</h2>
-              <p className="mt-1 text-sm text-neutral-600">
-                Este periodo aplica por igual para ambos archivos del ranking.
-              </p>
-            </div>
-            <StatusPeriodPicker
-              value={periodInput}
-              paramName="period"
-            />
-          </div>
-        </section>
-
-        <SourceRankingFilesCard periodMonthInput={periodInput} sourceFiles={data.sourceFiles} />
+        <SourceRankingFilesCard sourceFiles={data.sourceFiles} />
       </div>
     </main>
   );

@@ -4,6 +4,7 @@ import { formatPeriodMonthForInput } from "@/lib/admin/incentive-rules/shared";
 import { getReglasRankingPageData } from "@/lib/admin/reglas-ranking/get-reglas-ranking-page-data";
 import { getRankingContestsData } from "@/lib/admin/reglas-ranking/get-ranking-contests-data";
 import { getRankingParticipationData } from "@/lib/admin/reglas-ranking/get-ranking-participation-data";
+import { getRankingCpdObjectivesData } from "@/lib/admin/reglas-ranking/get-ranking-cpd-objectives-data";
 import { ReglasRankingTabs } from "@/components/admin/reglas-ranking-tabs";
 
 type PageProps = {
@@ -34,6 +35,7 @@ export default async function AdminReglasRankingPage({ searchParams }: PageProps
   const data = await getReglasRankingPageData(selectedPeriodInput);
   const contestsData = await getRankingContestsData();
   const participationData = await getRankingParticipationData();
+  const cpdObjectivesData = await getRankingCpdObjectivesData();
 
   const periodInput = formatPeriodMonthForInput(data.periodMonth);
   const availableStatusPeriodInputs = Array.from(
@@ -49,6 +51,7 @@ export default async function AdminReglasRankingPage({ searchParams }: PageProps
           puntosData={data}
           contestsData={contestsData}
           participationData={participationData}
+          cpdObjectivesData={cpdObjectivesData}
         />
       </div>
     </main>

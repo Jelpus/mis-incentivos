@@ -404,6 +404,141 @@ export async function upsertManualReglasRankingComplementAction(
   return { ok: true, message: "Complemento manual guardado." };
 }
 
+export async function batchUpsertManualReglasRankingComplementAction(
+  _prevState: UpsertManualRankingComplementResult | null,
+  formData: FormData,
+): Promise<UpsertManualRankingComplementResult> {
+  const { user, role, isActive } = await getCurrentAuthContext();
+  if (!user || !isAdminRole(role, isActive)) {
+    return { ok: false, message: "No autorizado." };
+  }
+
+  const periodInput = String(formData.get("period_month") ?? "").trim();
+  const periodMonth = normalizePeriodMonthInput(periodInput);
+  if (!periodMonth) return { ok: false, message: "Periodo invalido. Usa formato YYYY-MM." };
+
+  const applyRanking = parseBooleanCheckbox(formData.get("apply_ranking"));
+  const applyPuntos = parseBooleanCheckbox(formData.get("apply_puntos"));
+  if (!applyRanking && !applyPuntos) {
+    return { ok: false, message: "Selecciona al menos un campo para modificar." };
+  }
+
+  const rankingOption = normalizeText(formData.get("batch_ranking_option"));
+  const rankingCustom = normalizeText(formData.get("batch_ranking_custom"));
+  const puntosOption = normalizeText(formData.get("batch_puntos_option"));
+  const puntosCustom = normalizeText(formData.get("batch_puntos_custom"));
+  const batchRanking = rankingOption === "__new__" ? rankingCustom : rankingOption;
+  const puntosRaw = puntosOption === "__new__" ? puntosCustom : puntosOption;
+  const batchPuntosRankingLvu = parseOptionalNumber(puntosRaw);
+
+  if (applyPuntos && puntosRaw && batchPuntosRankingLvu === null) {
+    return { ok: false, message: "puntos_ranking_lvu debe ser numerico." };
+  }
+
+  const teamIds = formData.getAll("team_id[]").map((item) => normalizeText(item));
+  const productNames = formData.getAll("product_name[]").map((item) => normalizeText(item));
+  const maxLen = Math.max(teamIds.length, productNames.length);
+  const selectedRows: Array<{ teamId: string; productName: string }> = [];
+  const seenKeys = new Set<string>();
+
+  for (let index = 0; index < maxLen; index += 1) {
+    const teamId = teamIds[index] ?? "";
+    const productName = productNames[index] ?? "";
+    if (!teamId || !productName) continue;
+
+    const key = `${teamId.toUpperCase()}|${productName.toUpperCase()}`;
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    selectedRows.push({ teamId, productName });
+  }
+
+  if (selectedRows.length === 0) {
+    return { ok: false, message: "Selecciona al menos una fila." };
+  }
+
+  const supabase = createAdminClient();
+  if (!supabase) {
+    return { ok: false, message: "Admin client no disponible." };
+  }
+
+  type ExistingComplementRow = {
+    team_id: string | null;
+    product_name: string | null;
+    ranking: string | null;
+    puntos_ranking_lvu: number | string | null;
+    prod_weight: number | string | null;
+  };
+
+  const complementsResult = await supabase
+    .from("ranking_rule_complements")
+    .select("team_id, product_name, ranking, puntos_ranking_lvu, prod_weight")
+    .eq("period_month", periodMonth)
+    .eq("is_active", true);
+
+  if (complementsResult.error) {
+    if (isMissingRelationError(complementsResult.error)) {
+      const tableName = getMissingRelationName(complementsResult.error) ?? "ranking_rule_complements";
+      return {
+        ok: false,
+        message: `No existe la tabla ${tableName}. Ejecuta docs/ranking-rule-complements-schema.sql.`,
+      };
+    }
+    return {
+      ok: false,
+      message: `No se pudo cargar complementos actuales: ${complementsResult.error.message}`,
+    };
+  }
+
+  const existingByKey = new Map<string, ExistingComplementRow>();
+  for (const item of (complementsResult.data ?? []) as ExistingComplementRow[]) {
+    const teamId = normalizeText(item.team_id);
+    const productName = normalizeText(item.product_name);
+    if (!teamId || !productName) continue;
+    existingByKey.set(`${teamId.toUpperCase()}|${productName.toUpperCase()}`, item);
+  }
+
+  const upsertRows = selectedRows.map(({ teamId, productName }) => {
+    const existing = existingByKey.get(`${teamId.toUpperCase()}|${productName.toUpperCase()}`);
+    const existingPuntos = parseOptionalNumber(existing?.puntos_ranking_lvu);
+    const existingProdWeight = parseOptionalNumber(existing?.prod_weight);
+
+    return {
+      period_month: periodMonth,
+      team_id: teamId,
+      product_name: productName,
+      ranking: applyRanking ? batchRanking || null : normalizeText(existing?.ranking) || null,
+      puntos_ranking_lvu: applyPuntos ? batchPuntosRankingLvu : existingPuntos,
+      prod_weight: existingProdWeight,
+      source_type: "manual_complement",
+      source_file_name: null,
+      source_sheet_name: null,
+      updated_by: user.id,
+      is_active: true,
+    };
+  });
+
+  const upsertResult = await supabase.from("ranking_rule_complements").upsert(upsertRows, {
+    onConflict: "period_month,team_id,product_name",
+  });
+
+  if (upsertResult.error) {
+    if (isMissingRelationError(upsertResult.error)) {
+      const tableName = getMissingRelationName(upsertResult.error) ?? "ranking_rule_complements";
+      return {
+        ok: false,
+        message: `No existe la tabla ${tableName}. Ejecuta docs/ranking-rule-complements-schema.sql.`,
+      };
+    }
+    return {
+      ok: false,
+      message: `No se pudo guardar batch: ${upsertResult.error.message}`,
+    };
+  }
+
+  revalidatePath("/admin/reglas-ranking");
+  return { ok: true, message: `Batch guardado para ${upsertRows.length} filas.` };
+}
+
 type UpsertRankingContestResult =
   | {
       ok: true;
@@ -854,4 +989,86 @@ export async function upsertRankingContestParticipantsAction(
 
   revalidatePath("/admin/reglas-ranking");
   return { ok: true, message: "Participacion de equipos guardada." };
+}
+
+type UpsertRankingCpdObjectivesResult =
+  | {
+      ok: true;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export async function upsertRankingCpdObjectivesAction(
+  _prevState: UpsertRankingCpdObjectivesResult | null,
+  formData: FormData,
+): Promise<UpsertRankingCpdObjectivesResult> {
+  const { user, role, isActive } = await getCurrentAuthContext();
+  if (!user || !isAdminRole(role, isActive)) {
+    return { ok: false, message: "No autorizado." };
+  }
+
+  const teamIds = formData.getAll("team_id[]").map((item) => normalizeText(item));
+  const objectiveValues = formData.getAll("objective_cpd[]").map((item) => normalizeText(item));
+  const maxLen = Math.max(teamIds.length, objectiveValues.length);
+  const payload: Array<{
+    team_id: string;
+    objective_cpd: number | null;
+    updated_by: string;
+    is_active: boolean;
+  }> = [];
+  const seenTeamIds = new Set<string>();
+
+  for (let index = 0; index < maxLen; index += 1) {
+    const teamId = teamIds[index] ?? "";
+    const rawObjective = objectiveValues[index] ?? "";
+    if (!teamId) continue;
+    const normalizedTeamId = teamId.toUpperCase();
+    if (seenTeamIds.has(normalizedTeamId)) continue;
+    seenTeamIds.add(normalizedTeamId);
+
+    const objectiveCpd = parseOptionalNumber(rawObjective);
+    if (rawObjective && objectiveCpd === null) {
+      return { ok: false, message: `Objetivo CPD invalido para team_id ${teamId}.` };
+    }
+
+    payload.push({
+      team_id: teamId,
+      objective_cpd: objectiveCpd,
+      updated_by: user.id,
+      is_active: true,
+    });
+  }
+
+  if (payload.length === 0) {
+    return { ok: false, message: "No hay objetivos para guardar." };
+  }
+
+  const supabase = createAdminClient();
+  if (!supabase) {
+    return { ok: false, message: "Admin client no disponible." };
+  }
+
+  const upsertResult = await supabase.from("ranking_cpd_objectives").upsert(payload, {
+    onConflict: "team_id",
+  });
+
+  if (upsertResult.error) {
+    if (isMissingRelationError(upsertResult.error)) {
+      const tableName = getMissingRelationName(upsertResult.error) ?? "ranking_cpd_objectives";
+      return {
+        ok: false,
+        message: `No existe la tabla ${tableName}. Ejecuta docs/ranking-cpd-objectives-schema.sql.`,
+      };
+    }
+    return {
+      ok: false,
+      message: `No se pudieron guardar objetivos CPD: ${upsertResult.error.message}`,
+    };
+  }
+
+  revalidatePath("/admin/reglas-ranking");
+  return { ok: true, message: `Objetivos CPD guardados: ${payload.length}.` };
 }

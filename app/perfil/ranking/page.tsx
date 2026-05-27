@@ -7,6 +7,7 @@ type RankingPageProps = {
   searchParams?: Promise<{
     period?: string;
     tab?: string;
+    contestId?: string;
   }>;
 };
 
@@ -24,6 +25,8 @@ export default async function PerfilRankingPage({ searchParams }: RankingPagePro
     role,
     profileUserId: effectiveUserId ?? user.id,
     requestedPeriod: params?.period ?? null,
+    includeContestRanking: initialTab === "ranking",
+    requestedContestId: params?.contestId ?? null,
   });
 
   return (
@@ -39,7 +42,11 @@ export default async function PerfilRankingPage({ searchParams }: RankingPagePro
           Concursos, performance y ranking con alcance segun rol.
         </p>
 
-        <PerfilRankingClient data={data} initialTab={initialTab} />
+        <PerfilRankingClient
+          key={`${initialTab}-${data.periodMonth ?? "none"}-${data.contestRankingData.contests[0]?.id ?? "none"}`}
+          data={data}
+          initialTab={initialTab}
+        />
       </div>
     </section>
   );

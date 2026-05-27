@@ -25,10 +25,13 @@ type MatchCandidate = {
 export type Icva48RawRow = {
   period_month: string;
   source_nombre: string;
+  source_territorio: string | null;
+  source_empleado: number | null;
+  source_period_raw: string | null;
   matched_territorio_individual: string | null;
   matched_empleado: number | null;
   matched_nombre: string | null;
-  matched_by: "name" | "unmatched";
+  matched_by: "employee" | "territory" | "name" | "unmatched";
   name_match_score: number | null;
   total_calls: number;
   icva_calls: number;
@@ -98,6 +101,40 @@ function parseInteger(value: unknown): number | null {
   if (!raw) return null;
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
+
+function normalizeTerritoryKey(value: unknown): string {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+function parseSourcePeriod(value: unknown, fallbackPeriodMonth: string): { periodMonth: string; raw: string | null } {
+  const raw = String(value ?? "").trim();
+  if (!raw) return { periodMonth: fallbackPeriodMonth, raw: null };
+
+  const compact = raw.replace(/[^0-9]/g, "");
+  if (/^\d{4}$/.test(compact)) {
+    const year = 2000 + Number(compact.slice(0, 2));
+    const month = Number(compact.slice(2, 4));
+    if (month >= 1 && month <= 12) {
+      return {
+        periodMonth: `${year}-${String(month).padStart(2, "0")}-01`,
+        raw,
+      };
+    }
+  }
+
+  if (/^\d{6}$/.test(compact)) {
+    const year = Number(compact.slice(0, 4));
+    const month = Number(compact.slice(4, 6));
+    if (month >= 1 && month <= 12) {
+      return {
+        periodMonth: `${year}-${String(month).padStart(2, "0")}-01`,
+        raw,
+      };
+    }
+  }
+
+  return { periodMonth: fallbackPeriodMonth, raw };
 }
 
 function tokenSet(value: string): Set<string> {
@@ -352,6 +389,28 @@ export function normalizeIcva48hrsRaw(params: {
   const matchCandidates = Array.from(candidateMap.values());
   const kpiCandidates = matchCandidates.filter((candidate) => candidate.source === "kpi");
   const statusCandidates = matchCandidates.filter((candidate) => candidate.source === "status");
+  const statusByEmployee = new Map<number, MatchCandidate>();
+  const statusByTerritory = new Map<string, MatchCandidate>();
+
+  for (const candidate of normalizedStatus) {
+    if (candidate.empleado !== null && !statusByEmployee.has(candidate.empleado)) {
+      statusByEmployee.set(candidate.empleado, {
+        nombre: candidate.nombre,
+        territorio: candidate.territorio,
+        empleado: candidate.empleado,
+        source: candidate.source,
+      });
+    }
+    const territoryKey = normalizeTerritoryKey(candidate.territorio);
+    if (territoryKey && !statusByTerritory.has(territoryKey)) {
+      statusByTerritory.set(territoryKey, {
+        nombre: candidate.nombre,
+        territorio: candidate.territorio,
+        empleado: candidate.empleado,
+        source: candidate.source,
+      });
+    }
+  }
 
   function findNameMatch(
     sourceNombre: string,
@@ -410,6 +469,12 @@ export function normalizeIcva48hrsRaw(params: {
     const sourceNombre = String(getValueByKeys(row, ["Row Labels", "Nombre", "Name"]) ?? "").trim();
     if (!sourceNombre) continue;
     if (/^grand\s*total$/i.test(sourceNombre)) continue;
+    const sourceTerritorio = String(getValueByKeys(row, ["territorio", "Territorio"]) ?? "").trim();
+    const sourceEmpleado = parseInteger(getValueByKeys(row, ["empleadoip", "empleado", "no_empleado"]));
+    const sourcePeriod = parseSourcePeriod(
+      getValueByKeys(row, ["periodo", "period", "period_month"]),
+      params.periodMonth,
+    );
 
     const totalCalls = parseNumber(getValueByKeys(row, ["Sum of Actual Calls", "Actual Calls"]));
     const icvaCalls = parseNumber(
@@ -420,18 +485,30 @@ export function normalizeIcva48hrsRaw(params: {
     );
     const onTimeIcva = parseNumber(getValueByKeys(row, ["Sum of ICVA Calls", "ICVA Calls"]));
 
-    const kpiMatch = findNameMatch(sourceNombre, kpiCandidates, {
+    const employeeMatch = sourceEmpleado !== null ? statusByEmployee.get(sourceEmpleado) ?? null : null;
+    const territoryMatch = sourceTerritorio ? statusByTerritory.get(normalizeTerritoryKey(sourceTerritorio)) ?? null : null;
+    const kpiMatch = employeeMatch || territoryMatch
+      ? { selected: null, bestScore: null, matched: false }
+      : findNameMatch(sourceNombre, kpiCandidates, {
       strictThreshold: 65,
       minGapForSoftMatch: 8,
       allowSubsetBoost: true,
     });
     const fallbackStatusMatch = kpiMatch.matched
       ? { selected: null, bestScore: null, matched: false }
+      : employeeMatch || territoryMatch
+        ? { selected: null, bestScore: null, matched: false }
       : findNameMatch(sourceNombre, statusCandidates);
-    const selected = kpiMatch.matched ? kpiMatch.selected : fallbackStatusMatch.selected;
-    const matched = kpiMatch.matched || fallbackStatusMatch.matched;
+    const selected = employeeMatch ?? territoryMatch ?? (kpiMatch.matched ? kpiMatch.selected : fallbackStatusMatch.selected);
+    const matched = Boolean(employeeMatch || territoryMatch || kpiMatch.matched || fallbackStatusMatch.matched);
     const bestScore = kpiMatch.bestScore ?? fallbackStatusMatch.bestScore;
-    const matchedBy: "name" | "unmatched" = matched ? "name" : "unmatched";
+    const matchedBy: Icva48RawRow["matched_by"] = employeeMatch
+      ? "employee"
+      : territoryMatch
+        ? "territory"
+        : matched
+          ? "name"
+          : "unmatched";
     if (matched && selected) {
       nameMatchedRows += 1;
       if (selected.source === "kpi") {
@@ -459,8 +536,11 @@ export function normalizeIcva48hrsRaw(params: {
     const pctIcva = icvaCalls > 0 ? onTimeIcva / icvaCalls : 0;
 
     rawRows.push({
-      period_month: params.periodMonth,
+      period_month: sourcePeriod.periodMonth,
       source_nombre: sourceNombre,
+      source_territorio: sourceTerritorio || null,
+      source_empleado: sourceEmpleado,
+      source_period_raw: sourcePeriod.raw,
       matched_territorio_individual: matched ? String(selected?.territorio ?? "").trim() || null : null,
       matched_empleado: matched ? (selected?.empleado ?? null) : null,
       matched_nombre: matched ? String(selected?.nombre ?? "").trim() || null : null,

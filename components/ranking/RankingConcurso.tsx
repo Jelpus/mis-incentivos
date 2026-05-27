@@ -1,18 +1,31 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useMemo, useState, useTransition } from "react";
 import { formatPeriodMonthLabel } from "@/lib/admin/incentive-rules/shared";
+import type { RankingContestRow } from "@/lib/admin/reglas-ranking/get-ranking-contests-data";
 import type { RankingContestData } from "@/lib/ranking-contests/types";
 import { ContestRankingTable } from "@/components/ranking/ContestRankingTable";
 
 type RankingView = "qualified" | "not_qualified" | "all";
 
-export function RankingConcurso({ data }: { data: RankingContestData }) {
+export function RankingConcurso({
+  data,
+  contestOptions,
+}: {
+  data: RankingContestData;
+  contestOptions?: RankingContestRow[];
+}) {
+  const router = useRouter();
+  const [isContestNavigationPending, startContestNavigation] = useTransition();
   const [contestId, setContestId] = useState(data.contests[0]?.id ?? "");
   const [groupFilter, setGroupFilter] = useState("");
   const [rankingView, setRankingView] = useState<RankingView>("qualified");
 
   const selectedContest = data.contests.find((contest) => contest.id === contestId) ?? data.contests[0] ?? null;
+  const options = contestOptions && contestOptions.length > 0
+    ? contestOptions.filter((contest) => contest.isActive)
+    : data.contests;
   const contestRows = useMemo(
     () => data.rows.filter((row) => row.contestId === selectedContest?.id),
     [data.rows, selectedContest?.id],
@@ -64,16 +77,29 @@ export function RankingConcurso({ data }: { data: RankingContestData }) {
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#445f95]">Ranking por concurso</p>
             <select
               value={selectedContest?.id ?? ""}
+              disabled={isContestNavigationPending}
               onChange={(event) => {
-                setContestId(event.target.value);
+                const nextContestId = event.target.value;
+                setContestId(nextContestId);
                 setGroupFilter("");
+                if (nextContestId && nextContestId !== selectedContest?.id) {
+                  startContestNavigation(() => {
+                    router.push(`/perfil/ranking?tab=ranking&contestId=${encodeURIComponent(nextContestId)}`);
+                  });
+                }
               }}
-              className="mt-2 w-full rounded-lg border border-[#d0d5dd] bg-white px-3 py-2 text-sm font-semibold text-[#002b7f] outline-none focus:border-[#84adff]"
+              className="mt-2 w-full rounded-lg border border-[#d0d5dd] bg-white px-3 py-2 text-sm font-semibold text-[#002b7f] outline-none focus:border-[#84adff] disabled:cursor-wait disabled:bg-[#eef5ff] disabled:text-[#445f95]"
             >
-              {data.contests.map((contest) => (
+              {options.map((contest) => (
                 <option key={contest.id} value={contest.id}>{contest.contestName}</option>
               ))}
             </select>
+            {isContestNavigationPending ? (
+              <p className="mt-2 flex items-center gap-2 text-xs font-medium text-[#1e3a8a]">
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#bfd3ff] border-t-[#1e3a8a]" />
+                Cargando concurso
+              </p>
+            ) : null}
           </div>
 
           {usesRankingGroups && groups.length > 0 ? (

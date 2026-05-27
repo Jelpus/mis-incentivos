@@ -39,6 +39,27 @@ function normalizeTextKey(value: unknown): string {
   return String(value ?? "").trim().toUpperCase();
 }
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+
 async function getMaxCoveragePeriodMonth(): Promise<string | null> {
   const supabase = createAdminClient();
   if (!supabase) return null;
@@ -306,12 +327,39 @@ function buildTeamAveragePointDetails(params: {
   }];
 }
 
+function calculateTeamAveragePoints(params: {
+  members: ContestParticipant[];
+  contest: RankingContest;
+  contestCoverageRows: BigQueryCoverageRow[];
+  complementsByTeamId: Map<string, RankingComplement[]>;
+}): number {
+  if (params.members.length === 0) return 0;
+
+  const teamTotal = params.members.reduce((teamSum, member) => {
+    const memberCoverageRows = params.contestCoverageRows.filter((result) => belongsToParticipant(result, member));
+    const complements = params.complementsByTeamId.get(normalizeTeamKey(member.teamId));
+    const memberPoints = memberCoverageRows.reduce((memberSum, result) => {
+      const detail = calculateCoveragePoints({
+        result,
+        contest: params.contest,
+        rankingComplementsForTeam: complements,
+      });
+      return memberSum + toNumber(detail.points);
+    }, 0);
+    return teamSum + memberPoints;
+  }, 0);
+
+  return teamTotal / params.members.length;
+}
+
 export async function getRankingContestData(params?: {
   contestId?: string | null;
   participantId?: string | null;
+  includeDetails?: boolean;
 }): Promise<RankingContestData> {
   const supabase = createAdminClient();
   const messages: string[] = [];
+  const includeDetails = params?.includeDetails ?? true;
   if (!supabase) {
     return { ok: false, maxCoveragePeriodMonth: null, contests: [], rows: [], messages: ["Admin client de Supabase no disponible."] };
   }
@@ -335,11 +383,11 @@ export async function getRankingContestData(params?: {
     return { ok: true, maxCoveragePeriodMonth, contests, rows: [], messages: ["No hay concursos activos configurados.", ...messages] };
   }
 
-  const periods = contests.flatMap((contest) => buildCoveragePeriods({
+  const periods = Array.from(new Set(contests.flatMap((contest) => buildCoveragePeriods({
     coveragePeriodStart: contest.coveragePeriodStart,
     coveragePeriodEnd: contest.coveragePeriodEnd,
     maxCoveragePeriodMonth,
-  }));
+  }))));
 
   const [participantsResult, coverageResultSettled] = await Promise.all([
     getContestParticipants({ supabase, maxCoveragePeriodMonth }),
@@ -399,8 +447,8 @@ export async function getRankingContestData(params?: {
       ? contestParticipants.filter((participant) => participant.id === targetParticipantId)
       : contestParticipants;
 
-    const contestRows = await Promise.all(targetParticipants.map(async (participant): Promise<ContestRankingRow> => {
-      const componentEvaluations = await Promise.all(contest.components.map((component) =>
+    const contestRows = await mapWithConcurrency(targetParticipants, 12, async (participant): Promise<ContestRankingRow> => {
+      const componentEvaluations = await mapWithConcurrency(contest.components, 3, (component) =>
         evaluateContestComponent({
           supabase,
           component,
@@ -408,23 +456,45 @@ export async function getRankingContestData(params?: {
           contest,
           maxCoveragePeriodMonth,
         }),
-      ));
+      );
       const qualification = resolveQualification(componentEvaluations);
       const participantCoverageRows = contestCoverageRows.filter((result) => belongsToParticipant(result, participant));
       const complements = complementsByTeamId.get(normalizeTeamKey(participant.teamId));
-      const pointDetails = participant.scope === "manager"
-        ? buildTeamAveragePointDetails({
-          manager: participant,
-          members: getActiveTeamMembersInRanking({ manager: participant, participants, contest }),
-          contest,
-          contestCoverageRows,
-          complementsByTeamId,
-        })
-        : participantCoverageRows.map((result) => calculateCoveragePoints({
-          result,
-          contest,
-          rankingComplementsForTeam: complements,
-        }));
+      const members = participant.scope === "manager"
+        ? getActiveTeamMembersInRanking({ manager: participant, participants, contest })
+        : [];
+      const pointDetails = includeDetails
+        ? participant.scope === "manager"
+          ? buildTeamAveragePointDetails({
+            manager: participant,
+            members,
+            contest,
+            contestCoverageRows,
+            complementsByTeamId,
+          })
+          : participantCoverageRows.map((result) => calculateCoveragePoints({
+            result,
+            contest,
+            rankingComplementsForTeam: complements,
+          }))
+        : [];
+      const totalPoints = includeDetails
+        ? pointDetails.reduce((sum, detail) => sum + toNumber(detail.points), 0)
+        : participant.scope === "manager"
+          ? calculateTeamAveragePoints({
+            members,
+            contest,
+            contestCoverageRows,
+            complementsByTeamId,
+          })
+          : participantCoverageRows.reduce((sum, result) => {
+            const detail = calculateCoveragePoints({
+              result,
+              contest,
+              rankingComplementsForTeam: complements,
+            });
+            return sum + toNumber(detail.points);
+          }, 0);
 
       return {
         participantId: participant.id,
@@ -439,12 +509,12 @@ export async function getRankingContestData(params?: {
         contestName: contest.contestName,
         participationScope: contest.participationScope,
         ...qualification,
-        componentEvaluations,
-        totalPoints: pointDetails.reduce((sum, detail) => sum + toNumber(detail.points), 0),
-        pointDetails,
+        componentEvaluations: includeDetails ? componentEvaluations : [],
+        totalPoints,
+        pointDetails: includeDetails ? pointDetails : [],
         rank: null,
       };
-    }));
+    });
 
     rows.push(...contestRows);
   }

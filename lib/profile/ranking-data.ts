@@ -22,6 +22,7 @@ type RelationRow = {
 };
 
 type SalesStatusAnchor = {
+  id: string | null;
   period_month: string | null;
   team_id: string | null;
   territorio_individual: string | null;
@@ -31,6 +32,7 @@ type SalesStatusAnchor = {
 };
 
 type ManagerStatusAnchor = {
+  id: string | null;
   period_month: string | null;
   team_id: string | null;
   territorio_manager: string | null;
@@ -121,6 +123,12 @@ function normalizeTerritory(value: string | null | undefined): string {
   return String(value ?? "").trim();
 }
 
+function getYtdStartPeriod(periodMonth: string): string {
+  const normalized = normalizePeriodMonthInput(periodMonth);
+  if (!normalized) return periodMonth;
+  return `${normalized.slice(0, 4)}-01-01`;
+}
+
 function makeEntityKey(params: {
   empleado: number | null;
   territorio: string;
@@ -202,7 +210,7 @@ async function getSalesAnchor(userId: string): Promise<SalesStatusAnchor | null>
 
   const status = await supabase
     .from("sales_force_status")
-    .select("period_month, team_id, territorio_individual, territorio_padre, no_empleado, nombre_completo")
+    .select("id, period_month, team_id, territorio_individual, territorio_padre, no_empleado, nombre_completo")
     .eq("id", relation.data.sales_force_status_id)
     .eq("is_deleted", false)
     .maybeSingle<SalesStatusAnchor>();
@@ -228,7 +236,7 @@ async function getManagerAnchor(userId: string): Promise<ManagerStatusAnchor | n
 
   const status = await supabase
     .from("manager_status")
-    .select("period_month, team_id, territorio_manager, no_empleado_manager, nombre_manager")
+    .select("id, period_month, team_id, territorio_manager, no_empleado_manager, nombre_manager")
     .eq("id", relation.data.manager_status_id)
     .eq("is_deleted", false)
     .maybeSingle<ManagerStatusAnchor>();
@@ -306,6 +314,7 @@ async function loadRankingAggRows(params: {
   const icvaRows: IcvaAggRow[] = [];
   if (!supabase) return { kpiRows, icvaRows, error: "Admin client no disponible." };
   const adminClient = supabase;
+  const ytdStartPeriod = getYtdStartPeriod(params.periodMonth);
 
   async function collectByEmployees(employeeIds: number[]) {
     for (const chunk of chunkArray(employeeIds, 200)) {
@@ -318,7 +327,8 @@ async function loadRankingAggRows(params: {
         adminClient
           .from("ranking_icva_48hrs_agg")
           .select("period_month, territorio_individual, empleado, nombre, total_calls, icva_calls, on_time_call, on_time_icva")
-          .eq("period_month", params.periodMonth)
+          .gte("period_month", ytdStartPeriod)
+          .lte("period_month", params.periodMonth)
           .in("empleado", chunk),
       ]);
       if (kpiResult.error || icvaResult.error) return kpiResult.error?.message ?? icvaResult.error?.message ?? "Error ranking.";
@@ -339,7 +349,8 @@ async function loadRankingAggRows(params: {
         adminClient
           .from("ranking_icva_48hrs_agg")
           .select("period_month, territorio_individual, empleado, nombre, total_calls, icva_calls, on_time_call, on_time_icva")
-          .eq("period_month", params.periodMonth)
+          .gte("period_month", ytdStartPeriod)
+          .lte("period_month", params.periodMonth)
           .in("territorio_individual", chunk),
       ]);
       if (kpiResult.error || icvaResult.error) return kpiResult.error?.message ?? icvaResult.error?.message ?? "Error ranking.";
@@ -359,7 +370,8 @@ async function loadRankingAggRows(params: {
       adminClient
         .from("ranking_icva_48hrs_agg")
         .select("period_month, territorio_individual, empleado, nombre, total_calls, icva_calls, on_time_call, on_time_icva")
-        .eq("period_month", params.periodMonth)
+        .gte("period_month", ytdStartPeriod)
+        .lte("period_month", params.periodMonth)
         .limit(2000),
     ]);
     if (kpiResult.error || icvaResult.error) {
@@ -482,14 +494,23 @@ export async function getPerfilRankingData(params: {
   role: ProfileRole | null;
   profileUserId: string;
   requestedPeriod?: string | null;
+  includeContestRanking?: boolean;
+  requestedContestId?: string | null;
 }): Promise<PerfilRankingData> {
   const scope = resolveScope(params.role);
   const canAudit = params.role === "admin" || params.role === "super_admin";
-  const [contestsData, availablePeriods, contestRankingData] = await Promise.all([
+  const [contestsData, availablePeriods] = await Promise.all([
     getRankingContestsData(),
     getAvailableRankingPeriods(),
-    getRankingContestData(),
   ]);
+  const emptyContestRankingData: RankingContestData = {
+    ok: true,
+    maxCoveragePeriodMonth: null,
+    contests: [],
+    rows: [],
+    messages: [],
+  };
+  let contestRankingData = emptyContestRankingData;
 
   const requestedPeriod = normalizePeriodMonthInput(params.requestedPeriod ?? "");
   const periodMonth = requestedPeriod && availablePeriods.includes(requestedPeriod)
@@ -514,13 +535,16 @@ export async function getPerfilRankingData(params: {
 
   let employeeIds: number[] = [];
   let territories: string[] = [];
+  let contestParticipantId: string | null = null;
 
   if (scope === "self") {
     const anchor = await getSalesAnchor(params.profileUserId);
+    contestParticipantId = String(anchor?.id ?? "").trim() || null;
     if (anchor?.no_empleado) employeeIds = [anchor.no_empleado];
     if (anchor?.territorio_individual) territories = [anchor.territorio_individual];
   } else if (scope === "manager_team") {
     const anchor = await getManagerAnchor(params.profileUserId);
+    contestParticipantId = String(anchor?.id ?? "").trim() || null;
     const members = await getManagerTeamMembers({
       periodMonth,
       managerTerritory: anchor?.territorio_manager ?? null,
@@ -556,6 +580,20 @@ export async function getPerfilRankingData(params: {
       message: "No hay relacion operativa para construir el ranking de este perfil.",
       canAudit,
     };
+  }
+
+  if (params.includeContestRanking) {
+    const requestedContestId = String(params.requestedContestId ?? "").trim();
+    const contestId =
+      requestedContestId ||
+      contestsData.contests.find((contest) => contest.isActive)?.id ||
+      contestsData.contests[0]?.id ||
+      null;
+    contestRankingData = await getRankingContestData({
+      contestId,
+      participantId: scope === "all" ? null : contestParticipantId,
+      includeDetails: false,
+    });
   }
 
   const { kpiRows, icvaRows, error } = await loadRankingAggRows({

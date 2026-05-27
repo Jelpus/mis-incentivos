@@ -56,6 +56,33 @@ export function cleanInteger(value: unknown): number | null {
   return Math.trunc(num);
 }
 
+function normalizeTwoDigitYear(value: string): string {
+  const year = Number(value);
+  if (!Number.isFinite(year)) return value;
+  return String(year >= 70 ? 1900 + year : 2000 + year);
+}
+
+function isValidDateParts(year: string, month: string, day: string): boolean {
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return false;
+  if (y < 1900 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return false;
+
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return (
+    date.getUTCFullYear() === y &&
+    date.getUTCMonth() === m - 1 &&
+    date.getUTCDate() === d
+  );
+}
+
+function formatDateParts(year: string, month: string, day: string): string | null {
+  const fullYear = year.length === 2 ? normalizeTwoDigitYear(year) : year;
+  if (!isValidDateParts(fullYear, month, day)) return null;
+  return `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
 export function tryParseFlexibleDate(value: unknown): string | null {
   if (value === null || value === undefined) return null;
 
@@ -78,21 +105,28 @@ export function tryParseFlexibleDate(value: unknown): string | null {
   let match = normalized.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
   if (match) {
     const [, y, m, d] = match;
-    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    return formatDateParts(y, m, d);
   }
 
   // DD/MM/YYYY (allows 1-2 digit day/month)
   match = normalized.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (match) {
     const [, d, m, y] = match;
-    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    return formatDateParts(y, m, d);
+  }
+
+  // DD/MM/YY (allows 1-2 digit day/month)
+  match = normalized.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+  if (match) {
+    const [, d, m, y] = match;
+    return formatDateParts(y, m, d);
   }
 
   // YYYYMMDD
   match = input.match(/^(\d{4})(\d{2})(\d{2})$/);
   if (match) {
     const [, y, m, d] = match;
-    return `${y}-${m}-${d}`;
+    return formatDateParts(y, m, d);
   }
 
   // Fallback only for datetime-like inputs. Date-only strings are intentionally

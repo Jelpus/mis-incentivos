@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useMemo, useState, useTransition } from "react";
 import type { PerfilRankingData, RankingMetricDetail, RankingPerformanceRow } from "@/lib/profile/ranking-data";
 import type { RankingContestRow } from "@/lib/admin/reglas-ranking/get-ranking-contests-data";
 import { formatPeriodMonthLabel } from "@/lib/admin/incentive-rules/shared";
@@ -273,9 +274,12 @@ function PerformanceTable({
 }
 
 export function PerfilRankingClient({ data, initialTab = "concursos" }: Props) {
+  const router = useRouter();
+  const [isRankingNavigationPending, startRankingNavigation] = useTransition();
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const [query, setQuery] = useState("");
   const [territoryFilter, setTerritoryFilter] = useState("");
+  const hasContestRankingData = Boolean(data.contestRankingData.maxCoveragePeriodMonth);
 
   const filteredRows = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -308,17 +312,36 @@ export function PerfilRankingClient({ data, initialTab = "concursos" }: Props) {
           <button
             key={tab.key}
             type="button"
-            onClick={() => setActiveTab(tab.key)}
-            className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${
+            disabled={isRankingNavigationPending}
+            onClick={() => {
+              if (tab.key === "ranking" && !hasContestRankingData) {
+                const params = new URLSearchParams();
+                params.set("tab", "ranking");
+                if (data.periodMonth) params.set("period", data.periodMonth);
+                startRankingNavigation(() => {
+                  router.push(`/perfil/ranking?${params.toString()}`);
+                });
+                return;
+              }
+              setActiveTab(tab.key);
+            }}
+            className={`rounded-xl border px-3 py-2 text-sm font-medium transition disabled:cursor-wait disabled:opacity-60 ${
               activeTab === tab.key
                 ? "border-[#002b7f] bg-[#002b7f] text-white"
                 : "border-[#d0d5dd] bg-white text-[#334155] hover:bg-[#f8fafc]"
             }`}
           >
-            {tab.label}
+            {tab.key === "ranking" && isRankingNavigationPending ? "Cargando ranking..." : tab.label}
           </button>
         ))}
       </div>
+
+      {isRankingNavigationPending ? (
+        <div className="flex items-center gap-3 rounded-xl border border-[#d8e3f8] bg-[#f8fbff] px-4 py-3 text-sm font-medium text-[#1e3a8a]">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#bfd3ff] border-t-[#1e3a8a]" />
+          Cargando ranking
+        </div>
+      ) : null}
 
       {activeTab === "performance" ? (
 
@@ -385,7 +408,7 @@ export function PerfilRankingClient({ data, initialTab = "concursos" }: Props) {
       ) : activeTab === "performance" ? (
         <PerformanceTable rows={filteredRows} periodMonth={data.periodMonth} canAudit={data.canAudit} />
       ) : (
-        <RankingConcurso data={data.contestRankingData} />
+        <RankingConcurso data={data.contestRankingData} contestOptions={data.contestsData.contests} />
       )}
     </div>
   );

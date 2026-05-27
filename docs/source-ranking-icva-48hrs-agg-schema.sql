@@ -25,6 +25,13 @@ create index if not exists ranking_icva_48hrs_agg_period_idx
 create index if not exists ranking_icva_48hrs_agg_employee_idx
   on public.ranking_icva_48hrs_agg (period_month, empleado);
 
+create unique index if not exists ranking_icva_48hrs_agg_unique_key_idx
+  on public.ranking_icva_48hrs_agg (
+    period_month,
+    upper(territorio_individual),
+    coalesce(empleado, -1)
+  );
+
 create or replace function public.set_ranking_icva_48hrs_agg_updated_at()
 returns trigger
 language plpgsql
@@ -41,4 +48,3 @@ drop trigger if exists trg_ranking_icva_48hrs_agg_updated_at
 create trigger trg_ranking_icva_48hrs_agg_updated_at
 before update on public.ranking_icva_48hrs_agg
 for each row execute procedure public.set_ranking_icva_48hrs_agg_updated_at();
-

@@ -8,6 +8,7 @@ import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { createImportBatchFromExcel } from "@/lib/import-engine/supabase-import-service";
 import { previewSalesForceImportBatch } from "@/lib/import-engine/preview-sales-force";
 import { previewManagerImportBatch } from "@/lib/import-engine/preview-manager";
+import { tryParseFlexibleDate } from "@/lib/import-engine/cleaners";
 
 type UploadStatusImportResult =
   | {
@@ -676,7 +677,36 @@ export async function applyImportBatchAction(
     };
   }
 
-  const previewSummary = (batch.preview_summary ?? {}) as Record<string, unknown>;
+  if (importTypeCode === "sales_force_status") {
+    try {
+      await previewSalesForceImportBatch(batchId);
+    } catch (error) {
+      return {
+        ok: false,
+        message:
+          error instanceof Error
+            ? `No se pudo regenerar preview SVA antes de aplicar: ${error.message}`
+            : "No se pudo regenerar preview SVA antes de aplicar.",
+        batchId,
+      };
+    }
+  }
+
+  const { data: refreshedBatch, error: refreshedBatchError } = await supabase
+    .from("import_batches")
+    .select("preview_summary")
+    .eq("id", batchId)
+    .single();
+
+  if (refreshedBatchError || !refreshedBatch) {
+    return {
+      ok: false,
+      message: "No se pudo recargar el resumen del batch.",
+      batchId,
+    };
+  }
+
+  const previewSummary = (refreshedBatch.preview_summary ?? {}) as Record<string, unknown>;
   const invalidRows = Number(previewSummary.invalid_rows ?? 0);
 
   if (invalidRows > 0) {
@@ -756,12 +786,11 @@ function normalizeDateInput(value: string): string | null {
   const raw = value.trim();
   if (!raw) return null;
 
+  const flexibleDate = tryParseFlexibleDate(raw);
+  if (flexibleDate) return flexibleDate;
+
   if (/^\d{4}-\d{2}$/.test(raw)) {
     return `${raw}-01`;
-  }
-
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    return raw;
   }
 
   const compactMatch = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
@@ -811,6 +840,7 @@ export async function saveSalesForceStatusAction(
 
   const noEmpleado = parseOptionalInteger(formData.get("no_empleado"));
   const baseIncentivos = parseOptionalNumber(formData.get("base_incentivos"));
+  const normalizedFechaIngreso = normalizeDateInput(fechaIngreso);
   const validSincePeriod =
     normalizeDateInput(validSincePeriodInput) ?? DEFAULT_VALID_SINCE_PERIOD;
 
@@ -901,13 +931,13 @@ export async function saveSalesForceStatusAction(
     linea_principal: lineaPrincipal,
     parrilla,
     nombre_completo: nombreCompleto,
-    no_empleado: noEmpleado,
+    no_empleado: isVacant || noEmpleado === 0 ? null : noEmpleado,
     territorio_padre: territorioPadre,
     territorio_individual: territorioIndividual,
     puesto,
     correo_electronico: correo || null,
     ciudad: ciudad || null,
-    fecha_ingreso: fechaIngreso || null,
+    fecha_ingreso: normalizedFechaIngreso,
     valid_since_period: validSincePeriod,
     team_id: teamId,
     base_incentivos: baseIncentivos,

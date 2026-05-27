@@ -6,9 +6,13 @@ import { ReglasRankingImportCard } from "@/components/admin/reglas-ranking-impor
 import { ReglasRankingDetailTable } from "@/components/admin/reglas-ranking-detail-table";
 import { RankingContestsCard } from "@/components/admin/ranking-contests-card";
 import { RankingParticipationCard } from "@/components/admin/ranking-participation-card";
+import { RankingCpdObjectivesCard } from "@/components/admin/ranking-cpd-objectives-card";
 import type { ReglasRankingPageData } from "@/lib/admin/reglas-ranking/get-reglas-ranking-page-data";
 import type { RankingContestsData } from "@/lib/admin/reglas-ranking/get-ranking-contests-data";
 import type { RankingParticipationData } from "@/lib/admin/reglas-ranking/get-ranking-participation-data";
+import type { RankingCpdObjectivesData } from "@/lib/admin/reglas-ranking/get-ranking-cpd-objectives-data";
+
+type TabKey = "concursos" | "puntos" | "participacion" | "cpd";
 
 type Props = {
   periodInput: string;
@@ -16,6 +20,7 @@ type Props = {
   puntosData: ReglasRankingPageData;
   contestsData: RankingContestsData;
   participationData: RankingParticipationData;
+  cpdObjectivesData: RankingCpdObjectivesData;
 };
 
 export function ReglasRankingTabs({
@@ -24,8 +29,16 @@ export function ReglasRankingTabs({
   puntosData,
   contestsData,
   participationData,
+  cpdObjectivesData,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<"concursos" | "puntos" | "participacion">("concursos");
+  const [activeTab, setActiveTab] = useState<TabKey>("concursos");
+
+  const tabButtonClass = (tab: TabKey) =>
+    `rounded-2xl border px-3 py-2 text-sm font-medium ${
+      activeTab === tab
+        ? "border-neutral-900 bg-neutral-900 text-white"
+        : "border-neutral-300 bg-white text-neutral-800 hover:bg-neutral-50"
+    }`;
 
   return (
     <>
@@ -34,38 +47,17 @@ export function ReglasRankingTabs({
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Reglas de Ranking</h1>
 
         <div className="mt-4 flex flex-wrap gap-2">
-           <button
-            type="button"
-            onClick={() => setActiveTab("concursos")}
-            className={`rounded-2xl border px-3 py-2 text-sm font-medium ${
-              activeTab === "concursos"
-                ? "border-neutral-900 bg-neutral-900 text-white"
-                : "border-neutral-300 bg-white text-neutral-800 hover:bg-neutral-50"
-            }`}
-          >
+          <button type="button" onClick={() => setActiveTab("concursos")} className={tabButtonClass("concursos")}>
             Concursos Ranking
           </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("puntos")}
-            className={`rounded-2xl border px-3 py-2 text-sm font-medium ${
-              activeTab === "puntos"
-                ? "border-neutral-900 bg-neutral-900 text-white"
-                : "border-neutral-300 bg-white text-neutral-800 hover:bg-neutral-50"
-            }`}
-          >
+          <button type="button" onClick={() => setActiveTab("puntos")} className={tabButtonClass("puntos")}>
             Puntos Ranking
           </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("participacion")}
-            className={`rounded-2xl border px-3 py-2 text-sm font-medium ${
-              activeTab === "participacion"
-                ? "border-neutral-900 bg-neutral-900 text-white"
-                : "border-neutral-300 bg-white text-neutral-800 hover:bg-neutral-50"
-            }`}
-          >
-            Participación Equipos
+          <button type="button" onClick={() => setActiveTab("participacion")} className={tabButtonClass("participacion")}>
+            Participacion Equipos
+          </button>
+          <button type="button" onClick={() => setActiveTab("cpd")} className={tabButtonClass("cpd")}>
+            Objetivos CPD
           </button>
         </div>
       </header>
@@ -126,12 +118,18 @@ export function ReglasRankingTabs({
           contestsStorageMessage={contestsData.contestsStorageMessage}
           contests={contestsData.contests}
         />
-      ) : (
+      ) : activeTab === "participacion" ? (
         <RankingParticipationCard
           storageReady={participationData.storageReady}
           storageMessage={participationData.storageMessage}
           groups={participationData.groups}
           contests={participationData.contests}
+        />
+      ) : (
+        <RankingCpdObjectivesCard
+          storageReady={cpdObjectivesData.storageReady}
+          storageMessage={cpdObjectivesData.storageMessage}
+          rows={cpdObjectivesData.rows}
         />
       )}
     </>

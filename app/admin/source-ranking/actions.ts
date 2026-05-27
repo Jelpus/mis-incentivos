@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
+  getCurrentPeriodMonth,
   getMissingRelationName,
   isMissingRelationError,
   normalizePeriodMonthInput,
@@ -16,11 +17,18 @@ import {
 } from "@/lib/admin/source-ranking/normalize-kpi-local-ytd";
 import {
   aggregateIcva48hrsRawRows,
+  type Icva48AggRow,
   type IcvaKpiReferenceRow,
   normalizeIcva48hrsRaw,
 } from "@/lib/admin/source-ranking/normalize-icva-48hrs";
 
 const MAX_SOURCE_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+
+type IcvaAggUpsertSummary = {
+  inserted: number;
+  updated: number;
+  skipped: number;
+};
 
 export type UploadSourceRankingFileResult =
   | {
@@ -59,6 +67,174 @@ function sanitizeUploadedFileName(fileName: string): string {
   return safeName;
 }
 
+function getMaxPeriodMonth(values: Array<string | null | undefined>, fallback: string): string {
+  const normalizedValues = values
+    .map((value) => normalizePeriodMonthInput(value))
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => b.localeCompare(a));
+
+  return normalizedValues[0] ?? fallback;
+}
+
+function toComparableNumber(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.round(parsed * 1_000_000) / 1_000_000;
+}
+
+function makeIcvaAggKey(row: {
+  period_month?: unknown;
+  territorio_individual?: unknown;
+  empleado?: unknown;
+}) {
+  const periodMonth = normalizePeriodMonthInput(String(row.period_month ?? "").trim()) ?? "";
+  const territory = String(row.territorio_individual ?? "").trim().toUpperCase();
+  const empleadoRaw = row.empleado;
+  const empleado = empleadoRaw === null || empleadoRaw === undefined || String(empleadoRaw).trim() === ""
+    ? "na"
+    : String(Number(empleadoRaw));
+  return `${periodMonth}|${territory}|${empleado}`;
+}
+
+function hasIcvaAggChanges(
+  existing: {
+    nombre?: unknown;
+    total_calls?: unknown;
+    icva_calls?: unknown;
+    on_time_call?: unknown;
+    on_time_icva?: unknown;
+    pct_48h?: unknown;
+    pct_icva?: unknown;
+  },
+  next: Icva48AggRow,
+) {
+  return (
+    String(existing.nombre ?? "").trim() !== String(next.nombre ?? "").trim() ||
+    toComparableNumber(existing.total_calls) !== toComparableNumber(next.total_calls) ||
+    toComparableNumber(existing.icva_calls) !== toComparableNumber(next.icva_calls) ||
+    toComparableNumber(existing.on_time_call) !== toComparableNumber(next.on_time_call) ||
+    toComparableNumber(existing.on_time_icva) !== toComparableNumber(next.on_time_icva) ||
+    toComparableNumber(existing.pct_48h) !== toComparableNumber(next.pct_48h) ||
+    toComparableNumber(existing.pct_icva) !== toComparableNumber(next.pct_icva)
+  );
+}
+
+async function syncIcvaAggRows(params: {
+  supabase: NonNullable<ReturnType<typeof createAdminClient>>;
+  periods: string[];
+  rows: Icva48AggRow[];
+}): Promise<{ ok: true; summary: IcvaAggUpsertSummary } | { ok: false; message: string }> {
+  if (params.rows.length === 0) {
+    return { ok: true, summary: { inserted: 0, updated: 0, skipped: 0 } };
+  }
+
+  const existingResult = await params.supabase
+    .from("ranking_icva_48hrs_agg")
+    .select("id, period_month, territorio_individual, empleado, nombre, total_calls, icva_calls, on_time_call, on_time_icva, pct_48h, pct_icva")
+    .in("period_month", params.periods);
+
+  if (existingResult.error) {
+    if (isMissingRelationError(existingResult.error)) {
+      const tableName = getMissingRelationName(existingResult.error) ?? "ranking_icva_48hrs_agg";
+      return {
+        ok: false,
+        message: `Archivo cargado, pero falta la tabla ${tableName}. Ejecuta docs/source-ranking-icva-48hrs-agg-schema.sql y vuelve a subir el archivo.`,
+      };
+    }
+    return {
+      ok: false,
+      message: `Archivo cargado, pero no se pudo leer ICVA agregado existente: ${existingResult.error.message}`,
+    };
+  }
+
+  type ExistingAggRow = {
+    id: string;
+    period_month: string | null;
+    territorio_individual: string | null;
+    empleado: number | string | null;
+    nombre: string | null;
+    total_calls: number | string | null;
+    icva_calls: number | string | null;
+    on_time_call: number | string | null;
+    on_time_icva: number | string | null;
+    pct_48h: number | string | null;
+    pct_icva: number | string | null;
+  };
+
+  const existingByKey = new Map<string, ExistingAggRow>();
+  for (const row of (existingResult.data ?? []) as ExistingAggRow[]) {
+    const key = makeIcvaAggKey(row);
+    if (!key || existingByKey.has(key)) continue;
+    existingByKey.set(key, row);
+  }
+
+  const inserts: Icva48AggRow[] = [];
+  const updates: Array<{ id: string; row: Icva48AggRow }> = [];
+  let skipped = 0;
+
+  for (const row of params.rows) {
+    const key = makeIcvaAggKey(row);
+    const existing = existingByKey.get(key);
+    if (!existing) {
+      inserts.push(row);
+      continue;
+    }
+    if (hasIcvaAggChanges(existing, row)) {
+      updates.push({ id: existing.id, row });
+    } else {
+      skipped += 1;
+    }
+  }
+
+  if (inserts.length > 0) {
+    const insertResult = await params.supabase.from("ranking_icva_48hrs_agg").insert(inserts);
+    if (insertResult.error) {
+      if (isMissingRelationError(insertResult.error)) {
+        const tableName = getMissingRelationName(insertResult.error) ?? "ranking_icva_48hrs_agg";
+        return {
+          ok: false,
+          message: `Archivo cargado, pero falta la tabla ${tableName}. Ejecuta docs/source-ranking-icva-48hrs-agg-schema.sql y vuelve a subir el archivo.`,
+        };
+      }
+      return {
+        ok: false,
+        message: `Archivo cargado, pero no se pudo insertar ICVA agregado: ${insertResult.error.message}`,
+      };
+    }
+  }
+
+  for (const item of updates) {
+    const updateResult = await params.supabase
+      .from("ranking_icva_48hrs_agg")
+      .update({
+        nombre: item.row.nombre,
+        total_calls: item.row.total_calls,
+        icva_calls: item.row.icva_calls,
+        on_time_call: item.row.on_time_call,
+        on_time_icva: item.row.on_time_icva,
+        pct_48h: item.row.pct_48h,
+        pct_icva: item.row.pct_icva,
+      })
+      .eq("id", item.id);
+
+    if (updateResult.error) {
+      return {
+        ok: false,
+        message: `Archivo cargado, pero no se pudo actualizar ICVA agregado: ${updateResult.error.message}`,
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    summary: {
+      inserted: inserts.length,
+      updated: updates.length,
+      skipped,
+    },
+  };
+}
+
 export async function uploadSourceRankingFileAction(
   _prevState: UploadSourceRankingFileResult | null,
   formData: FormData,
@@ -73,10 +249,7 @@ export async function uploadSourceRankingFileAction(
   const displayNameInput = String(formData.get("display_name") ?? "").trim();
   const uploadedFile = formData.get("file");
 
-  const periodMonth = normalizePeriodMonthInput(periodInput);
-  if (!periodMonth) {
-    return { ok: false, message: "Periodo invalido. Usa formato YYYY-MM o YYYY-MM-01." };
-  }
+  const requestedPeriodMonth = normalizePeriodMonthInput(periodInput);
 
   if (!(uploadedFile instanceof File)) {
     return { ok: false, message: "Debes seleccionar un archivo." };
@@ -102,6 +275,25 @@ export async function uploadSourceRankingFileAction(
   if (!supabase) {
     return { ok: false, message: "Admin client no disponible." };
   }
+
+  const latestStatusPeriodResult = await supabase
+    .from("sales_force_status")
+    .select("period_month")
+    .eq("is_deleted", false)
+    .order("period_month", { ascending: false })
+    .limit(1);
+
+  if (latestStatusPeriodResult.error) {
+    return {
+      ok: false,
+      message: `No se pudo buscar el ultimo status disponible: ${latestStatusPeriodResult.error.message}`,
+    };
+  }
+
+  const latestStatusPeriod = normalizePeriodMonthInput(
+    String(latestStatusPeriodResult.data?.[0]?.period_month ?? "").trim(),
+  );
+  const periodMonth = requestedPeriodMonth ?? latestStatusPeriod ?? getCurrentPeriodMonth();
 
   const bucketName =
     process.env.SUPABASE_SOURCE_RANKING_BUCKET ??
@@ -136,9 +328,6 @@ export async function uploadSourceRankingFileAction(
     }
   }
 
-  const safeFileName = sanitizeUploadedFileName(uploadedFile.name);
-  const safeCodeChunk = sanitizeStoragePathChunk(fileCodeInput) || "source-ranking";
-  const targetPath = `${periodMonth.slice(0, 7)}/${safeCodeChunk}/${Date.now()}-${safeFileName}`;
   const fileBuffer = Buffer.from(await uploadedFile.arrayBuffer());
 
   let kpiNormalization:
@@ -218,27 +407,18 @@ export async function uploadSourceRankingFileAction(
           .select("territory_source, status_nombre_source, matched_empleado, matched_nombre")
           .eq("period_month", periodMonth);
 
+        let kpiReferenceRows: IcvaKpiReferenceRow[] = [];
         if (kpiReferenceResult.error) {
           if (isMissingRelationError(kpiReferenceResult.error)) {
-            const tableName = getMissingRelationName(kpiReferenceResult.error) ?? "ranking_kpi_local_ytd_raw";
+            kpiReferenceRows = [];
+          } else {
             return {
               ok: false,
-              message: `Para cargar ICVA primero debe existir ${tableName}. Ejecuta docs/source-ranking-kpi-local-ytd-raw-schema.sql y carga KPI Local YTD.`,
+              message: `No se pudo cargar KPI Local YTD como referencia para ICVA: ${kpiReferenceResult.error.message}`,
             };
           }
-
-          return {
-            ok: false,
-            message: `No se pudo cargar KPI Local YTD como referencia para ICVA: ${kpiReferenceResult.error.message}`,
-          };
-        }
-
-        const kpiReferenceRows = (kpiReferenceResult.data ?? []) as IcvaKpiReferenceRow[];
-        if (kpiReferenceRows.length === 0) {
-          return {
-            ok: false,
-            message: "Carga primero KPI Local YTD para este periodo. ICVA necesita STATUS.NOMBRE y STATUS.TERRITORIO de KPI para asignar rutas.",
-          };
+        } else {
+          kpiReferenceRows = (kpiReferenceResult.data ?? []) as IcvaKpiReferenceRow[];
         }
 
         icvaNormalization = normalizeIcva48hrsRaw({
@@ -259,6 +439,13 @@ export async function uploadSourceRankingFileAction(
     }
   }
 
+  const metadataPeriodMonth = icvaNormalization
+    ? getMaxPeriodMonth(icvaNormalization.rows.map((row) => row.period_month), periodMonth)
+    : periodMonth;
+  const safeFileName = sanitizeUploadedFileName(uploadedFile.name);
+  const safeCodeChunk = sanitizeStoragePathChunk(fileCodeInput) || "source-ranking";
+  const targetPath = `${metadataPeriodMonth.slice(0, 7)}/${safeCodeChunk}/${Date.now()}-${safeFileName}`;
+
   const uploadResult = await supabase.storage.from(bucketName).upload(targetPath, fileBuffer, {
     cacheControl: "3600",
     upsert: true,
@@ -274,7 +461,7 @@ export async function uploadSourceRankingFileAction(
 
   const metadataResult = await supabase.from("ranking_source_files").upsert(
     {
-      period_month: periodMonth,
+      period_month: metadataPeriodMonth,
       file_code: fileCodeInput,
       display_name: displayNameInput || requiredFile.displayName,
       original_file_name: uploadedFile.name,
@@ -396,10 +583,18 @@ export async function uploadSourceRankingFileAction(
   }
 
   if (icvaNormalization) {
+    const icvaPeriods = Array.from(
+      new Set(
+        icvaNormalization.rows
+          .map((row) => normalizePeriodMonthInput(row.period_month))
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    const periodsToReplace = icvaPeriods.length > 0 ? icvaPeriods : [periodMonth];
     const deleteRawResult = await supabase
       .from("ranking_icva_48hrs_raw")
       .delete()
-      .eq("period_month", periodMonth);
+      .in("period_month", periodsToReplace);
 
     if (deleteRawResult.error) {
       if (isMissingRelationError(deleteRawResult.error)) {
@@ -438,78 +633,32 @@ export async function uploadSourceRankingFileAction(
     const aggregatedRows = aggregateIcva48hrsRawRows(icvaNormalization.rows);
     aggregatedRowsCount = aggregatedRows.length;
 
-    const deleteAggResult = await supabase
-      .from("ranking_icva_48hrs_agg")
-      .delete()
-      .eq("period_month", periodMonth);
+    const aggSyncResult = await syncIcvaAggRows({
+      supabase,
+      periods: periodsToReplace,
+      rows: aggregatedRows,
+    });
 
-    if (deleteAggResult.error) {
-      if (isMissingRelationError(deleteAggResult.error)) {
-        const tableName = getMissingRelationName(deleteAggResult.error) ?? "ranking_icva_48hrs_agg";
-        return {
-          ok: false,
-          message: `Archivo cargado, pero falta la tabla ${tableName}. Ejecuta docs/source-ranking-icva-48hrs-agg-schema.sql y vuelve a subir el archivo.`,
-        };
-      }
+    if (!aggSyncResult.ok) {
       return {
         ok: false,
-        message: `Archivo cargado, pero no se pudo limpiar ICVA agregado del periodo: ${deleteAggResult.error.message}`,
+        message: aggSyncResult.message,
       };
     }
 
-    if (aggregatedRows.length > 0) {
-      const insertAggResult = await supabase.from("ranking_icva_48hrs_agg").insert(
-        aggregatedRows,
-      );
-
-      if (insertAggResult.error) {
-        if (isMissingRelationError(insertAggResult.error)) {
-          const tableName = getMissingRelationName(insertAggResult.error) ?? "ranking_icva_48hrs_agg";
-          return {
-            ok: false,
-            message: `Archivo cargado, pero falta la tabla ${tableName}. Ejecuta docs/source-ranking-icva-48hrs-agg-schema.sql y vuelve a subir el archivo.`,
-          };
-        }
-        return {
-          ok: false,
-          message: `Archivo cargado, pero no se pudo guardar ICVA agregado: ${insertAggResult.error.message}`,
-        };
-      }
-    }
-
-    const unmatchedFilePreviewList = icvaNormalization.summary.unmatchedFileNames;
-    const statusFallbackPreviewList = icvaNormalization.summary.statusFallbackMatchedNames;
-    const statusFallbackHintPreviewList = icvaNormalization.summary.statusFallbackKpiCandidateHints;
-    const referenceWithoutDataPreviewList = icvaNormalization.summary.kpiReferenceWithoutIcvaNames;
+    const previewLimit = 8;
+    const unmatchedFilePreviewList = icvaNormalization.summary.unmatchedFileNames.slice(0, previewLimit);
     const unmatchedFilePreview = unmatchedFilePreviewList.join(", ");
-    const statusFallbackPreview = statusFallbackPreviewList.join(", ");
-    const statusFallbackHintPreview = statusFallbackHintPreviewList.join("; ");
-    const referenceWithoutDataPreview = referenceWithoutDataPreviewList.join(", ");
     const unmatchedFileRemaining =
       icvaNormalization.summary.unmatchedFileNames.length - unmatchedFilePreviewList.length;
-    const statusFallbackRemaining =
-      icvaNormalization.summary.statusFallbackMatchedNames.length - statusFallbackPreviewList.length;
-    const referenceWithoutDataRemaining =
-      icvaNormalization.summary.kpiReferenceWithoutIcvaNames.length - referenceWithoutDataPreviewList.length;
+    const matchedRows = icvaNormalization.summary.normalizedRows - icvaNormalization.summary.unmatchedRows;
 
     normalizationSummary =
-      `ICVA raw: ${icvaNormalization.rows.length} filas | agregado: ${aggregatedRows.length} reps | ` +
-      `match nombre: ${icvaNormalization.summary.nameMatchedRows} ` +
-      `(KPI: ${icvaNormalization.summary.kpiMatchedRows}, status fallback: ${icvaNormalization.summary.statusFallbackMatchedRows}) | ` +
-      `sin match: ${icvaNormalization.summary.unmatchedRows}. ` +
-      (statusFallbackPreview
-        ? `Fallback status (mostrando ${statusFallbackPreviewList.length}): [${statusFallbackPreview}]${statusFallbackRemaining > 0 ? ` +${statusFallbackRemaining} mas` : ""}. `
-        : "") +
-      (statusFallbackHintPreview
-        ? `Mejor candidato KPI para fallback: [${statusFallbackHintPreview}]. `
-        : "") +
-      `Sin relacion (archivo): ${icvaNormalization.summary.unmatchedFileNames.length}` +
+      `ICVA raw: ${icvaNormalization.rows.length} filas | periodos: ${periodsToReplace.length} | agregado: ${aggregatedRows.length} reps | ` +
+      `insert: ${aggSyncResult.summary.inserted} | update: ${aggSyncResult.summary.updated} | skip: ${aggSyncResult.summary.skipped} | ` +
+      `relacionadas: ${matchedRows} | sin relacion: ${icvaNormalization.summary.unmatchedRows}` +
       (unmatchedFilePreview
-        ? ` (mostrando ${unmatchedFilePreviewList.length}): [${unmatchedFilePreview}]${unmatchedFileRemaining > 0 ? ` +${unmatchedFileRemaining} mas` : ""}`
-        : "") +
-      `. Nombres KPI sin data ICVA: ${icvaNormalization.summary.kpiReferenceWithoutIcvaNames.length}` +
-      (referenceWithoutDataPreview
-        ? ` (mostrando ${referenceWithoutDataPreviewList.length}): [${referenceWithoutDataPreview}]${referenceWithoutDataRemaining > 0 ? ` +${referenceWithoutDataRemaining} mas` : ""}`
+        ? `. Revisa sin relacion: [${unmatchedFilePreview}]${unmatchedFileRemaining > 0 ? ` +${unmatchedFileRemaining} mas` : ""}`
         : "");
   }
 
@@ -518,7 +667,7 @@ export async function uploadSourceRankingFileAction(
   return {
     ok: true,
     message: normalizationSummary ? `Archivo cargado correctamente. ${normalizationSummary}` : "Archivo cargado correctamente.",
-    periodMonth,
+    periodMonth: metadataPeriodMonth,
     fileCode: fileCodeInput,
     uploadedPath: targetPath,
     normalizedRows: kpiNormalization?.rows.length ?? icvaNormalization?.rows.length,
@@ -528,7 +677,7 @@ export async function uploadSourceRankingFileAction(
 }
 
 export async function createSourceRankingFileDownloadUrlAction(params: {
-  periodMonth: string;
+  periodMonth?: string | null;
   fileCode: string;
 }): Promise<DownloadSourceRankingFileResult> {
   const { user, role, isActive } = await getCurrentAuthContext();
@@ -538,8 +687,8 @@ export async function createSourceRankingFileDownloadUrlAction(params: {
 
   const periodMonth = normalizePeriodMonthInput(params.periodMonth);
   const fileCode = String(params.fileCode ?? "").trim().toLowerCase();
-  if (!periodMonth || !fileCode) {
-    return { ok: false, message: "Periodo o archivo invalido." };
+  if (!fileCode) {
+    return { ok: false, message: "Archivo invalido." };
   }
 
   const requiredFile = RANKING_REQUIRED_FILES.find((item) => item.fileCode === fileCode);
@@ -553,16 +702,22 @@ export async function createSourceRankingFileDownloadUrlAction(params: {
   }
 
   const metadataSelect = "original_file_name, storage_bucket, storage_path";
-  let metadataResult = await supabase
+  let metadataQuery = supabase
     .from("ranking_source_files")
     .select(metadataSelect)
-    .eq("period_month", periodMonth)
     .eq("file_code", fileCode)
-    .maybeSingle<{
-      original_file_name: string | null;
-      storage_bucket: string | null;
-      storage_path: string | null;
-    }>();
+    .order("uploaded_at", { ascending: false })
+    .limit(1);
+
+  if (periodMonth) {
+    metadataQuery = metadataQuery.eq("period_month", periodMonth);
+  }
+
+  const metadataResult = await metadataQuery.maybeSingle<{
+    original_file_name: string | null;
+    storage_bucket: string | null;
+    storage_path: string | null;
+  }>();
 
   if (metadataResult.error) {
     if (isMissingRelationError(metadataResult.error)) {
@@ -577,27 +732,6 @@ export async function createSourceRankingFileDownloadUrlAction(params: {
       ok: false,
       message: `No se pudo cargar metadata del archivo: ${metadataResult.error.message}`,
     };
-  }
-
-  if (!metadataResult.data) {
-    metadataResult = await supabase
-      .from("ranking_source_files")
-      .select(metadataSelect)
-      .eq("file_code", fileCode)
-      .order("uploaded_at", { ascending: false })
-      .limit(1)
-      .maybeSingle<{
-        original_file_name: string | null;
-        storage_bucket: string | null;
-        storage_path: string | null;
-      }>();
-
-    if (metadataResult.error) {
-      return {
-        ok: false,
-        message: `No se pudo buscar el ultimo archivo cargado: ${metadataResult.error.message}`,
-      };
-    }
   }
 
   const metadata = metadataResult.data;
