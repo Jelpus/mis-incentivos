@@ -34,7 +34,7 @@ export default async function ControlAccesoPage() {
           </div>
         </div>
 
-        <div className="mt-4 rounded-xl border border-[#e3ebfa] bg-[#f8fbff] p-4 sm:p-5">
+        <div className="mt-4">
           <ImpersonationDebugCard currentImpersonation={impersonation} />
         </div>
       </div>
