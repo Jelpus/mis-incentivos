@@ -8,6 +8,12 @@ type SalesForceStatusRow = {
 
 type FlatRow = Record<string, unknown>;
 
+export type DiasCicloRow = {
+  period: string | null;
+  period_month: string | null;
+  dias_ciclo: number | string | null;
+};
+
 export type KpiLocalYtdRawRow = {
   period_month: string;
   annio_mes: string;
@@ -42,12 +48,28 @@ export type KpiAggregatedRow = {
   garantia: boolean;
 };
 
+export type RankingCpdRawRow = {
+  period_month: string;
+  territorio_individual: string;
+  empleado: number | null;
+  nombre: string;
+  dias_ciclo: number;
+  tft: number;
+  dias_efectivos: number;
+  visitas: number;
+  cpd: number;
+};
+
 type NormalizeResult = {
   rows: KpiLocalYtdRawRow[];
+  cpdRows: RankingCpdRawRow[];
   summary: {
     processedRows: number;
     ytdRows: number;
     rawRows: number;
+    cpdRows: number;
+    tftRows: number;
+    cpdRowsWithoutDiasCiclo: number;
     nameMatchedRows: number;
     territoryFallbackRows: number;
     unmatchedRows: number;
@@ -145,6 +167,14 @@ function toYyMmCode(value: unknown): string | null {
   return null;
 }
 
+function yyMmToPeriodMonth(value: string): string | null {
+  if (!/^\d{4}$/.test(value)) return null;
+  const year = Number(value.slice(0, 2)) + 2000;
+  const month = Number(value.slice(2, 4));
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+  return `${year}-${String(month).padStart(2, "0")}-01`;
+}
+
 function tokenSet(value: string): Set<string> {
   return new Set(
     normalizeText(value)
@@ -224,10 +254,22 @@ function buildYtdCodes(periodMonth: string, catCalenRows: FlatRow[]): Set<string
   );
 }
 
+function buildDiasCicloByPeriod(rows: DiasCicloRow[]) {
+  const byPeriod = new Map<string, number>();
+  for (const row of rows) {
+    const period = String(row.period ?? "").trim();
+    const diasCiclo = parseNumber(row.dias_ciclo);
+    if (!period || diasCiclo <= 0) continue;
+    byPeriod.set(period, diasCiclo);
+  }
+  return byPeriod;
+}
+
 export function normalizeKpiLocalYtdRaw(params: {
   fileBuffer: Buffer;
   periodMonth: string;
   salesForceRows: SalesForceStatusRow[];
+  diasCicloRows?: DiasCicloRow[];
   minimumNameMatchScore?: number;
 }): NormalizeResult {
   const minimumNameMatchScore = params.minimumNameMatchScore ?? 80;
@@ -244,10 +286,12 @@ export function normalizeKpiLocalYtdRaw(params: {
   const baseVisitasRows = findSheet(rowsBySheetName, "BASE VISITAS");
   const catGarantiaRows = findSheet(rowsBySheetName, "CAT_GARANTIA");
   const catCalenRows = findSheet(rowsBySheetName, "CAT CALEN");
+  const tftReporteRows = findSheet(rowsBySheetName, "TFT REPORTE");
 
   if (!baseVisitasRows) throw new Error('No se encontro la pestana "BASE VISITAS".');
   if (!catGarantiaRows) throw new Error('No se encontro la pestana "CAT_GARANTIA".');
   if (!catCalenRows) throw new Error('No se encontro la pestana "CAT CALEN".');
+  if (!tftReporteRows) throw new Error('No se encontro la pestana "TFT REPORTE".');
 
   const ytdCodes = buildYtdCodes(params.periodMonth, catCalenRows);
 
@@ -362,12 +406,83 @@ export function normalizeKpiLocalYtdRaw(params: {
     });
   }
 
+  const diasCicloByPeriod = buildDiasCicloByPeriod(params.diasCicloRows ?? []);
+  const tftByPeriodTerritory = new Map<string, number>();
+  let tftRows = 0;
+  for (const row of tftReporteRows) {
+    const period = toYyMmCode(getValueByKeys(row, ["FECHA", "ANNIO_MES", "ANIO_MES", "PERIODO", "MES"]));
+    const territorio = String(getValueByKeys(row, ["STATUS.TERRITORIO", "TERRITORIO", "RUTA"]) ?? "")
+      .trim()
+      .toUpperCase();
+    if (!period || !ytdCodes.has(period) || !territorio) continue;
+    const tft = parseNumber(getValueByKeys(row, ["TFT - DIAS", "TFT_DIAS", "TFT DIAS", "TFT"]));
+    const key = `${period}|${territorio}`;
+    tftByPeriodTerritory.set(key, (tftByPeriodTerritory.get(key) ?? 0) + tft);
+    tftRows += 1;
+  }
+
+  type CpdGroup = {
+    period: string;
+    period_month: string;
+    territorio_individual: string;
+    empleado: number | null;
+    nombre: string;
+    visitas: number;
+  };
+  const cpdGroups = new Map<string, CpdGroup>();
+  for (const row of outputRows) {
+    const periodMonth = yyMmToPeriodMonth(row.annio_mes);
+    if (!periodMonth) continue;
+    const territorio = row.matched_territorio_individual ?? row.territory_source;
+    const empleado = row.matched_empleado ?? null;
+    const nombre = row.matched_nombre ?? row.status_nombre_source ?? "Sin nombre";
+    const key = `${row.annio_mes}|${territorio.toUpperCase()}|${empleado ?? "na"}`;
+    const current = cpdGroups.get(key) ?? {
+      period: row.annio_mes,
+      period_month: periodMonth,
+      territorio_individual: territorio,
+      empleado,
+      nombre,
+      visitas: 0,
+    };
+    current.visitas += row.visitas_tot;
+    cpdGroups.set(key, current);
+  }
+
+  let cpdRowsWithoutDiasCiclo = 0;
+  const cpdRows: RankingCpdRawRow[] = [];
+  for (const group of cpdGroups.values()) {
+    const diasCiclo = diasCicloByPeriod.get(group.period);
+    if (!diasCiclo || diasCiclo <= 0) {
+      cpdRowsWithoutDiasCiclo += 1;
+      continue;
+    }
+    const tft = tftByPeriodTerritory.get(`${group.period}|${group.territorio_individual.toUpperCase()}`) ?? 0;
+    const diasEfectivos = Math.max(0, diasCiclo - tft);
+    const cpd = diasEfectivos > 0 ? group.visitas / diasEfectivos : 0;
+    cpdRows.push({
+      period_month: group.period_month,
+      territorio_individual: group.territorio_individual,
+      empleado: group.empleado,
+      nombre: group.nombre,
+      dias_ciclo: Number(diasCiclo.toFixed(6)),
+      tft: Number(tft.toFixed(6)),
+      dias_efectivos: Number(diasEfectivos.toFixed(6)),
+      visitas: Number(group.visitas.toFixed(6)),
+      cpd: Number(cpd.toFixed(6)),
+    });
+  }
+
   return {
     rows: outputRows,
+    cpdRows,
     summary: {
       processedRows: baseVisitasRows.length,
       ytdRows,
       rawRows: outputRows.length,
+      cpdRows: cpdRows.length,
+      tftRows,
+      cpdRowsWithoutDiasCiclo,
       nameMatchedRows,
       territoryFallbackRows,
       unmatchedRows,

@@ -63,9 +63,24 @@ type IcvaAggRow = {
   on_time_icva: number | null;
 };
 
+type CpdRawRow = {
+  period_month: string | null;
+  territorio_individual: string | null;
+  empleado: number | null;
+  nombre: string | null;
+  dias_efectivos: number | null;
+  visitas: number | null;
+};
+
 type TeamMemberRow = {
   territorio_individual: string | null;
   no_empleado: number | null;
+};
+
+type StatusTeamRow = {
+  territorio_individual: string | null;
+  no_empleado: number | null;
+  team_id: string | null;
 };
 
 export type RankingScope = "self" | "manager_team" | "all";
@@ -83,6 +98,7 @@ export type RankingPerformanceRow = {
   territorio: string;
   empleado: number | null;
   callPlanAdherence: RankingMetricDetail;
+  coberturaCpd: RankingMetricDetail;
   ayudasVisuales: RankingMetricDetail;
   documentacion48h: RankingMetricDetail;
   metCount: number;
@@ -97,6 +113,8 @@ export type PerfilRankingData = {
   periodMonth: string | null;
   periodLabel: string;
   availablePeriods: string[];
+  selectedPerformancePeriods: string[];
+  performanceMode: "ytd" | "custom";
   contestsData: RankingContestsData;
   contestRankingData: RankingContestData;
   performanceRows: RankingPerformanceRow[];
@@ -121,6 +139,36 @@ function safeCoverage(numerator: number, denominator: number): number {
 
 function normalizeTerritory(value: string | null | undefined): string {
   return String(value ?? "").trim();
+}
+
+function getYtdPeriods(periodMonth: string, availablePeriods: string[]) {
+  const ytdStart = getYtdStartPeriod(periodMonth);
+  return availablePeriods
+    .filter((period) => period >= ytdStart && period <= periodMonth)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function resolvePerformancePeriods(params: {
+  requestedPerformancePeriods?: string[] | null;
+  periodMonth: string;
+  availablePeriods: string[];
+}) {
+  const requested = Array.from(
+    new Set(
+      (params.requestedPerformancePeriods ?? [])
+        .map((period) => normalizePeriodMonthInput(period))
+        .filter((period): period is string => Boolean(period && params.availablePeriods.includes(period))),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+
+  if (requested.length > 0) {
+    return { periods: requested, mode: "custom" as const };
+  }
+
+  return {
+    periods: getYtdPeriods(params.periodMonth, params.availablePeriods),
+    mode: "ytd" as const,
+  };
 }
 
 function getYtdStartPeriod(periodMonth: string): string {
@@ -305,6 +353,7 @@ function chunkArray<T>(items: T[], size: number): T[][] {
 
 async function loadRankingAggRows(params: {
   periodMonth: string;
+  performancePeriods: string[];
   scope: RankingScope;
   employeeIds: number[];
   territories: string[];
@@ -312,89 +361,153 @@ async function loadRankingAggRows(params: {
   const supabase = createAdminClient();
   const kpiRows: KpiAggRow[] = [];
   const icvaRows: IcvaAggRow[] = [];
-  if (!supabase) return { kpiRows, icvaRows, error: "Admin client no disponible." };
+  const cpdRows: CpdRawRow[] = [];
+  const statusTeamRows: StatusTeamRow[] = [];
+  const cpdObjectiveByTeamId = new Map<string, number>();
+  if (!supabase) return { kpiRows, icvaRows, cpdRows, statusTeamRows, cpdObjectiveByTeamId, error: "Admin client no disponible." };
   const adminClient = supabase;
-  const ytdStartPeriod = getYtdStartPeriod(params.periodMonth);
+  const performancePeriods = params.performancePeriods.length > 0 ? params.performancePeriods : [params.periodMonth];
+
+  async function loadCpdObjectives() {
+    const result = await adminClient
+      .from("ranking_cpd_objectives")
+      .select("team_id, objective_cpd")
+      .eq("is_active", true);
+
+    if (result.error) return;
+    for (const row of (result.data ?? []) as Array<{ team_id: string | null; objective_cpd: number | string | null }>) {
+      const teamId = String(row.team_id ?? "").trim();
+      const objective = toPositiveNumber(row.objective_cpd);
+      if (teamId && objective > 0) cpdObjectiveByTeamId.set(teamId, objective);
+    }
+  }
+
+  async function loadStatusTeamRows() {
+    const statusPeriod = await getLatestStatusPeriod(params.periodMonth);
+    if (!statusPeriod) return;
+
+    let query = adminClient
+      .from("sales_force_status")
+      .select("territorio_individual, no_empleado, team_id")
+      .eq("period_month", statusPeriod)
+      .eq("is_deleted", false);
+
+    if (params.scope !== "all") {
+      if (params.employeeIds.length > 0) {
+        query = query.in("no_empleado", params.employeeIds);
+      } else if (params.territories.length > 0) {
+        query = query.in("territorio_individual", params.territories);
+      }
+    } else {
+      query = query.limit(5000);
+    }
+
+    const result = await query;
+    if (!result.error) statusTeamRows.push(...((result.data ?? []) as StatusTeamRow[]));
+  }
 
   async function collectByEmployees(employeeIds: number[]) {
     for (const chunk of chunkArray(employeeIds, 200)) {
-      const [kpiResult, icvaResult] = await Promise.all([
+      const [kpiResult, icvaResult, cpdResult] = await Promise.all([
         adminClient
           .from("ranking_kpi_local_ytd_agg")
           .select("period_month, territorio_individual, empleado, nombre, tier, total_visitas_top, total_objetivos, total_visitas, garantia")
-          .eq("period_month", params.periodMonth)
+          .in("period_month", performancePeriods)
           .in("empleado", chunk),
         adminClient
           .from("ranking_icva_48hrs_agg")
           .select("period_month, territorio_individual, empleado, nombre, total_calls, icva_calls, on_time_call, on_time_icva")
-          .gte("period_month", ytdStartPeriod)
-          .lte("period_month", params.periodMonth)
+          .in("period_month", performancePeriods)
+          .in("empleado", chunk),
+        adminClient
+          .from("ranking_cpd_raw")
+          .select("period_month, territorio_individual, empleado, nombre, dias_efectivos, visitas")
+          .in("period_month", performancePeriods)
           .in("empleado", chunk),
       ]);
       if (kpiResult.error || icvaResult.error) return kpiResult.error?.message ?? icvaResult.error?.message ?? "Error ranking.";
       kpiRows.push(...((kpiResult.data ?? []) as KpiAggRow[]));
       icvaRows.push(...((icvaResult.data ?? []) as IcvaAggRow[]));
+      if (!cpdResult.error) cpdRows.push(...((cpdResult.data ?? []) as CpdRawRow[]));
     }
     return null;
   }
 
   async function collectByTerritories(territories: string[]) {
     for (const chunk of chunkArray(territories, 200)) {
-      const [kpiResult, icvaResult] = await Promise.all([
+      const [kpiResult, icvaResult, cpdResult] = await Promise.all([
         adminClient
           .from("ranking_kpi_local_ytd_agg")
           .select("period_month, territorio_individual, empleado, nombre, tier, total_visitas_top, total_objetivos, total_visitas, garantia")
-          .eq("period_month", params.periodMonth)
+          .in("period_month", performancePeriods)
           .in("territorio_individual", chunk),
         adminClient
           .from("ranking_icva_48hrs_agg")
           .select("period_month, territorio_individual, empleado, nombre, total_calls, icva_calls, on_time_call, on_time_icva")
-          .gte("period_month", ytdStartPeriod)
-          .lte("period_month", params.periodMonth)
+          .in("period_month", performancePeriods)
+          .in("territorio_individual", chunk),
+        adminClient
+          .from("ranking_cpd_raw")
+          .select("period_month, territorio_individual, empleado, nombre, dias_efectivos, visitas")
+          .in("period_month", performancePeriods)
           .in("territorio_individual", chunk),
       ]);
       if (kpiResult.error || icvaResult.error) return kpiResult.error?.message ?? icvaResult.error?.message ?? "Error ranking.";
       kpiRows.push(...((kpiResult.data ?? []) as KpiAggRow[]));
       icvaRows.push(...((icvaResult.data ?? []) as IcvaAggRow[]));
+      if (!cpdResult.error) cpdRows.push(...((cpdResult.data ?? []) as CpdRawRow[]));
     }
     return null;
   }
 
+  await Promise.all([loadCpdObjectives(), loadStatusTeamRows()]);
+
   if (params.scope === "all") {
-    const [kpiResult, icvaResult] = await Promise.all([
+    const [kpiResult, icvaResult, cpdResult] = await Promise.all([
       adminClient
         .from("ranking_kpi_local_ytd_agg")
         .select("period_month, territorio_individual, empleado, nombre, tier, total_visitas_top, total_objetivos, total_visitas, garantia")
-        .eq("period_month", params.periodMonth)
+        .in("period_month", performancePeriods)
         .limit(2000),
       adminClient
         .from("ranking_icva_48hrs_agg")
         .select("period_month, territorio_individual, empleado, nombre, total_calls, icva_calls, on_time_call, on_time_icva")
-        .gte("period_month", ytdStartPeriod)
-        .lte("period_month", params.periodMonth)
+        .in("period_month", performancePeriods)
         .limit(2000),
+      adminClient
+        .from("ranking_cpd_raw")
+        .select("period_month, territorio_individual, empleado, nombre, dias_efectivos, visitas")
+        .in("period_month", performancePeriods)
+        .limit(5000),
     ]);
     if (kpiResult.error || icvaResult.error) {
-      return { kpiRows, icvaRows, error: kpiResult.error?.message ?? icvaResult.error?.message ?? "Error ranking." };
+      return { kpiRows, icvaRows, cpdRows, statusTeamRows, cpdObjectiveByTeamId, error: kpiResult.error?.message ?? icvaResult.error?.message ?? "Error ranking." };
     }
     kpiRows.push(...((kpiResult.data ?? []) as KpiAggRow[]));
     icvaRows.push(...((icvaResult.data ?? []) as IcvaAggRow[]));
+    if (!cpdResult.error) cpdRows.push(...((cpdResult.data ?? []) as CpdRawRow[]));
   } else if (params.employeeIds.length > 0) {
     const error = await collectByEmployees(params.employeeIds);
-    if (error) return { kpiRows, icvaRows, error };
+    if (error) return { kpiRows, icvaRows, cpdRows, statusTeamRows, cpdObjectiveByTeamId, error };
     if (kpiRows.length === 0 && icvaRows.length === 0 && params.territories.length > 0) {
       const territoryError = await collectByTerritories(params.territories);
-      if (territoryError) return { kpiRows, icvaRows, error: territoryError };
+      if (territoryError) return { kpiRows, icvaRows, cpdRows, statusTeamRows, cpdObjectiveByTeamId, error: territoryError };
     }
   } else if (params.territories.length > 0) {
     const error = await collectByTerritories(params.territories);
-    if (error) return { kpiRows, icvaRows, error };
+    if (error) return { kpiRows, icvaRows, cpdRows, statusTeamRows, cpdObjectiveByTeamId, error };
   }
 
-  return { kpiRows, icvaRows, error: null };
+  return { kpiRows, icvaRows, cpdRows, statusTeamRows, cpdObjectiveByTeamId, error: null };
 }
 
-function buildPerformanceRows(kpiRows: KpiAggRow[], icvaRows: IcvaAggRow[]): RankingPerformanceRow[] {
+function buildPerformanceRows(
+  kpiRows: KpiAggRow[],
+  icvaRows: IcvaAggRow[],
+  cpdRows: CpdRawRow[],
+  statusTeamRows: StatusTeamRow[],
+  cpdObjectiveByTeamId: Map<string, number>,
+): RankingPerformanceRow[] {
   type Group = {
     nombre: string;
     territorio: string;
@@ -405,9 +518,26 @@ function buildPerformanceRows(kpiRows: KpiAggRow[], icvaRows: IcvaAggRow[]): Ran
     onTimeIcva: number;
     totalCalls: number;
     onTimeCall: number;
+    cpdVisits: number;
+    cpdEffectiveDays: number;
+    teamId: string | null;
   };
 
   const groups = new Map<string, Group>();
+  const teamByEmployee = new Map<number, string>();
+  const teamByTerritory = new Map<string, string>();
+  for (const row of statusTeamRows) {
+    const teamId = String(row.team_id ?? "").trim();
+    if (!teamId) continue;
+    const empleado = Number(row.no_empleado ?? 0);
+    if (Number.isFinite(empleado) && empleado > 0 && !teamByEmployee.has(empleado)) {
+      teamByEmployee.set(empleado, teamId);
+    }
+    const territorio = normalizeTerritory(row.territorio_individual).toUpperCase();
+    if (territorio && !teamByTerritory.has(territorio)) {
+      teamByTerritory.set(territorio, teamId);
+    }
+  }
 
   function getGroup(row: { empleado: number | null; territorio_individual: string | null; nombre: string | null }) {
     const nombre = String(row.nombre ?? "").trim() || "Sin nombre";
@@ -424,9 +554,21 @@ function buildPerformanceRows(kpiRows: KpiAggRow[], icvaRows: IcvaAggRow[]): Ran
       onTimeIcva: 0,
       totalCalls: 0,
       onTimeCall: 0,
+      cpdVisits: 0,
+      cpdEffectiveDays: 0,
+      teamId:
+        (empleado && teamByEmployee.get(empleado)) ||
+        teamByTerritory.get(territorio.toUpperCase()) ||
+        null,
     };
     if (!current.territorio && territorio) current.territorio = territorio;
     if ((!current.nombre || current.nombre === "Sin nombre") && nombre) current.nombre = nombre;
+    if (!current.teamId) {
+      current.teamId =
+        (empleado && teamByEmployee.get(empleado)) ||
+        teamByTerritory.get(territorio.toUpperCase()) ||
+        null;
+    }
     groups.set(key, current);
     return current;
   }
@@ -446,13 +588,23 @@ function buildPerformanceRows(kpiRows: KpiAggRow[], icvaRows: IcvaAggRow[]): Ran
     group.onTimeCall += toPositiveNumber(row.on_time_call);
   }
 
+  for (const row of cpdRows) {
+    const group = getGroup(row);
+    group.cpdVisits += toPositiveNumber(row.visitas);
+    group.cpdEffectiveDays += toPositiveNumber(row.dias_efectivos);
+  }
+
   return Array.from(groups.entries())
     .map(([id, group]) => {
       const callPlanCoverage = safeCoverage(group.visitasTop, group.objetivos);
-      const visualCoverage = safeCoverage(group.onTimeIcva, group.icvaCalls);
+      const cpdYtd = safeCoverage(group.cpdVisits, group.cpdEffectiveDays);
+      const cpdObjective = group.teamId ? (cpdObjectiveByTeamId.get(group.teamId) ?? 0) : 0;
+      const cpdCoverage = safeCoverage(cpdYtd, cpdObjective);
+      const visualCoverage = safeCoverage(group.icvaCalls, group.totalCalls);
       const docCoverage = safeCoverage(group.onTimeCall, group.totalCalls);
       const metCount =
         (callPlanCoverage >= 0.9 ? 1 : 0) +
+        (cpdCoverage >= 1 ? 1 : 0) +
         (visualCoverage >= 0.65 ? 1 : 0) +
         (docCoverage >= 0.9 ? 1 : 0);
       return {
@@ -466,9 +618,15 @@ function buildPerformanceRows(kpiRows: KpiAggRow[], icvaRows: IcvaAggRow[]): Ran
           coverage: callPlanCoverage,
           threshold: 0.9,
         },
+        coberturaCpd: {
+          numerator: cpdYtd,
+          denominator: cpdObjective,
+          coverage: cpdCoverage,
+          threshold: 1,
+        },
         ayudasVisuales: {
-          numerator: group.onTimeIcva,
-          denominator: group.icvaCalls,
+          numerator: group.icvaCalls,
+          denominator: group.totalCalls,
           coverage: visualCoverage,
           threshold: 0.65,
         },
@@ -479,8 +637,8 @@ function buildPerformanceRows(kpiRows: KpiAggRow[], icvaRows: IcvaAggRow[]): Ran
           threshold: 0.9,
         },
         metCount,
-        averageCoverage: (callPlanCoverage + visualCoverage + docCoverage) / 3,
-        meet: metCount === 3,
+        averageCoverage: (callPlanCoverage + cpdCoverage + visualCoverage + docCoverage) / 4,
+        meet: metCount === 4,
       };
     })
     .sort((a, b) => {
@@ -494,6 +652,7 @@ export async function getPerfilRankingData(params: {
   role: ProfileRole | null;
   profileUserId: string;
   requestedPeriod?: string | null;
+  requestedPerformancePeriods?: string[] | null;
   includeContestRanking?: boolean;
   requestedContestId?: string | null;
 }): Promise<PerfilRankingData> {
@@ -525,6 +684,8 @@ export async function getPerfilRankingData(params: {
       periodMonth: null,
       periodLabel: "Periodo no disponible",
       availablePeriods,
+      selectedPerformancePeriods: [],
+      performanceMode: "ytd",
       contestsData,
       contestRankingData,
       performanceRows: [],
@@ -533,18 +694,20 @@ export async function getPerfilRankingData(params: {
     };
   }
 
+  const performanceSelection = resolvePerformancePeriods({
+    requestedPerformancePeriods: params.requestedPerformancePeriods,
+    periodMonth,
+    availablePeriods,
+  });
+
   let employeeIds: number[] = [];
   let territories: string[] = [];
-  let contestParticipantId: string | null = null;
-
   if (scope === "self") {
     const anchor = await getSalesAnchor(params.profileUserId);
-    contestParticipantId = String(anchor?.id ?? "").trim() || null;
     if (anchor?.no_empleado) employeeIds = [anchor.no_empleado];
     if (anchor?.territorio_individual) territories = [anchor.territorio_individual];
   } else if (scope === "manager_team") {
     const anchor = await getManagerAnchor(params.profileUserId);
-    contestParticipantId = String(anchor?.id ?? "").trim() || null;
     const members = await getManagerTeamMembers({
       periodMonth,
       managerTerritory: anchor?.territorio_manager ?? null,
@@ -574,6 +737,8 @@ export async function getPerfilRankingData(params: {
       periodMonth,
       periodLabel: formatPeriodMonthLabel(periodMonth),
       availablePeriods,
+      selectedPerformancePeriods: performanceSelection.periods,
+      performanceMode: performanceSelection.mode,
       contestsData,
       contestRankingData,
       performanceRows: [],
@@ -591,18 +756,26 @@ export async function getPerfilRankingData(params: {
       null;
     contestRankingData = await getRankingContestData({
       contestId,
-      participantId: scope === "all" ? null : contestParticipantId,
+      participantId: null,
+      maxCoveragePeriodMonth: periodMonth,
       includeDetails: false,
     });
   }
 
-  const { kpiRows, icvaRows, error } = await loadRankingAggRows({
+  const { kpiRows, icvaRows, cpdRows, statusTeamRows, cpdObjectiveByTeamId, error } = await loadRankingAggRows({
     periodMonth,
+    performancePeriods: performanceSelection.periods,
     scope,
     employeeIds,
     territories,
   });
-  const performanceRows = buildPerformanceRows(kpiRows, icvaRows);
+  const performanceRows = buildPerformanceRows(
+    kpiRows,
+    icvaRows,
+    cpdRows,
+    statusTeamRows,
+    cpdObjectiveByTeamId,
+  );
 
   return {
     ok: !error,
@@ -611,6 +784,8 @@ export async function getPerfilRankingData(params: {
     periodMonth,
     periodLabel: formatPeriodMonthLabel(periodMonth),
     availablePeriods,
+    selectedPerformancePeriods: performanceSelection.periods,
+    performanceMode: performanceSelection.mode,
     contestsData,
     contestRankingData,
     performanceRows,

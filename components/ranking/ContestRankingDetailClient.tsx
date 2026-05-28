@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { ContestRankingRow } from "@/lib/ranking-contests/types";
 import { ContestRankingDetailContent } from "@/components/ranking/ContestRankingDetailContent";
@@ -45,20 +45,25 @@ function EmptyState({ message }: { message: string }) {
 export function ContestRankingDetailClient({
   contestId,
   participantId,
+  periodMonth,
   initialRank,
 }: {
   contestId: string;
   participantId: string;
+  periodMonth?: string | null;
   initialRank?: number | null;
 }) {
+  const router = useRouter();
   const [row, setRow] = useState<ContestRankingRow | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const fallbackHref = `/perfil/ranking?tab=ranking${periodMonth ? `&period=${encodeURIComponent(periodMonth)}` : ""}`;
 
   useEffect(() => {
     const controller = new AbortController();
 
     const params = new URLSearchParams({ contestId, participantId });
+    if (periodMonth) params.set("period", periodMonth);
     fetch(`/api/profile/ranking/detalle?${params.toString()}`, {
       signal: controller.signal,
     })
@@ -77,7 +82,7 @@ export function ContestRankingDetailClient({
       });
 
     return () => controller.abort();
-  }, [contestId, participantId]);
+  }, [contestId, participantId, periodMonth]);
 
   return (
     <section className="mx-auto w-full max-w-7xl">
@@ -90,9 +95,19 @@ export function ContestRankingDetailClient({
             </h1>
             <p className="mt-2 text-sm text-[#4b5f86]">{row?.contestName ?? "Ranking concurso"}</p>
           </div>
-          <Link href="/perfil/ranking?tab=ranking" className="inline-flex rounded-lg border border-[#c8d7f2] px-3 py-2 text-sm font-semibold text-[#1e3a8a] hover:bg-[#eef5ff]">
+          <button
+            type="button"
+            onClick={() => {
+              if (window.history.length > 1) {
+                router.back();
+              } else {
+                router.push(fallbackHref);
+              }
+            }}
+            className="inline-flex rounded-lg border border-[#c8d7f2] px-3 py-2 text-sm font-semibold text-[#1e3a8a] hover:bg-[#eef5ff]"
+          >
             Volver
-          </Link>
+          </button>
         </div>
 
         {isLoading ? <LoadingState /> : null}

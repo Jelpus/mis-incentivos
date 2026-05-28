@@ -88,6 +88,12 @@ type RankingIcva48hrsAggRow = {
   on_time_icva: number | null;
 };
 
+type RankingCpdRawRow = {
+  period_month: string;
+  dias_efectivos: number | null;
+  visitas: number | null;
+};
+
 type ProfileRelationRow = {
   id: string;
   relation_type: "sales_force" | "manager";
@@ -407,6 +413,7 @@ async function getRankingSummaryCardData(params: {
   empleado: number | null;
   periodMonth: string | null;
   territorioIndividual: string | null;
+  teamId: string | null;
   managerTerritorio: string | null;
   managerTeamId: string | null;
 }): Promise<RankingSummaryCardData> {
@@ -419,6 +426,12 @@ async function getRankingSummaryCardData(params: {
       threshold: 0.9,
       hasGarantia: false,
       garantiaPeriod: null,
+    },
+    coberturaCpd: {
+      cpdYtd: 0,
+      objectiveCpd: 0,
+      coverage: 0,
+      threshold: null,
     },
     ayudasVisuales: {
       total: 0,
@@ -460,13 +473,28 @@ async function getRankingSummaryCardData(params: {
   };
   const ytdStartPeriod = getYtdStartPeriod(normalizedPeriod);
 
+  const loadCpdObjective = async (teamIdInput: string | null) => {
+    const teamId = String(teamIdInput ?? "").trim();
+    if (!teamId) return 0;
+    const result = await adminClient
+      .from("ranking_cpd_objectives")
+      .select("objective_cpd")
+      .eq("team_id", teamId)
+      .eq("is_active", true)
+      .maybeSingle<{ objective_cpd: number | string | null }>();
+
+    if (result.error) return 0;
+    return toPositiveNumber(Number(result.data?.objective_cpd ?? 0));
+  };
+
   const collectRankingRowsByEmployees = async (employees: number[]) => {
     const employeeChunks = chunkArray(employees, 200);
     const kpiRows: RankingKpiLocalYtdAggRow[] = [];
     const icvaRows: RankingIcva48hrsAggRow[] = [];
+    const cpdRows: RankingCpdRawRow[] = [];
 
     for (const chunk of employeeChunks) {
-      const [kpiChunkResult, icvaChunkResult] = await Promise.all([
+      const [kpiChunkResult, icvaChunkResult, cpdChunkResult] = await Promise.all([
         adminClient
           .from("ranking_kpi_local_ytd_agg")
           .select("period_month, total_visitas_top, total_objetivos, garantia")
@@ -476,6 +504,12 @@ async function getRankingSummaryCardData(params: {
         adminClient
           .from("ranking_icva_48hrs_agg")
           .select("period_month, total_calls, icva_calls, on_time_call, on_time_icva")
+          .gte("period_month", ytdStartPeriod)
+          .lte("period_month", normalizedPeriod)
+          .in("empleado", chunk),
+        adminClient
+          .from("ranking_cpd_raw")
+          .select("period_month, dias_efectivos, visitas")
           .gte("period_month", ytdStartPeriod)
           .lte("period_month", normalizedPeriod)
           .in("empleado", chunk),
@@ -490,23 +524,28 @@ async function getRankingSummaryCardData(params: {
             "No se pudieron cargar agregados de ranking.",
           kpiRows: [] as RankingKpiLocalYtdAggRow[],
           icvaRows: [] as RankingIcva48hrsAggRow[],
+          cpdRows: [] as RankingCpdRawRow[],
         };
       }
 
       kpiRows.push(...((kpiChunkResult.data ?? []) as RankingKpiLocalYtdAggRow[]));
       icvaRows.push(...((icvaChunkResult.data ?? []) as RankingIcva48hrsAggRow[]));
+      if (!cpdChunkResult.error) {
+        cpdRows.push(...((cpdChunkResult.data ?? []) as RankingCpdRawRow[]));
+      }
     }
 
-    return { ok: true as const, kpiRows, icvaRows };
+    return { ok: true as const, kpiRows, icvaRows, cpdRows };
   };
 
   const collectRankingRowsByTerritorios = async (territorios: string[]) => {
     const territoryChunks = chunkArray(territorios, 200);
     const kpiRows: RankingKpiLocalYtdAggRow[] = [];
     const icvaRows: RankingIcva48hrsAggRow[] = [];
+    const cpdRows: RankingCpdRawRow[] = [];
 
     for (const chunk of territoryChunks) {
-      const [kpiChunkResult, icvaChunkResult] = await Promise.all([
+      const [kpiChunkResult, icvaChunkResult, cpdChunkResult] = await Promise.all([
         adminClient
           .from("ranking_kpi_local_ytd_agg")
           .select("period_month, total_visitas_top, total_objetivos, garantia")
@@ -516,6 +555,12 @@ async function getRankingSummaryCardData(params: {
         adminClient
           .from("ranking_icva_48hrs_agg")
           .select("period_month, total_calls, icva_calls, on_time_call, on_time_icva")
+          .gte("period_month", ytdStartPeriod)
+          .lte("period_month", normalizedPeriod)
+          .in("territorio_individual", chunk),
+        adminClient
+          .from("ranking_cpd_raw")
+          .select("period_month, dias_efectivos, visitas")
           .gte("period_month", ytdStartPeriod)
           .lte("period_month", normalizedPeriod)
           .in("territorio_individual", chunk),
@@ -530,19 +575,27 @@ async function getRankingSummaryCardData(params: {
             "No se pudieron cargar agregados de ranking.",
           kpiRows: [] as RankingKpiLocalYtdAggRow[],
           icvaRows: [] as RankingIcva48hrsAggRow[],
+          cpdRows: [] as RankingCpdRawRow[],
         };
       }
 
       kpiRows.push(...((kpiChunkResult.data ?? []) as RankingKpiLocalYtdAggRow[]));
       icvaRows.push(...((icvaChunkResult.data ?? []) as RankingIcva48hrsAggRow[]));
+      if (!cpdChunkResult.error) {
+        cpdRows.push(...((cpdChunkResult.data ?? []) as RankingCpdRawRow[]));
+      }
     }
 
-    return { ok: true as const, kpiRows, icvaRows };
+    return { ok: true as const, kpiRows, icvaRows, cpdRows };
   };
 
   let kpiRows: RankingKpiLocalYtdAggRow[] = [];
   let icvaRows: RankingIcva48hrsAggRow[] = [];
+  let cpdRows: RankingCpdRawRow[] = [];
   let message: string | null = null;
+  const cpdObjective = await loadCpdObjective(
+    params.role === "manager" ? params.managerTeamId : params.teamId,
+  );
 
   if (params.role === "manager") {
     const managerTerritorio = String(params.managerTerritorio ?? "").trim();
@@ -612,6 +665,7 @@ async function getRankingSummaryCardData(params: {
       }
       kpiRows = byEmployees.kpiRows;
       icvaRows = byEmployees.icvaRows;
+      cpdRows = byEmployees.cpdRows;
     }
 
     if ((kpiRows.length === 0 && icvaRows.length === 0) && memberTerritorios.length > 0) {
@@ -625,6 +679,7 @@ async function getRankingSummaryCardData(params: {
       }
       kpiRows = byTerritorios.kpiRows;
       icvaRows = byTerritorios.icvaRows;
+      cpdRows = byTerritorios.cpdRows;
       message = `Agregado del equipo (${memberTerritorios.length} territorios).`;
     } else {
       message =
@@ -651,6 +706,7 @@ async function getRankingSummaryCardData(params: {
 
     kpiRows = byEmpleado.kpiRows;
     icvaRows = byEmpleado.icvaRows;
+    cpdRows = byEmpleado.cpdRows;
 
     const normalizedTerritorio = String(params.territorioIndividual ?? "").trim();
     if ((kpiRows.length === 0 && icvaRows.length === 0) && normalizedTerritorio.length > 0) {
@@ -664,6 +720,7 @@ async function getRankingSummaryCardData(params: {
       }
       kpiRows = byTerritorio.kpiRows;
       icvaRows = byTerritorio.icvaRows;
+      cpdRows = byTerritorio.cpdRows;
       message = `No hubo match por empleado; se aplico fallback por territorio_individual (${normalizedTerritorio}).`;
     }
   }
@@ -673,13 +730,17 @@ async function getRankingSummaryCardData(params: {
   const callPlanCoverage = safeCoverage(visitas, objetivo);
   const hasGarantia = kpiRows.some((row) => row.garantia === true);
 
-  const icvaTotal = icvaRows.reduce((acc, row) => acc + toPositiveNumber(row.icva_calls), 0);
-  const icvaOnTime = icvaRows.reduce((acc, row) => acc + toPositiveNumber(row.on_time_icva), 0);
-  const icvaCoverage = safeCoverage(icvaOnTime, icvaTotal);
+  const icvaTotal = icvaRows.reduce((acc, row) => acc + toPositiveNumber(row.total_calls), 0);
+  const icvaWithVisualAid = icvaRows.reduce((acc, row) => acc + toPositiveNumber(row.icva_calls), 0);
+  const icvaCoverage = safeCoverage(icvaWithVisualAid, icvaTotal);
 
   const docTotal = icvaRows.reduce((acc, row) => acc + toPositiveNumber(row.total_calls), 0);
   const docOnTime = icvaRows.reduce((acc, row) => acc + toPositiveNumber(row.on_time_call), 0);
   const docCoverage = safeCoverage(docOnTime, docTotal);
+  const cpdVisits = cpdRows.reduce((acc, row) => acc + toPositiveNumber(row.visitas), 0);
+  const cpdEffectiveDays = cpdRows.reduce((acc, row) => acc + toPositiveNumber(row.dias_efectivos), 0);
+  const cpdYtd = safeCoverage(cpdVisits, cpdEffectiveDays);
+  const cpdCoverage = safeCoverage(cpdYtd, cpdObjective);
 
   return {
     periodMonth: normalizedPeriod,
@@ -691,9 +752,15 @@ async function getRankingSummaryCardData(params: {
       hasGarantia,
       garantiaPeriod: hasGarantia ? normalizedPeriod : null,
     },
+    coberturaCpd: {
+      cpdYtd,
+      objectiveCpd: cpdObjective,
+      coverage: cpdCoverage,
+      threshold: null,
+    },
     ayudasVisuales: {
       total: icvaTotal,
-      onTime: icvaOnTime,
+      onTime: icvaWithVisualAid,
       coverage: icvaCoverage,
       threshold: 0.65,
     },
@@ -1629,6 +1696,10 @@ export default async function MiCuentaPage() {
     role: accountRole,
     empleado: rankingEmpleado,
     periodMonth: rankingPeriodMonth,
+    teamId:
+      accountRole === "user"
+        ? (userMatch?.row?.team_id ?? null)
+        : null,
     territorioIndividual:
       accountRole === "user"
         ? (userMatch?.row?.territorio_individual ?? null)

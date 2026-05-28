@@ -64,9 +64,9 @@ function SourceRankingFileUploadRowItem({ row }: { row: SourceRankingFileRow }) 
       return [
         "Validando archivo...",
         "Subiendo archivo a storage...",
-        "Normalizando BASE VISITAS YTD...",
+        "Normalizando BASE VISITAS YTD y TFT REPORTE...",
         "Aplicando fuzzy match por nombre y fallback por territorio...",
-        "Actualizando tabla normalizada...",
+        "Actualizando KPI y CPD...",
       ];
     }
 
@@ -297,8 +297,8 @@ export function SourceRankingFilesCard({ sourceFiles }: Props) {
       <div>
         <h2 className="text-xl font-semibold text-neutral-950">Archivos requeridos</h2>
         <p className="mt-2 max-w-4xl text-sm leading-6 text-neutral-600">
-          Carga los dos insumos base para ranking. KPI Local YTD define las rutas del cierre
-          usando STATUS.NOMBRE y STATUS.TERRITORIO; ICVA + 48 hrs se cruza por empleado, territorio y nombre.
+          Carga los dos insumos base para ranking. KPI Local YTD define rutas, visitas y CPD
+          usando BASE VISITAS y TFT REPORTE; ICVA + 48 hrs se cruza por empleado, territorio y nombre.
         </p>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3">

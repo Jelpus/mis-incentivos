@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getRankingContestsData } from "@/lib/admin/reglas-ranking/get-ranking-contests-data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buildCoveragePeriods, belongsToParticipant, calculateCoveragePoints, fetchCoverageRowsForPeriods } from "@/lib/ranking-contests/coverage";
@@ -352,11 +353,14 @@ function calculateTeamAveragePoints(params: {
   return teamTotal / params.members.length;
 }
 
-export async function getRankingContestData(params?: {
+type GetRankingContestDataParams = {
   contestId?: string | null;
   participantId?: string | null;
+  maxCoveragePeriodMonth?: string | null;
   includeDetails?: boolean;
-}): Promise<RankingContestData> {
+};
+
+async function loadRankingContestData(params?: GetRankingContestDataParams): Promise<RankingContestData> {
   const supabase = createAdminClient();
   const messages: string[] = [];
   const includeDetails = params?.includeDetails ?? true;
@@ -364,10 +368,13 @@ export async function getRankingContestData(params?: {
     return { ok: false, maxCoveragePeriodMonth: null, contests: [], rows: [], messages: ["Admin client de Supabase no disponible."] };
   }
 
-  const [maxCoveragePeriodMonth, contestDefinitions] = await Promise.all([
-    getMaxCoveragePeriodMonth(),
+  const [resolvedMaxCoveragePeriodMonth, contestDefinitions] = await Promise.all([
+    params?.maxCoveragePeriodMonth
+      ? Promise.resolve(normalizeMonth(params.maxCoveragePeriodMonth))
+      : getMaxCoveragePeriodMonth(),
     getContestDefinitions({ contestId: params?.contestId ?? null }),
   ]);
+  const maxCoveragePeriodMonth = resolvedMaxCoveragePeriodMonth;
 
   if (contestDefinitions.message) messages.push(contestDefinitions.message);
   const contests = contestDefinitions.contests;
@@ -526,4 +533,19 @@ export async function getRankingContestData(params?: {
     rows: targetParticipantId ? rows : assignRanks(rows),
     messages,
   };
+}
+
+const getCachedRankingContestData = unstable_cache(
+  async (params?: GetRankingContestDataParams) => loadRankingContestData(params),
+  ["ranking-contest-data"],
+  { revalidate: 90, tags: ["ranking-contests"] },
+);
+
+export async function getRankingContestData(params?: GetRankingContestDataParams): Promise<RankingContestData> {
+  return getCachedRankingContestData({
+    contestId: params?.contestId ?? null,
+    participantId: params?.participantId ?? null,
+    maxCoveragePeriodMonth: params?.maxCoveragePeriodMonth ?? null,
+    includeDetails: params?.includeDetails ?? true,
+  });
 }

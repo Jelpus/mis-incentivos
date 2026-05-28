@@ -13,6 +13,7 @@ import {
 import { RANKING_REQUIRED_FILES } from "@/lib/admin/source-ranking/constants";
 import {
   aggregateKpiLocalYtdRawRows,
+  type DiasCicloRow,
   normalizeKpiLocalYtdRaw,
 } from "@/lib/admin/source-ranking/normalize-kpi-local-ytd";
 import {
@@ -396,10 +397,32 @@ export async function uploadSourceRankingFileAction(
       }>;
 
       if (fileCodeInput === "kpi_local_ytd") {
+        const diasCicloResult = await supabase
+          .from("dias_ciclo")
+          .select("period, period_month, dias_ciclo");
+
+        let diasCicloRows: DiasCicloRow[] = [];
+        if (diasCicloResult.error) {
+          if (isMissingRelationError(diasCicloResult.error)) {
+            const tableName = getMissingRelationName(diasCicloResult.error) ?? "dias_ciclo";
+            return {
+              ok: false,
+              message: `No existe ${tableName}. Crea la tabla dias_ciclo antes de cargar KPI Local YTD con CPD.`,
+            };
+          }
+          return {
+            ok: false,
+            message: `No se pudo cargar dias_ciclo para CPD: ${diasCicloResult.error.message}`,
+          };
+        } else {
+          diasCicloRows = (diasCicloResult.data ?? []) as DiasCicloRow[];
+        }
+
         kpiNormalization = normalizeKpiLocalYtdRaw({
           fileBuffer,
           periodMonth,
           salesForceRows,
+          diasCicloRows,
         });
       } else {
         const kpiReferenceResult = await supabase
@@ -576,10 +599,62 @@ export async function uploadSourceRankingFileAction(
       }
     }
 
+    const cpdPeriods = Array.from(
+      new Set(
+        kpiNormalization.cpdRows
+          .map((row) => normalizePeriodMonthInput(row.period_month))
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    if (cpdPeriods.length > 0) {
+      const deleteCpdResult = await supabase
+        .from("ranking_cpd_raw")
+        .delete()
+        .in("period_month", cpdPeriods);
+
+      if (deleteCpdResult.error) {
+        if (isMissingRelationError(deleteCpdResult.error)) {
+          const tableName = getMissingRelationName(deleteCpdResult.error) ?? "ranking_cpd_raw";
+          return {
+            ok: false,
+            message: `Archivo cargado, pero falta la tabla ${tableName}. Ejecuta docs/ranking-cpd-raw-schema.sql y vuelve a subir el archivo.`,
+          };
+        }
+        return {
+          ok: false,
+          message: `Archivo cargado, pero no se pudo limpiar CPD raw: ${deleteCpdResult.error.message}`,
+        };
+      }
+
+      if (kpiNormalization.cpdRows.length > 0) {
+        const insertCpdResult = await supabase.from("ranking_cpd_raw").insert(
+          kpiNormalization.cpdRows,
+        );
+
+        if (insertCpdResult.error) {
+          if (isMissingRelationError(insertCpdResult.error)) {
+            const tableName = getMissingRelationName(insertCpdResult.error) ?? "ranking_cpd_raw";
+            return {
+              ok: false,
+              message: `Archivo cargado, pero falta la tabla ${tableName}. Ejecuta docs/ranking-cpd-raw-schema.sql y vuelve a subir el archivo.`,
+            };
+          }
+          return {
+            ok: false,
+            message: `Archivo cargado, pero no se pudo guardar CPD raw: ${insertCpdResult.error.message}`,
+          };
+        }
+      }
+    }
+
     normalizationSummary =
-      `KPI raw: ${kpiNormalization.rows.length} filas | agregado: ${aggregatedRows.length} reps | filas YTD: ${kpiNormalization.summary.ytdRows} | ` +
+      `KPI raw: ${kpiNormalization.rows.length} filas | agregado: ${aggregatedRows.length} reps | CPD raw: ${kpiNormalization.cpdRows.length} filas | filas YTD: ${kpiNormalization.summary.ytdRows} | ` +
       `match nombre: ${kpiNormalization.summary.nameMatchedRows} | fallback territorio: ${kpiNormalization.summary.territoryFallbackRows} | ` +
-      `sin match: ${kpiNormalization.summary.unmatchedRows}`;
+      `sin match: ${kpiNormalization.summary.unmatchedRows}` +
+      (kpiNormalization.summary.cpdRowsWithoutDiasCiclo > 0
+        ? ` | CPD sin dias_ciclo: ${kpiNormalization.summary.cpdRowsWithoutDiasCiclo}`
+        : "");
   }
 
   if (icvaNormalization) {

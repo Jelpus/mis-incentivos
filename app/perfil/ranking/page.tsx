@@ -6,6 +6,7 @@ import { PerfilRankingClient } from "@/components/profile/perfil-ranking-client"
 type RankingPageProps = {
   searchParams?: Promise<{
     period?: string;
+    perfPeriods?: string;
     tab?: string;
     contestId?: string;
   }>;
@@ -25,6 +26,9 @@ export default async function PerfilRankingPage({ searchParams }: RankingPagePro
     role,
     profileUserId: effectiveUserId ?? user.id,
     requestedPeriod: params?.period ?? null,
+    requestedPerformancePeriods: params?.perfPeriods
+      ? params.perfPeriods.split(",").map((period) => period.trim()).filter(Boolean)
+      : null,
     includeContestRanking: initialTab === "ranking",
     requestedContestId: params?.contestId ?? null,
   });
@@ -43,7 +47,7 @@ export default async function PerfilRankingPage({ searchParams }: RankingPagePro
         </p>
 
         <PerfilRankingClient
-          key={`${initialTab}-${data.periodMonth ?? "none"}-${data.contestRankingData.contests[0]?.id ?? "none"}`}
+          key={`${initialTab}-${data.periodMonth ?? "none"}-${data.performanceMode}-${data.selectedPerformancePeriods.join("_")}-${data.contestRankingData.contests[0]?.id ?? "none"}`}
           data={data}
           initialTab={initialTab}
         />

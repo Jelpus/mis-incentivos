@@ -12,9 +12,11 @@ type RankingView = "qualified" | "not_qualified" | "all";
 export function RankingConcurso({
   data,
   contestOptions,
+  periodMonth,
 }: {
   data: RankingContestData;
   contestOptions?: RankingContestRow[];
+  periodMonth?: string | null;
 }) {
   const router = useRouter();
   const [isContestNavigationPending, startContestNavigation] = useTransition();
@@ -84,7 +86,11 @@ export function RankingConcurso({
                 setGroupFilter("");
                 if (nextContestId && nextContestId !== selectedContest?.id) {
                   startContestNavigation(() => {
-                    router.push(`/perfil/ranking?tab=ranking&contestId=${encodeURIComponent(nextContestId)}`);
+                    const params = new URLSearchParams();
+                    params.set("tab", "ranking");
+                    params.set("contestId", nextContestId);
+                    if (periodMonth) params.set("period", periodMonth);
+                    router.push(`/perfil/ranking?${params.toString()}`);
                   });
                 }
               }}
@@ -175,7 +181,7 @@ export function RankingConcurso({
         ))}
       </div>
 
-      <ContestRankingTable rows={filteredRows} />
+      <ContestRankingTable rows={filteredRows} periodMonth={periodMonth} />
     </div>
   );
 }

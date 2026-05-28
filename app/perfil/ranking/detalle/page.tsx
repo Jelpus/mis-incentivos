@@ -7,6 +7,7 @@ type DetailPageProps = {
     contestId?: string;
     participantId?: string;
     rank?: string;
+    period?: string;
   }>;
 };
 
@@ -21,6 +22,7 @@ export default async function RankingDetallePage({ searchParams }: DetailPagePro
   const params = searchParams ? await searchParams : {};
   const contestId = String(params?.contestId ?? "").trim();
   const participantId = String(params?.participantId ?? "").trim();
+  const periodMonth = String(params?.period ?? "").trim() || null;
   const rank = Number(params?.rank ?? NaN);
 
   if (!contestId || !participantId) {
@@ -31,6 +33,7 @@ export default async function RankingDetallePage({ searchParams }: DetailPagePro
     <ContestRankingDetailClient
       contestId={contestId}
       participantId={participantId}
+      periodMonth={periodMonth}
       initialRank={Number.isFinite(rank) ? rank : null}
     />
   );

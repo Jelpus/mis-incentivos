@@ -1,0 +1,47 @@
+-- CPD calculated from KPI Local YTD + TFT REPORTE + dias_ciclo.
+-- Run this in Supabase SQL editor before uploading KPI Local YTD with CPD.
+
+create table if not exists public.ranking_cpd_raw (
+  id uuid primary key default gen_random_uuid(),
+  period_month date not null,
+  territorio_individual text not null,
+  empleado bigint null,
+  nombre text not null,
+  dias_ciclo numeric(18, 6) not null default 0,
+  tft numeric(18, 6) not null default 0,
+  dias_efectivos numeric(18, 6) not null default 0,
+  visitas numeric(18, 6) not null default 0,
+  cpd numeric(18, 6) not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint ranking_cpd_raw_period_month_chk check (
+    period_month = (date_trunc('month', period_month::timestamptz))::date
+  )
+);
+
+create unique index if not exists ranking_cpd_raw_period_territory_employee_idx
+  on public.ranking_cpd_raw (
+    period_month,
+    upper(territorio_individual),
+    coalesce(empleado, -1)
+  );
+
+create index if not exists ranking_cpd_raw_period_idx
+  on public.ranking_cpd_raw (period_month);
+
+create or replace function public.set_ranking_cpd_raw_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_ranking_cpd_raw_updated_at
+  on public.ranking_cpd_raw;
+
+create trigger trg_ranking_cpd_raw_updated_at
+before update on public.ranking_cpd_raw
+for each row execute procedure public.set_ranking_cpd_raw_updated_at();

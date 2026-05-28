@@ -19,6 +19,12 @@ export type RankingSummaryCardData = {
     hasGarantia: boolean;
     garantiaPeriod: string | null;
   };
+  coberturaCpd: {
+    cpdYtd: number;
+    objectiveCpd: number;
+    coverage: number;
+    threshold: number | null;
+  };
   ayudasVisuales: RankingMetric;
   documentacion48h: RankingMetric;
   message?: string | null;
@@ -38,6 +44,16 @@ function formatPercent(value: number) {
   return formatCoveragePercent(value);
 }
 
+function formatMetricValue(value: number, variant: "integer" | "decimal") {
+  if (variant === "decimal") {
+    return new Intl.NumberFormat("es-MX", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(value);
+  }
+  return formatInteger(value);
+}
+
 function MetricTile({
   title,
   topLabel,
@@ -47,6 +63,7 @@ function MetricTile({
   coverage,
   threshold,
   badge,
+  valueVariant = "integer",
 }: {
   title: string;
   topLabel: string;
@@ -54,29 +71,33 @@ function MetricTile({
   bottomLabel: string;
   bottomValue: number;
   coverage: number;
-  threshold: number;
+  threshold: number | null;
   badge?: string;
+  valueVariant?: "integer" | "decimal";
 }) {
+  const badgeThreshold = Number.isFinite(Number(threshold)) ? Number(threshold) : 1;
   return (
     <article className="rounded-xl border border-[#d9e5fb] bg-[#f8fbff] p-4">
       <p className="text-sm font-semibold text-[#1e3a8a]">{title}</p>
       <div className="mt-2 space-y-1 text-sm text-[#334155]">
         <p>
-          {topLabel}: <span className="font-semibold">{formatInteger(topValue)}</span>
+          {topLabel}: <span className="font-semibold">{formatMetricValue(topValue, valueVariant)}</span>
         </p>
         <p>
-          {bottomLabel}: <span className="font-semibold">{formatInteger(bottomValue)}</span>
+          {bottomLabel}: <span className="font-semibold">{formatMetricValue(bottomValue, valueVariant)}</span>
         </p>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <span
-          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getCoverageBadgeClass(coverage, threshold)}`}
+          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getCoverageBadgeClass(coverage, badgeThreshold)}`}
         >
           Cobertura: {formatPercent(coverage)}
         </span>
-        <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-[#475467]">
-          Meta: {formatPercent(threshold)}
-        </span>
+        {threshold !== null ? (
+          <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-[#475467]">
+            Meta: {formatPercent(threshold)}
+          </span>
+        ) : null}
         {badge ? (
           <span className="rounded-full bg-[#fff4ce] px-2.5 py-1 text-xs font-semibold text-[#7a4d00]">
             {badge}
@@ -113,7 +134,7 @@ export function ResumenRankingCard({
         </p>
       ) : null}
 
-      <div className="mt-4 grid gap-3 md:grid-cols-3">
+      <div className="mt-4 grid gap-3 md:grid-cols-4">
         <MetricTile
           title="Call Plan Adherence T1"
           topLabel={isTeamScope ? "Visitas totales" : "Visitas"}
@@ -132,10 +153,21 @@ export function ResumenRankingCard({
         />
 
         <MetricTile
+          title="Cobertura CPD"
+          topLabel="CPD YTD"
+          topValue={data.coberturaCpd.cpdYtd}
+          bottomLabel="Objetivo"
+          bottomValue={data.coberturaCpd.objectiveCpd}
+          coverage={data.coberturaCpd.coverage}
+          threshold={data.coberturaCpd.threshold}
+          valueVariant="decimal"
+        />
+
+        <MetricTile
           title="Porcentaje de utilización de ayudas visuales"
           topLabel="Visitas con ayuda visual"
           topValue={data.ayudasVisuales.onTime}
-          bottomLabel="Visitas totales promocionales"
+          bottomLabel="Total de visitas"
           bottomValue={data.ayudasVisuales.total}
           coverage={data.ayudasVisuales.coverage}
           threshold={data.ayudasVisuales.threshold}
