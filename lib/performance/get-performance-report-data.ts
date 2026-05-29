@@ -469,10 +469,15 @@ function normalizeTerritoryKey(value: string | null | undefined) {
 
 type RankingAggScatterRow = {
   territorio_individual: string | null;
-  total_visitas: number | null;
   total_visitas_top: number | null;
   total_objetivos: number | null;
   tier: string | null;
+};
+
+type RankingCpdScatterRow = {
+  territorio_individual: string | null;
+  visitas: number | null;
+  dias_efectivos: number | null;
 };
 
 async function getSalesForceTerritoryNameMap(params: {
@@ -558,31 +563,49 @@ async function buildScatterGraphData(params: {
   };
 
   const rankingRows: RankingAggScatterRow[] = [];
+  const cpdRows: RankingCpdScatterRow[] = [];
   for (const territoryChunk of chunkArray(territoryKeys, 200)) {
-    const rankingResult = await adminClient
-      .from("ranking_kpi_local_ytd_agg")
-      .select("territorio_individual, total_visitas, total_visitas_top, total_objetivos, tier")
-      .in("period_month", periodMonths)
-      .in("territorio_individual", territoryChunk);
+    const [rankingResult, cpdResult] = await Promise.all([
+      adminClient
+        .from("ranking_kpi_local_ytd_agg")
+        .select("territorio_individual, total_visitas_top, total_objetivos, tier")
+        .in("period_month", periodMonths)
+        .in("territorio_individual", territoryChunk),
+      adminClient
+        .from("ranking_cpd_raw")
+        .select("territorio_individual, visitas, dias_efectivos")
+        .in("period_month", periodMonths)
+        .in("territorio_individual", territoryChunk),
+    ]);
 
     if (!rankingResult.error) {
       rankingRows.push(...((rankingResult.data ?? []) as RankingAggScatterRow[]));
     }
+    if (!cpdResult.error) {
+      cpdRows.push(...((cpdResult.data ?? []) as RankingCpdScatterRow[]));
+    }
   }
 
-  const periodCount = Math.max(1, params.selectedPeriods.length);
   const territoryNameMap = await getSalesForceTerritoryNameMap({
     territoryKeys,
     periodCodes: params.selectedPeriods,
   });
-  const cpdByTerritory = new Map<string, number>();
+  const cpdByTerritory = new Map<string, { visitas: number; diasEfectivos: number }>();
   const cpaByTerritory = new Map<string, { visitasTop: number; objetivos: number }>();
+
+  for (const row of cpdRows) {
+    const key = normalizeTerritoryKey(row.territorio_individual);
+    if (!key) continue;
+
+    const current = cpdByTerritory.get(key) ?? { visitas: 0, diasEfectivos: 0 };
+    current.visitas += Number(row.visitas ?? 0);
+    current.diasEfectivos += Number(row.dias_efectivos ?? 0);
+    cpdByTerritory.set(key, current);
+  }
 
   for (const row of rankingRows) {
     const key = normalizeTerritoryKey(row.territorio_individual);
     if (!key) continue;
-
-    cpdByTerritory.set(key, (cpdByTerritory.get(key) ?? 0) + Number(row.total_visitas ?? 0));
 
     if (String(row.tier ?? "").trim().toUpperCase() === "T1") {
       const current = cpaByTerritory.get(key) ?? { visitasTop: 0, objetivos: 0 };
@@ -599,8 +622,11 @@ async function buildScatterGraphData(params: {
       const yValue = Number(row.coverage_value ?? NaN);
       if (!Number.isFinite(yValue)) return null;
 
-      const visitas = cpdByTerritory.get(territory);
-      const cpd = Number.isFinite(Number(visitas)) ? Number(visitas ?? 0) / (20 * periodCount) : null;
+      const cpdData = cpdByTerritory.get(territory);
+      const cpd =
+        cpdData && cpdData.diasEfectivos > 0
+          ? cpdData.visitas / cpdData.diasEfectivos
+          : null;
       const cpaT1Data = cpaByTerritory.get(territory);
       const cpaT1 =
         cpaT1Data && cpaT1Data.objetivos > 0
@@ -630,7 +656,7 @@ async function buildScatterGraphData(params: {
     defaultXMetric: hasCpd ? "cpd" : "cpa_t1",
     message:
       hasCpd || hasCpa
-        ? "Cobertura = suma(resultado) / suma(objetivo). CPD = total_visitas / 20. CPA T1 = sum(total_visitas_top) / sum(total_objetivos) con tier T1."
+        ? "Cobertura = suma(resultado) / suma(objetivo). CPD = sum(visitas) / sum(dias_efectivos) desde ranking_cpd_raw. CPA T1 = sum(total_visitas_top) / sum(total_objetivos) con tier T1."
         : "No hay datos KPI para construir CPD/CPA T1.",
   };
 }
