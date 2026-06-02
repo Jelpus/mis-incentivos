@@ -287,6 +287,27 @@ function buildRuleMetaKey(teamId: string, planTypeName: string | null | undefine
   return `${teamId}||${normalizeKey(planTypeName ?? "")}||${normalizeKey(productName)}`;
 }
 
+function guaranteeMatchesStatus(guarantee: GuaranteeRow, status: StatusRow): boolean {
+  const scopeValue = String(guarantee.scope_value ?? "").trim();
+  if (!scopeValue) return false;
+  if (guarantee.scope_type === "representante") {
+    return normalizeKey(scopeValue) === normalizeKey(status.territorio_individual);
+  }
+  if (guarantee.scope_type === "team_id") {
+    return normalizeKey(scopeValue) === normalizeKey(status.team_id);
+  }
+  if (guarantee.scope_type === "linea") {
+    return normalizeKey(scopeValue) === normalizeKey(status.linea_principal);
+  }
+  return false;
+}
+
+function guaranteeMatchesProduct(guarantee: GuaranteeRow, productName: string): boolean {
+  if (guarantee.rule_scope !== "single_rule") return true;
+  const ruleKey = String(guarantee.rule_key ?? "").trim();
+  return Boolean(ruleKey) && normalizeKey(ruleKey) === normalizeKey(productName);
+}
+
 function resolveCoberturaPago(
   cobertura: number,
   curveId: string | null,
@@ -363,9 +384,48 @@ export async function buildResultadosV2PreviewWithOptions(
   }
   const assignments = Array.from(assignmentMap.values());
 
-  const teamIds = Array.from(new Set(assignments.map((row) => row.teamid).filter((value) => value.length > 0)));
-  const statusRoutes = Array.from(new Set(assignments.map((row) => row.ruta).filter((value) => value.length > 0)));
+  const guaranteesResult = await queryWithRetry(() =>
+    supabase
+      .from("team_incentive_guarantees")
+      .select(
+        "scope_type, scope_value, rule_scope, rule_key, target_coverage, guarantee_payment_preference, is_active",
+      )
+      .eq("is_active", true)
+      .lte("guarantee_start_month", periodMonth)
+      .gte("guarantee_end_month", periodMonth),
+  );
+  if (guaranteesResult.error && !isMissingRelationError(guaranteesResult.error)) {
+    throw new Error(`No se pudo leer team_incentive_guarantees: ${guaranteesResult.error.message}`);
+  }
+  const guarantees = (guaranteesResult.data ?? []) as GuaranteeRow[];
 
+  const statusResult = await queryWithRetry(() =>
+    supabase
+      .from("sales_force_status")
+      .select("territorio_individual, team_id, linea_principal, nombre_completo, no_empleado, base_incentivos, territorio_padre")
+      .eq("period_month", periodMonth)
+      .eq("is_deleted", false)
+      .eq("is_active", true),
+  );
+  if (statusResult.error) {
+    throw new Error(`No se pudo leer sales_force_status: ${statusResult.error.message}`);
+  }
+  const statusRows = ((statusResult.data ?? []) as StatusRow[]).filter((row) => {
+    return String(row.territorio_individual ?? "").trim() && String(row.team_id ?? "").trim();
+  });
+  const statusByRoute = new Map<string, StatusRow>();
+  for (const row of statusRows) {
+    const route = String(row.territorio_individual ?? "").trim();
+    if (!route) continue;
+    statusByRoute.set(route, row);
+  }
+
+  const teamIds = Array.from(
+    new Set([
+      ...assignments.map((row) => row.teamid),
+      ...statusRows.map((row) => String(row.team_id ?? "").trim()),
+    ].filter((value) => value.length > 0)),
+  );
   const ruleVersionsResult = await queryWithRetry(() =>
     supabase
       .from("team_incentive_rule_versions")
@@ -487,64 +547,6 @@ export async function buildResultadosV2PreviewWithOptions(
     }
   }
 
-  let statusRows: StatusRow[] = [];
-
-  // Evita un IN masivo por ruta (puede romper por tamaño/timeout).
-  // Primero intentamos por team_id; si falla, hacemos fallback por chunks de ruta.
-  const statusByTeamResult = await queryWithRetry(() =>
-    supabase
-      .from("sales_force_status")
-      .select("territorio_individual, team_id, linea_principal, nombre_completo, no_empleado, base_incentivos, territorio_padre")
-      .eq("period_month", periodMonth)
-      .eq("is_deleted", false)
-      .in("team_id", teamIds),
-  );
-  if (!statusByTeamResult.error) {
-    statusRows = (statusByTeamResult.data ?? []) as StatusRow[];
-  } else {
-    const routeChunks = chunkArray(statusRoutes, IN_CHUNK_SIZE);
-    const statusChunkResults = await mapChunksWithConcurrency(routeChunks, (routeChunk) =>
-      queryWithRetry(() =>
-        supabase
-          .from("sales_force_status")
-          .select("territorio_individual, team_id, linea_principal, nombre_completo, no_empleado, base_incentivos, territorio_padre")
-          .eq("period_month", periodMonth)
-          .eq("is_deleted", false)
-          .in("territorio_individual", routeChunk),
-      ),
-    );
-    const fallbackRows: StatusRow[] = [];
-    for (const statusChunkResult of statusChunkResults) {
-      if (statusChunkResult.error) {
-        throw new Error(`No se pudo leer sales_force_status: ${statusChunkResult.error.message}`);
-      }
-      fallbackRows.push(...((statusChunkResult.data ?? []) as StatusRow[]));
-    }
-    statusRows = fallbackRows;
-  }
-
-  const statusByRoute = new Map<string, StatusRow>();
-  for (const row of statusRows) {
-    const route = String(row.territorio_individual ?? "").trim();
-    if (!route) continue;
-    statusByRoute.set(route, row);
-  }
-
-  const guaranteesResult = await queryWithRetry(() =>
-    supabase
-      .from("team_incentive_guarantees")
-      .select(
-        "scope_type, scope_value, rule_scope, rule_key, target_coverage, guarantee_payment_preference, is_active",
-      )
-      .eq("is_active", true)
-      .lte("guarantee_start_month", periodMonth)
-      .gte("guarantee_end_month", periodMonth),
-  );
-  if (guaranteesResult.error && !isMissingRelationError(guaranteesResult.error)) {
-    throw new Error(`No se pudo leer team_incentive_guarantees: ${guaranteesResult.error.message}`);
-  }
-  const guarantees = (guaranteesResult.data ?? []) as GuaranteeRow[];
-
   const assignmentByTeamRoutePlan = new Map<string, AssignmentLike>();
   for (const assignment of assignments) {
     const assignmentKey = [
@@ -557,27 +559,57 @@ export async function buildResultadosV2PreviewWithOptions(
   }
 
   const assignmentsWithMissing = assignments.slice();
+  function addMissingAssignment(teamId: string, ruta: string, productName: string, planTypeName: string | null): void {
+    const assignmentKey = [teamId, ruta, normalizeKey(planTypeName ?? ""), normalizeKey(productName)].join("||");
+    if (assignmentByTeamRoutePlan.has(assignmentKey)) return;
+    const meta =
+      ruleMetaByTeamProduct.get(buildRuleMetaKey(teamId, planTypeName, productName)) ??
+      ruleMetaByTeamProduct.get(buildRuleMetaKey(teamId, null, productName));
+    assignmentsWithMissing.push({
+      ruta,
+      teamid: teamId,
+      plan: productName,
+      plan_type_name: planTypeName ?? meta?.planTypeName ?? null,
+      brick: null,
+      molecula_producto: null,
+      objetivo: 0,
+      valor: 0,
+      resultado: 0,
+    });
+    assignmentByTeamRoutePlan.set(assignmentKey, {
+      ruta,
+      teamid: teamId,
+      plan: productName,
+      plan_type_name: planTypeName ?? meta?.planTypeName ?? null,
+      brick: null,
+      molecula_producto: null,
+      objetivo: 0,
+      valor: 0,
+      resultado: 0,
+    });
+  }
+
   const teamRoutePairs = new Set(assignments.map((row) => `${row.teamid}||${row.ruta}`));
   for (const teamRoute of teamRoutePairs) {
     const [teamId, ruta] = teamRoute.split("||");
     const teamProducts = ruleProductsByTeam.get(teamId) ?? [];
     for (const product of teamProducts) {
-      const assignmentKey = [teamId, ruta, normalizeKey(product.planTypeName ?? ""), normalizeKey(product.productName)].join("||");
-      if (assignmentByTeamRoutePlan.has(assignmentKey)) continue;
-      const meta =
-        ruleMetaByTeamProduct.get(buildRuleMetaKey(teamId, product.planTypeName, product.productName)) ??
-        ruleMetaByTeamProduct.get(buildRuleMetaKey(teamId, null, product.productName));
-      assignmentsWithMissing.push({
-        ruta,
-        teamid: teamId,
-        plan: product.productName,
-        plan_type_name: product.planTypeName ?? meta?.planTypeName ?? null,
-        brick: null,
-        molecula_producto: null,
-        objetivo: 0,
-        valor: 0,
-        resultado: 0,
-      });
+      addMissingAssignment(teamId, ruta, product.productName, product.planTypeName);
+    }
+  }
+
+  for (const status of statusRows) {
+    const ruta = String(status.territorio_individual ?? "").trim();
+    const teamId = String(status.team_id ?? "").trim();
+    if (!ruta || !teamId) continue;
+    const routeGuarantees = guarantees.filter((guarantee) => guaranteeMatchesStatus(guarantee, status));
+    if (routeGuarantees.length === 0) continue;
+    const teamProducts = ruleProductsByTeam.get(teamId) ?? [];
+    for (const guarantee of routeGuarantees) {
+      for (const product of teamProducts) {
+        if (!guaranteeMatchesProduct(guarantee, product.productName)) continue;
+        addMissingAssignment(teamId, ruta, product.productName, product.planTypeName);
+      }
     }
   }
 

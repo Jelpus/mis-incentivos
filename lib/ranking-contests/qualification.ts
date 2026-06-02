@@ -279,14 +279,14 @@ async function evaluateCpdMetric(params: {
     totalsByMember.set(key, current);
   }
 
-  const coverages = Array.from(totalsByMember.values())
+  const cpdValues = Array.from(totalsByMember.values())
     .map((item) => {
       const cpd = safeCoverage(item.visitas, item.diasEfectivos);
-      return cpd === null ? null : safeCoverage(cpd, objective);
+      return cpd === null ? null : cpd;
     })
     .filter((value): value is number => value !== null);
 
-  if (coverages.length === 0) {
+  if (cpdValues.length === 0) {
     return {
       ...baseEvaluation(params.component),
       value: null,
@@ -296,15 +296,17 @@ async function evaluateCpdMetric(params: {
     };
   }
 
-  const averageCoverage = coverages.reduce((sum, value) => sum + value, 0) / coverages.length;
-  const valuePercent = averageCoverage * 100;
+  const averageCpd = cpdValues.reduce((sum, value) => sum + value, 0) / cpdValues.length;
+  const averageCoverage = safeCoverage(averageCpd, objective) ?? 0;
+  const periodText = periods.join(", ");
 
   return {
     ...baseEvaluation(params.component),
-    value: Math.round(valuePercent * 100) / 100,
+    thresholdValue: objective,
+    value: Math.round(averageCpd * 100) / 100,
     passed: averageCoverage >= threshold,
     status: averageCoverage >= threshold ? "passed" : "failed",
-    reason: `${params.participant.scope === "manager" ? "Promedio de equipo CPD" : "Cobertura CPD"}: ${coverages.length} participante(s) con datos, periodos ${periods.join(", ")}, objetivo ${objective}, threshold ${Math.round(threshold * 10000) / 100}%.`,
+    reason: `${params.participant.scope === "manager" ? "Promedio de equipo CPD" : "Cobertura CPD"}: ${cpdValues.length} participante(s) con datos, periodos ${periodText}.`,
   };
 }
 

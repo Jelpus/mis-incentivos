@@ -11,6 +11,12 @@ function formatPercent(value: number) {
   return new Intl.NumberFormat("es-MX", { maximumFractionDigits: 1, style: "percent" }).format(value);
 }
 
+function formatEvaluationValue(value: number | string | boolean | null) {
+  if (typeof value === "number") return formatNumber(value);
+  if (value === null || value === "") return "-";
+  return String(value);
+}
+
 function formatPeriodLabel(period: string) {
   if (/^\d{6}$/.test(period)) return `Cobertura ${period.slice(0, 4)}-${period.slice(4, 6)}`;
   return `Cobertura ${period}`;
@@ -66,7 +72,7 @@ export function ContestRankingDetailContent({ row }: { row: ContestRankingRow })
                     className={`h-3 w-3 rounded-full ${item.passed ? "bg-emerald-500" : "bg-red-500"}`}
                   />
                 </div>
-                <p className="mt-1 text-xs text-[#667085]">Meta: {item.thresholdValue ?? "-"} | Valor: {String(item.value ?? "-")}</p>
+                <p className="mt-1 text-xs text-[#667085]">Meta: {formatEvaluationValue(item.thresholdValue)} | Valor: {formatEvaluationValue(item.value)}</p>
                 {item.reason ? <p className="mt-1 text-xs text-amber-700">{item.reason}</p> : null}
               </div>
             ))}

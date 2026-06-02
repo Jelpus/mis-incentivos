@@ -24,7 +24,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
 
 const METRIC_LABELS: Record<MetricKey, string> = {
   callPlanAdherence: "Call Plan Adherence T1",
-  coberturaCpd: "Cobertura CPD",
+  coberturaCpd: "CPD",
   ayudasVisuales: "Utilizacion de ayudas visuales",
   documentacion48h: "Documentacion en 48 hrs",
 };
@@ -48,6 +48,16 @@ function formatMetricNumber(value: number, metric: MetricKey) {
     }).format(value);
   }
   return formatInteger(value);
+}
+
+function formatMetricTarget(value: number, metric: MetricKey) {
+  if (metric === "coberturaCpd") return formatMetricNumber(value, metric);
+  return formatCoveragePercent(value);
+}
+
+function formatMetricChipValue(detail: RankingMetricDetail, metric: MetricKey) {
+  if (metric === "coberturaCpd") return formatMetricNumber(detail.numerator, metric);
+  return formatCoveragePercent(detail.coverage);
 }
 
 function formatPerformanceSelectionLabel(params: {
@@ -90,10 +100,10 @@ function CoverageCell({
     <div className="flex min-w-[170px] items-center justify-between gap-2">
       <div>
         <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getCoverageBadgeClass(detail.coverage, detail.threshold)}`}>
-          {formatCoveragePercent(detail.coverage)}
+          {formatMetricChipValue(detail, metric)}
         </span>
         <p className="mt-1 text-[11px] text-[#667085]">
-          Meta {formatCoveragePercent(detail.threshold)}
+          Meta {formatMetricTarget(metric === "coberturaCpd" ? detail.denominator : detail.threshold, metric)}
         </p>
       </div>
       {canAudit ? (
@@ -144,8 +154,8 @@ function AuditDialog({ payload, onClose }: { payload: AuditPayload | null; onClo
           <p>Periodo usado: <span className="font-semibold">{payload.periodLabel || "-"}</span></p>
           <p>{labels.numerator}: <span className="font-semibold">{formatMetricNumber(payload.detail.numerator, payload.metric)}</span></p>
           <p>{labels.denominator}: <span className="font-semibold">{formatMetricNumber(payload.detail.denominator, payload.metric)}</span></p>
-          <p>Resultado: <span className="font-semibold">{formatCoveragePercent(payload.detail.coverage)}</span></p>
-          <p>Meta: <span className="font-semibold">{formatCoveragePercent(payload.detail.threshold)}</span></p>
+          <p>Resultado: <span className="font-semibold">{payload.metric === "coberturaCpd" ? formatMetricNumber(payload.detail.numerator, payload.metric) : formatCoveragePercent(payload.detail.coverage)}</span></p>
+          <p>Meta: <span className="font-semibold">{formatMetricTarget(payload.metric === "coberturaCpd" ? payload.detail.denominator : payload.detail.threshold, payload.metric)}</span></p>
         </div>
       </div>
     </div>
@@ -275,7 +285,7 @@ function PerformanceTable({
               <th className="px-4 py-3">Nombre</th>
               <th className="px-4 py-3">Territorio</th>
               <th className="px-4 py-3">Cobertura Call Plan Adherence T1</th>
-              <th className="px-4 py-3">Cobertura CPD</th>
+              <th className="px-4 py-3">CPD</th>
               <th className="px-4 py-3">Cobertura Ayudas Visuales</th>
               <th className="px-4 py-3">Cobertura Documentacion 48 hrs</th>
             </tr>

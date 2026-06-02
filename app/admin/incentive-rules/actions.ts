@@ -131,6 +131,48 @@ function normalizeHeader(value: string): string {
     .replace(/[^a-z0-9]/g, "");
 }
 
+function normalizeHeaderAliases(value: string): string[] {
+  const normalized = normalizeHeader(value);
+  if (!normalized) return [];
+
+  const aliases = new Set([normalized]);
+  const wordNormalized = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  const aggregateMatch = wordNormalized.match(
+    /^(sum|total|average|avg|count|min|max)\s+(of\s+)?(.+)$/,
+  );
+  if (aggregateMatch?.[3]) {
+    aliases.add(normalizeHeader(aggregateMatch[3]));
+  }
+
+  return Array.from(aliases);
+}
+
+function addHeaderAliases(normalizedHeaderMap: Map<string, string>, header: string): void {
+  const aliases = normalizeHeaderAliases(header);
+  const [normalized] = aliases;
+  if (!normalized) return;
+
+  normalizedHeaderMap.set(normalized, header);
+  for (const alias of aliases.slice(1)) {
+    if (!normalizedHeaderMap.has(alias)) {
+      normalizedHeaderMap.set(alias, header);
+    }
+  }
+}
+
+function buildNormalizedHeaderMap(headers: string[]): Map<string, string> {
+  const normalizedHeaderMap = new Map<string, string>();
+  for (const header of headers) {
+    addHeaderAliases(normalizedHeaderMap, header);
+  }
+  return normalizedHeaderMap;
+}
+
 function parseOptionalNumber(value: unknown): number | null {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
@@ -334,6 +376,99 @@ function readNumberFromRow(
   return null;
 }
 
+type RequiredHeaderGroup = {
+  label: string;
+  candidates: string[];
+};
+
+function getRequiredHeaderGroupsForSourceFile(fileLogicKey: string): RequiredHeaderGroup[] {
+  if (fileLogicKey.includes("asignac")) {
+    return [
+      { label: "producto/product_name/product", candidates: ["producto", "product_name", "product"] },
+      { label: "ruta", candidates: ["ruta"] },
+      { label: "unidades", candidates: ["unidades"] },
+    ];
+  }
+
+  if (fileLogicKey === "b2b_base") {
+    return [
+      { label: "producto/molecula_producto", candidates: ["producto", "molecula_producto"] },
+      { label: "brick", candidates: ["brick"] },
+      { label: "unidades", candidates: ["unidades"] },
+    ];
+  }
+
+  if (fileLogicKey.includes("ddd")) {
+    return [
+      { label: "product_id/product/producto", candidates: ["product_id", "product", "producto"] },
+      { label: "brick", candidates: ["brick"] },
+      { label: "month01", candidates: ["month01"] },
+      { label: "month02", candidates: ["month02"] },
+      { label: "month03", candidates: ["month03"] },
+      { label: "month04", candidates: ["month04"] },
+      { label: "month05", candidates: ["month05"] },
+      { label: "month06", candidates: ["month06"] },
+    ];
+  }
+
+  if (fileLogicKey.includes("diario")) {
+    return [
+      { label: "material", candidates: ["material"] },
+      { label: "billed_quantity", candidates: ["billed_quantity"] },
+    ];
+  }
+
+  if (fileLogicKey.includes("iqvia")) {
+    return [
+      { label: "clue_id", candidates: ["clue_id"] },
+      { label: "molecula_h", candidates: ["molecula_h"] },
+      { label: "metric", candidates: ["metric"] },
+      { label: "fuente_db", candidates: ["fuente_db"] },
+      { label: "month01", candidates: ["month01"] },
+      { label: "month02", candidates: ["month02"] },
+      { label: "month03", candidates: ["month03"] },
+      { label: "month04", candidates: ["month04"] },
+      { label: "month05", candidates: ["month05"] },
+      { label: "month06", candidates: ["month06"] },
+    ];
+  }
+
+  if (fileLogicKey.includes("contacto")) {
+    return [
+      { label: "sku_number", candidates: ["sku_number"] },
+      { label: "quantity", candidates: ["quantity"] },
+      { label: "hcp_full_name", candidates: ["hcp_full_name"] },
+    ];
+  }
+
+  return [];
+}
+
+function validateSourceFileHeaders(params: {
+  fileCode: string;
+  displayName: string;
+  headers: string[];
+}): { ok: true } | { ok: false; message: string } {
+  const fileLogicKey = normalizeSourceFileCode(`${params.fileCode} ${params.displayName}`);
+  const requiredGroups = getRequiredHeaderGroupsForSourceFile(fileLogicKey);
+  if (requiredGroups.length === 0) return { ok: true };
+
+  const normalizedHeaderMap = buildNormalizedHeaderMap(params.headers);
+  const missingGroups = requiredGroups.filter((group) =>
+    group.candidates.every((candidate) => !normalizedHeaderMap.has(normalizeHeader(candidate))),
+  );
+
+  if (missingGroups.length === 0) return { ok: true };
+
+  return {
+    ok: false,
+    message:
+      `El archivo no cumple las columnas minimas para ${params.displayName || params.fileCode}. ` +
+      `Faltan: ${missingGroups.map((group) => group.label).join(", ")}. ` +
+      `Columnas detectadas: ${params.headers.join(", ") || "ninguna"}.`,
+  };
+}
+
 function sumMonths(months: Record<string, number>, periodMonthInput: string, startOffset: number, count: number): number | null {
   let sum = 0;
   let found = false;
@@ -396,6 +531,17 @@ function normalizeRowsForBigQuery(params: {
   const fileLogicKey = normalizeSourceFileCode(`${params.fileCode} ${params.displayName}`);
   const normalizedRows: NormalizedSourceRow[] = [];
 
+  if (params.rows.length > 0) {
+    const headerValidation = validateSourceFileHeaders({
+      fileCode: params.fileCode,
+      displayName: params.displayName,
+      headers: Object.keys(params.rows[0] ?? {}),
+    });
+    if (!headerValidation.ok) {
+      throw new Error(headerValidation.message);
+    }
+  }
+
   const pushIfValid = (row: NormalizedSourceRow) => {
     if (shouldKeepByMetricFuente(row, params.allowedMetrics, params.allowedFuentes)) {
       normalizedRows.push(row);
@@ -452,10 +598,7 @@ function normalizeRowsForBigQuery(params: {
   for (const rawRow of params.rows) {
     const row = rawRow ?? {};
     const headers = Object.keys(row);
-    const normalizedHeaderMap = new Map<string, string>();
-    for (const header of headers) {
-      normalizedHeaderMap.set(normalizeHeader(header), header);
-    }
+    const normalizedHeaderMap = buildNormalizedHeaderMap(headers);
     const monthValues = extractMonthValues(row);
     const ytdValue = readNumberFromRow(row, normalizedHeaderMap, ["ytd"]);
     const codigoEstado = normalizeCodigoEstado(
@@ -1572,10 +1715,7 @@ export async function uploadTeamRulesFromExcelAction(
   }
 
   const firstRowHeaders = Object.keys(rows[0] ?? {});
-  const headerMap = new Map<string, string>();
-  for (const header of firstRowHeaders) {
-    headerMap.set(normalizeHeader(header), header);
-  }
+  const headerMap = buildNormalizedHeaderMap(firstRowHeaders);
 
   const resolveHeader = (candidates: string[]): string | null => {
     for (const candidate of candidates) {
@@ -2204,6 +2344,45 @@ export async function uploadTeamSourceFileAction(
   const targetPath = `${periodMonth.slice(0, 7)}/${safeCodeChunk}/${Date.now()}-${safeFileName}`;
   const fileBuffer = Buffer.from(await uploadedFile.arrayBuffer());
 
+  try {
+    const { read, utils } = await import("xlsx");
+    const workbook = read(fileBuffer, { type: "buffer" });
+    const sheetName = sheetNameInput || workbook.SheetNames[0] || "";
+
+    if (!sheetName || !workbook.Sheets[sheetName]) {
+      return {
+        ok: false,
+        message: "No se encontro la pestana seleccionada en el archivo.",
+      };
+    }
+
+    const previewRows = utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName], {
+      defval: "",
+    });
+
+    if (previewRows.length === 0) {
+      return {
+        ok: false,
+        message: "La hoja no contiene filas con datos.",
+      };
+    }
+
+    const headerValidation = validateSourceFileHeaders({
+      fileCode,
+      displayName: displayNameInput || fileCodeInput || fileCode,
+      headers: Object.keys(previewRows[0] ?? {}),
+    });
+    if (!headerValidation.ok) return { ok: false, message: headerValidation.message };
+  } catch (error) {
+    return {
+      ok: false,
+      message:
+        error instanceof Error
+          ? `No se pudo validar el archivo antes de subirlo: ${error.message}`
+          : "No se pudo validar el archivo antes de subirlo.",
+    };
+  }
+
   const uploadResult = await supabase.storage.from(bucketName).upload(targetPath, fileBuffer, {
     cacheControl: "3600",
     upsert: true,
@@ -2479,6 +2658,20 @@ export async function reprocessTeamSourceFileFromStorageAction(
     const sheetRows = utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[resolvedSheetName], {
       defval: "",
     });
+
+    if (sheetRows.length === 0) {
+      return {
+        ok: false,
+        message: "La hoja almacenada no contiene filas con datos.",
+      };
+    }
+
+    const headerValidation = validateSourceFileHeaders({
+      fileCode,
+      displayName,
+      headers: Object.keys(sheetRows[0] ?? {}),
+    });
+    if (!headerValidation.ok) return { ok: false, message: headerValidation.message };
 
     const normalizedRows = normalizeRowsForBigQuery({
       rows: sheetRows,
