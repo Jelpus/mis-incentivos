@@ -117,6 +117,7 @@ export type PerfilRankingData = {
   performanceMode: "ytd" | "custom";
   contestsData: RankingContestsData;
   contestRankingData: RankingContestData;
+  selectedContestId: string | null;
   performanceRows: RankingPerformanceRow[];
   message: string | null;
   canAudit: boolean;
@@ -670,6 +671,7 @@ export async function getPerfilRankingData(params: {
     messages: [],
   };
   let contestRankingData = emptyContestRankingData;
+  let selectedContestId: string | null = null;
 
   const requestedPeriod = normalizePeriodMonthInput(params.requestedPeriod ?? "");
   const periodMonth = requestedPeriod && availablePeriods.includes(requestedPeriod)
@@ -688,6 +690,7 @@ export async function getPerfilRankingData(params: {
       performanceMode: "ytd",
       contestsData,
       contestRankingData,
+      selectedContestId,
       performanceRows: [],
       message: "No hay periodos completos de source-ranking disponibles.",
       canAudit,
@@ -741,6 +744,7 @@ export async function getPerfilRankingData(params: {
       performanceMode: performanceSelection.mode,
       contestsData,
       contestRankingData,
+      selectedContestId,
       performanceRows: [],
       message: "No hay relacion operativa para construir el ranking de este perfil.",
       canAudit,
@@ -749,16 +753,17 @@ export async function getPerfilRankingData(params: {
 
   if (params.includeContestRanking) {
     const requestedContestId = String(params.requestedContestId ?? "").trim();
-    const contestId =
+    selectedContestId =
       requestedContestId ||
       contestsData.contests.find((contest) => contest.isActive)?.id ||
       contestsData.contests[0]?.id ||
       null;
+    const shouldLoadAllContests = params.role === "admin" || params.role === "super_admin";
     contestRankingData = await getRankingContestData({
-      contestId,
+      contestId: shouldLoadAllContests ? null : selectedContestId,
       participantId: null,
       maxCoveragePeriodMonth: periodMonth,
-      includeDetails: false,
+      includeDetails: shouldLoadAllContests,
     });
   }
 
@@ -788,6 +793,7 @@ export async function getPerfilRankingData(params: {
     performanceMode: performanceSelection.mode,
     contestsData,
     contestRankingData,
+    selectedContestId,
     performanceRows,
     message: error,
     canAudit,

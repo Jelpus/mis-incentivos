@@ -547,6 +547,8 @@ export function PerfilRankingClient({ data, initialTab = "concursos" }: Props) {
           data={data.contestRankingData}
           contestOptions={data.contestsData.contests}
           periodMonth={data.periodMonth}
+          initialContestId={data.selectedContestId}
+          canExportExcel={data.role === "admin" || data.role === "super_admin"}
         />
       )}
     </div>

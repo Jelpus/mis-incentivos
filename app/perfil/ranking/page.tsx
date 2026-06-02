@@ -47,7 +47,7 @@ export default async function PerfilRankingPage({ searchParams }: RankingPagePro
         </p>
 
         <PerfilRankingClient
-          key={`${initialTab}-${data.periodMonth ?? "none"}-${data.performanceMode}-${data.selectedPerformancePeriods.join("_")}-${data.contestRankingData.contests[0]?.id ?? "none"}`}
+          key={`${initialTab}-${data.periodMonth ?? "none"}-${data.performanceMode}-${data.selectedPerformancePeriods.join("_")}-${data.selectedContestId ?? data.contestRankingData.contests[0]?.id ?? "none"}`}
           data={data}
           initialTab={initialTab}
         />

@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState, useTransition, type ChangeEvent } from "react";
 import {
   createSourceRankingFileDownloadUrlAction,
-  uploadSourceRankingFileAction,
 } from "@/app/admin/source-ranking/actions";
 import { formatPeriodMonthLabel } from "@/lib/admin/incentive-rules/shared";
 import { formatDateTimeNoTimezoneShift } from "@/lib/date-time";
@@ -118,8 +117,19 @@ function SourceRankingFileUploadRowItem({ row }: { row: SourceRankingFileRow }) 
     setStepIndex(0);
     startTransition(async () => {
       try {
-        const result = await uploadSourceRankingFileAction(null, formData);
-        setState(result);
+        const response = await fetch("/api/admin/source-ranking/upload", {
+          method: "POST",
+          body: formData,
+        });
+        const result = await response.json().catch(() => null) as UploadState;
+        if (result) {
+          setState(result);
+          return;
+        }
+        setState({
+          ok: false,
+          message: `Error inesperado en la carga: respuesta HTTP ${response.status}.`,
+        });
       } catch (error) {
         setState({
           ok: false,

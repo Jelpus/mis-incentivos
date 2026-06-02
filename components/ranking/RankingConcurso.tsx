@@ -13,14 +13,23 @@ export function RankingConcurso({
   data,
   contestOptions,
   periodMonth,
+  initialContestId,
+  canExportExcel = false,
 }: {
   data: RankingContestData;
   contestOptions?: RankingContestRow[];
   periodMonth?: string | null;
+  initialContestId?: string | null;
+  canExportExcel?: boolean;
 }) {
   const router = useRouter();
   const [isContestNavigationPending, startContestNavigation] = useTransition();
-  const [contestId, setContestId] = useState(data.contests[0]?.id ?? "");
+  const [isExporting, setIsExporting] = useState(false);
+  const [contestId, setContestId] = useState(
+    initialContestId && data.contests.some((contest) => contest.id === initialContestId)
+      ? initialContestId
+      : data.contests[0]?.id ?? "",
+  );
   const [groupFilter, setGroupFilter] = useState("");
   const [rankingView, setRankingView] = useState<RankingView>("qualified");
 
@@ -49,6 +58,142 @@ export function RankingConcurso({
   const disqualified = contestRows.filter((row) => row.qualificationStatus === "disqualified").length;
   const pending = contestRows.filter((row) => row.qualificationStatus === "pending").length;
 
+  function cleanSheetName(value: string, fallback: string, usedNames: Set<string>) {
+    const base = (value || fallback)
+      .replace(/[\[\]*?:/\\]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 31) || fallback;
+    let name = base;
+    let index = 2;
+    while (usedNames.has(name)) {
+      const suffix = ` ${index}`;
+      name = `${base.slice(0, 31 - suffix.length)}${suffix}`;
+      index += 1;
+    }
+    usedNames.add(name);
+    return name;
+  }
+
+  function buildRankingRows(rows: typeof data.rows) {
+    return rows.map((row) => ({
+      Concurso: row.contestName,
+      Rank: row.rank ?? "",
+      Participante: row.participantName,
+      Alcance: row.scope === "manager" ? "Manager" : "Representante",
+      Empleado: row.employeeNumber ?? "",
+      Email: row.email ?? "",
+      Territorio: row.territory ?? "",
+      Team: row.teamId ?? "",
+      "Ranking Group": row.rankingGroup ?? "",
+      Estado: row.qualificationLabel,
+      "Status tecnico": row.qualificationStatus,
+      "Calificadores aprobados": row.componentsPassed,
+      "Calificadores totales": row.componentsTotal,
+      "Puntos totales": row.totalPoints,
+    }));
+  }
+
+  function buildDetailRows(rows: typeof data.rows) {
+    const output: Array<Record<string, unknown>> = [];
+    for (const row of rows) {
+      if (row.componentEvaluations.length === 0 && row.pointDetails.length === 0) {
+        output.push({
+          Tipo: "Participante",
+          Concurso: row.contestName,
+          Participante: row.participantName,
+          Rank: row.rank ?? "",
+          Territorio: row.territory ?? "",
+          Team: row.teamId ?? "",
+          "Ranking Group": row.rankingGroup ?? "",
+          Estado: row.qualificationLabel,
+          Detalle: "Sin calificadores ni puntos detalle",
+        });
+      }
+
+      for (const evaluation of row.componentEvaluations) {
+        output.push({
+          Tipo: "Calificador",
+          Concurso: row.contestName,
+          Participante: row.participantName,
+          Rank: row.rank ?? "",
+          Territorio: row.territory ?? "",
+          Team: row.teamId ?? "",
+          "Ranking Group": row.rankingGroup ?? "",
+          Componente: evaluation.componentName,
+          Meta: evaluation.thresholdValue ?? "",
+          Valor: evaluation.value ?? "",
+          Aprobado: evaluation.passed ? "Si" : "No",
+          Estado: evaluation.status,
+          Razon: evaluation.reason ?? "",
+          "Periodo inicio": evaluation.periodStart ?? "",
+          "Periodo fin": evaluation.periodEnd ?? "",
+        });
+      }
+
+      for (const detail of row.pointDetails) {
+        output.push({
+          Tipo: "Puntos",
+          Concurso: row.contestName,
+          Participante: row.participantName,
+          Rank: row.rank ?? "",
+          Territorio: row.territory ?? "",
+          Team: row.teamId ?? "",
+          "Ranking Group": row.rankingGroup ?? "",
+          Periodo: detail.period,
+          Producto: detail.productName ?? "",
+          Formula: detail.formula,
+          "Cobertura raw": detail.rawCoverage,
+          "Cobertura capped": detail.cappedCoverage,
+          Peso: detail.weight,
+          Puntos: detail.points,
+          "Complemento faltante": detail.missingComplement ? "Si" : "No",
+          "Puntos equipo": detail.teamTotalPoints ?? "",
+          "Miembros equipo": detail.teamMembersCount ?? "",
+        });
+
+        for (const member of detail.teamMemberPoints ?? []) {
+          output.push({
+            Tipo: "Puntos equipo miembro",
+            Concurso: row.contestName,
+            Participante: row.participantName,
+            Rank: row.rank ?? "",
+            Territorio: row.territory ?? "",
+            Team: row.teamId ?? "",
+            "Ranking Group": row.rankingGroup ?? "",
+            Periodo: member.period,
+            Representante: member.representativeName,
+            Puntos: member.points,
+          });
+        }
+      }
+    }
+    return output;
+  }
+
+  async function exportRankingExcel() {
+    try {
+      setIsExporting(true);
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.utils.book_new();
+      const usedNames = new Set<string>();
+
+      for (const contest of data.contests) {
+        const rows = data.rows.filter((row) => row.contestId === contest.id);
+        const sheetRows = buildRankingRows(rows);
+        const sheetName = cleanSheetName(contest.contestName, "Concurso", usedNames);
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(sheetRows), sheetName);
+      }
+
+      const detailRows = buildDetailRows(data.rows);
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detailRows), cleanSheetName("Detalles", "Detalles", usedNames));
+      const safePeriod = (periodMonth || data.maxCoveragePeriodMonth || "ranking").slice(0, 10).replace(/[^0-9-]/g, "");
+      XLSX.writeFile(workbook, `ranking_concursos_${safePeriod}.xlsx`);
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   if (!data.maxCoveragePeriodMonth) {
     return (
       <div className="rounded-xl border border-dashed border-[#d8e3f8] bg-[#f8fbff] p-6 text-sm text-[#667085]">
@@ -74,7 +219,7 @@ export function RankingConcurso({
       ) : null}
 
       <div className="rounded-xl border border-[#e3ebfa] bg-[#f8fbff] p-4">
-        <div className="grid gap-3 lg:grid-cols-[1.5fr_1fr] lg:items-end">
+        <div className="grid gap-3 lg:grid-cols-[1.5fr_1fr_auto] lg:items-end">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#445f95]">Ranking por concurso</p>
             <select
@@ -119,6 +264,17 @@ export function RankingConcurso({
                 {groups.map((group) => <option key={group} value={group}>{group}</option>)}
               </select>
             </div>
+          ) : null}
+
+          {canExportExcel ? (
+            <button
+              type="button"
+              onClick={exportRankingExcel}
+              disabled={isExporting || data.rows.length === 0}
+              className="inline-flex justify-center rounded-lg border border-[#002b7f] bg-[#002b7f] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#001f5c] disabled:cursor-not-allowed disabled:border-[#d0d5dd] disabled:bg-[#eef2f7] disabled:text-[#98a2b3]"
+            >
+              {isExporting ? "Exportando..." : "Descargar Excel"}
+            </button>
           ) : null}
         </div>
       </div>
