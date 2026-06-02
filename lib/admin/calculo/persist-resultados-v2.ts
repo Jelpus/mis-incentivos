@@ -25,11 +25,21 @@ const RESULTADOS_V2_SCHEMA = [
   { name: "periodo", type: "STRING" as const },
 ];
 
-const RESULTADOS_V2_COLUMNS = RESULTADOS_V2_SCHEMA.map((field) => field.name);
-
 function quoteIdentifier(value: string): string {
   return value.replace(/[^A-Za-z0-9_]/g, "_");
 }
+
+function quoteColumn(value: string): string {
+  return `\`${value.replace(/`/g, "")}\``;
+}
+
+function castColumnExpression(field: (typeof RESULTADOS_V2_SCHEMA)[number]): string {
+  const column = quoteColumn(field.name);
+  if (field.type === "STRING") return `CAST(${column} AS STRING) AS ${column}`;
+  return `SAFE_CAST(${column} AS ${field.type}) AS ${column}`;
+}
+
+const RESULTADOS_V2_SELECT_EXPRESSIONS = RESULTADOS_V2_SCHEMA.map(castColumnExpression).join(", ");
 
 export async function persistResultadosV2(
   periodMonth: string,
@@ -97,22 +107,21 @@ export async function persistResultadosV2(
       await runBigQueryQuery({
         query: `
           CREATE OR REPLACE TABLE ${stageTableRef} AS
-          SELECT ${RESULTADOS_V2_COLUMNS.join(", ")}
+          SELECT ${RESULTADOS_V2_SELECT_EXPRESSIONS}
           FROM ${tableRef}
           WHERE FALSE
         `,
       });
     }
 
-    const selectColumns = RESULTADOS_V2_COLUMNS.join(", ");
     await runBigQueryQuery({
       query: `
         CREATE OR REPLACE TABLE ${replacementTableRef} AS
-        SELECT ${selectColumns}
+        SELECT ${RESULTADOS_V2_SELECT_EXPRESSIONS}
         FROM ${tableRef}
-        WHERE periodo IS NULL OR periodo != @periodo
+        WHERE periodo IS NULL OR CAST(periodo AS STRING) != @periodo
         UNION ALL
-        SELECT ${selectColumns}
+        SELECT ${RESULTADOS_V2_SELECT_EXPRESSIONS}
         FROM ${stageTableRef}
       `,
       parameters: [{ name: "periodo", type: "STRING", value: periodCode }],

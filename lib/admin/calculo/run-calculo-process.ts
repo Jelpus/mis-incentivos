@@ -30,7 +30,13 @@ const ASIGNACION_UNIDADES_SCHEMA = [
   { name: "objetivo", type: "INT64" as const },
 ];
 
-const ASIGNACION_UNIDADES_COLUMNS = ASIGNACION_UNIDADES_SCHEMA.map((field) => field.name);
+function castAsignacionColumnExpression(field: (typeof ASIGNACION_UNIDADES_SCHEMA)[number]): string {
+  const column = `\`${field.name.replace(/`/g, "")}\``;
+  if (field.type === "STRING") return `CAST(${column} AS STRING) AS ${column}`;
+  return `SAFE_CAST(${column} AS ${field.type}) AS ${column}`;
+}
+
+const ASIGNACION_UNIDADES_SELECT_EXPRESSIONS = ASIGNACION_UNIDADES_SCHEMA.map(castAsignacionColumnExpression).join(", ");
 
 type StatusRow = {
   territorio_individual: string | null;
@@ -425,10 +431,6 @@ function computeCobertura(objetivo: number, resultado: number): number {
 
 function quoteTableIdentifier(value: string): string {
   return value.replace(/[^A-Za-z0-9_]/g, "_");
-}
-
-function quoteColumnIdentifier(value: string): string {
-  return `\`${value.replace(/`/g, "")}\``;
 }
 
 function buildAsignacionBigQueryRow(row: AssignmentRow, index: number): Record<string, unknown> {
@@ -1054,7 +1056,6 @@ export async function runCalculoProcess(
     const stageTableRef = `\`${projectId}.${asignacionDataset}.${stageTable}\``;
     const replacementTableRef = `\`${projectId}.${asignacionDataset}.${replacementTable}\``;
     const rowsForBigQuery = assignments.map((row, index) => buildAsignacionBigQueryRow(row, index));
-    const selectColumns = ASIGNACION_UNIDADES_COLUMNS.map(quoteColumnIdentifier).join(", ");
 
     try {
       if (rowsForBigQuery.length > 0) {
@@ -1069,7 +1070,7 @@ export async function runCalculoProcess(
         await runBigQueryQuery({
           query: `
             CREATE OR REPLACE TABLE ${stageTableRef} AS
-            SELECT ${selectColumns}
+            SELECT ${ASIGNACION_UNIDADES_SELECT_EXPRESSIONS}
             FROM ${asignacionTableRef}
             WHERE FALSE
           `,
@@ -1079,11 +1080,11 @@ export async function runCalculoProcess(
       await runBigQueryQuery({
         query: `
           CREATE OR REPLACE TABLE ${replacementTableRef} AS
-          SELECT ${selectColumns}
+          SELECT ${ASIGNACION_UNIDADES_SELECT_EXPRESSIONS}
           FROM ${asignacionTableRef}
-          WHERE periodo IS NULL OR periodo != @periodo
+          WHERE periodo IS NULL OR CAST(periodo AS STRING) != @periodo
           UNION ALL
-          SELECT ${selectColumns}
+          SELECT ${ASIGNACION_UNIDADES_SELECT_EXPRESSIONS}
           FROM ${stageTableRef}
         `,
         parameters: [{ name: "periodo", type: "STRING", value: periodCode }],
