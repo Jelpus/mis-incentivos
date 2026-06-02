@@ -2,10 +2,13 @@
 
 import { useEffect, useMemo, useState, useTransition, type ChangeEvent } from "react";
 import {
+  completeSourceRankingDirectUploadAction,
   createSourceRankingFileDownloadUrlAction,
+  prepareSourceRankingDirectUploadAction,
 } from "@/app/admin/source-ranking/actions";
 import { formatPeriodMonthLabel } from "@/lib/admin/incentive-rules/shared";
 import { formatDateTimeNoTimezoneShift } from "@/lib/date-time";
+import { createClient } from "@/lib/supabase/client";
 
 type SourceRankingFileRow = {
   fileCode: string;
@@ -108,28 +111,51 @@ function SourceRankingFileUploadRowItem({ row }: { row: SourceRankingFileRow }) 
       return;
     }
 
-    const formData = new FormData();
-    formData.append("file_code", row.fileCode);
-    formData.append("display_name", row.displayName);
-    formData.append("file", selectedFile);
-
     setShowProgressModal(true);
     setStepIndex(0);
     startTransition(async () => {
       try {
-        const response = await fetch("/api/admin/source-ranking/upload", {
-          method: "POST",
-          body: formData,
+        const prepareResult = await prepareSourceRankingDirectUploadAction({
+          fileCode: row.fileCode,
+          displayName: row.displayName,
+          fileName: selectedFile.name,
+          fileSize: selectedFile.size,
+          contentType: selectedFile.type || null,
         });
-        const result = await response.json().catch(() => null) as UploadState;
-        if (result) {
-          setState(result);
+
+        if (!prepareResult.ok) {
+          setState(prepareResult);
           return;
         }
-        setState({
-          ok: false,
-          message: `Error inesperado en la carga: respuesta HTTP ${response.status}.`,
+
+        setStepIndex(1);
+        const supabase = createClient();
+        const uploadResult = await supabase.storage
+          .from(prepareResult.bucket)
+          .uploadToSignedUrl(prepareResult.path, prepareResult.token, selectedFile, {
+            contentType: selectedFile.type || undefined,
+            upsert: true,
+          });
+
+        if (uploadResult.error) {
+          setState({
+            ok: false,
+            message: `No se pudo subir el archivo a storage: ${uploadResult.error.message}`,
+          });
+          return;
+        }
+
+        setStepIndex(2);
+        const completeResult = await completeSourceRankingDirectUploadAction({
+          bucket: prepareResult.bucket,
+          path: prepareResult.path,
+          fileCode: row.fileCode,
+          displayName: row.displayName,
+          fileName: selectedFile.name,
+          fileSize: selectedFile.size,
+          contentType: selectedFile.type || null,
         });
+        setState(completeResult);
       } catch (error) {
         setState({
           ok: false,

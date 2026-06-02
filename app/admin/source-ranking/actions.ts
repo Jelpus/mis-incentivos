@@ -58,8 +58,28 @@ export type DownloadSourceRankingFileResult =
     message: string;
   };
 
+export type PrepareSourceRankingDirectUploadResult =
+  | {
+    ok: true;
+    bucket: string;
+    path: string;
+    token: string;
+  }
+  | {
+    ok: false;
+    message: string;
+  };
+
 function isAdminRole(role: string | null, isActive: boolean | null): boolean {
   return isActive !== false && (role === "admin" || role === "super_admin");
+}
+
+function getSourceRankingBucketName() {
+  return (
+    process.env.SUPABASE_SOURCE_RANKING_BUCKET ??
+    process.env.NEXT_PUBLIC_SUPABASE_SOURCE_RANKING_BUCKET ??
+    "source-ranking-files"
+  );
 }
 
 function sanitizeUploadedFileName(fileName: string): string {
@@ -95,6 +115,41 @@ function makeIcvaAggKey(row: {
     ? "na"
     : String(Number(empleadoRaw));
   return `${periodMonth}|${territory}|${empleado}`;
+}
+
+async function ensureSourceRankingBucket(
+  supabase: NonNullable<ReturnType<typeof createAdminClient>>,
+  bucketName: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const bucketCheckResult = await supabase.storage.getBucket(bucketName);
+  if (!bucketCheckResult.error) return { ok: true };
+
+  const message = String(bucketCheckResult.error.message ?? "").toLowerCase();
+  const notFound =
+    message.includes("not found") ||
+    message.includes("does not exist") ||
+    message.includes("bucket");
+
+  if (!notFound) {
+    return {
+      ok: false,
+      message: `No se pudo validar bucket "${bucketName}": ${bucketCheckResult.error.message}`,
+    };
+  }
+
+  const createBucketResult = await supabase.storage.createBucket(bucketName, {
+    public: false,
+    fileSizeLimit: "50MB",
+  });
+
+  if (createBucketResult.error) {
+    return {
+      ok: false,
+      message: `No existe el bucket "${bucketName}" y no se pudo crear automaticamente: ${createBucketResult.error.message}`,
+    };
+  }
+
+  return { ok: true };
 }
 
 function hasIcvaAggChanges(
@@ -236,6 +291,124 @@ async function syncIcvaAggRows(params: {
   };
 }
 
+export async function prepareSourceRankingDirectUploadAction(params: {
+  fileCode: string;
+  displayName?: string | null;
+  fileName: string;
+  fileSize: number;
+  contentType?: string | null;
+}): Promise<PrepareSourceRankingDirectUploadResult> {
+  const { user, role, isActive } = await getCurrentAuthContext();
+  if (!user || !isAdminRole(role, isActive)) {
+    return { ok: false, message: "No autorizado." };
+  }
+
+  const fileCodeInput = String(params.fileCode ?? "").trim().toLowerCase();
+  const fileSize = Number(params.fileSize ?? 0);
+
+  if (!Number.isFinite(fileSize) || fileSize <= 0) {
+    return { ok: false, message: "El archivo esta vacio." };
+  }
+
+  if (fileSize > MAX_SOURCE_FILE_SIZE_BYTES) {
+    return { ok: false, message: "El archivo excede el limite de 50MB." };
+  }
+
+  const requiredFile = RANKING_REQUIRED_FILES.find((item) => item.fileCode === fileCodeInput);
+  if (!requiredFile) {
+    return {
+      ok: false,
+      message: "Archivo no permitido para Source Ranking. Refresca la vista e intenta de nuevo.",
+    };
+  }
+
+  const supabase = createAdminClient();
+  if (!supabase) {
+    return { ok: false, message: "Admin client no disponible." };
+  }
+
+  const bucketName = getSourceRankingBucketName();
+  const bucketReadyResult = await ensureSourceRankingBucket(supabase, bucketName);
+  if (!bucketReadyResult.ok) return bucketReadyResult;
+
+  const safeFileName = sanitizeUploadedFileName(params.fileName);
+  const safeCodeChunk = sanitizeStoragePathChunk(fileCodeInput) || "source-ranking";
+  const targetPath = `_incoming/${safeCodeChunk}/${Date.now()}-${safeFileName}`;
+  const signedUploadResult = await supabase.storage.from(bucketName).createSignedUploadUrl(targetPath);
+
+  if (signedUploadResult.error || !signedUploadResult.data?.token) {
+    return {
+      ok: false,
+      message: `No se pudo preparar la carga directa: ${signedUploadResult.error?.message ?? "token no disponible"}`,
+    };
+  }
+
+  return {
+    ok: true,
+    bucket: bucketName,
+    path: signedUploadResult.data.path || targetPath,
+    token: signedUploadResult.data.token,
+  };
+}
+
+export async function completeSourceRankingDirectUploadAction(params: {
+  bucket: string;
+  path: string;
+  fileCode: string;
+  displayName?: string | null;
+  fileName: string;
+  fileSize: number;
+  contentType?: string | null;
+}): Promise<UploadSourceRankingFileResult> {
+  const { user, role, isActive } = await getCurrentAuthContext();
+  if (!user || !isAdminRole(role, isActive)) {
+    return { ok: false, message: "No autorizado." };
+  }
+
+  const bucketName = getSourceRankingBucketName();
+  const bucket = String(params.bucket ?? "").trim();
+  const path = String(params.path ?? "").trim();
+  if (bucket !== bucketName || !path || !path.startsWith("_incoming/")) {
+    return { ok: false, message: "Ruta temporal invalida para procesar el archivo." };
+  }
+
+  const fileSize = Number(params.fileSize ?? 0);
+  if (!Number.isFinite(fileSize) || fileSize <= 0) {
+    return { ok: false, message: "El archivo esta vacio." };
+  }
+  if (fileSize > MAX_SOURCE_FILE_SIZE_BYTES) {
+    return { ok: false, message: "El archivo excede el limite de 50MB." };
+  }
+
+  const supabase = createAdminClient();
+  if (!supabase) {
+    return { ok: false, message: "Admin client no disponible." };
+  }
+
+  const downloadResult = await supabase.storage.from(bucketName).download(path);
+  if (downloadResult.error || !downloadResult.data) {
+    return {
+      ok: false,
+      message: `No se pudo descargar el archivo temporal de storage: ${downloadResult.error?.message ?? "archivo no disponible"}`,
+    };
+  }
+
+  try {
+    const file = new File(
+      [await downloadResult.data.arrayBuffer()],
+      sanitizeUploadedFileName(params.fileName),
+      { type: params.contentType || undefined },
+    );
+    const formData = new FormData();
+    formData.append("file_code", String(params.fileCode ?? ""));
+    formData.append("display_name", String(params.displayName ?? ""));
+    formData.append("file", file);
+    return await uploadSourceRankingFileAction(null, formData);
+  } finally {
+    await supabase.storage.from(bucketName).remove([path]);
+  }
+}
+
 export async function uploadSourceRankingFileAction(
   _prevState: UploadSourceRankingFileResult | null,
   formData: FormData,
@@ -296,38 +469,9 @@ export async function uploadSourceRankingFileAction(
   );
   const periodMonth = requestedPeriodMonth ?? latestStatusPeriod ?? getCurrentPeriodMonth();
 
-  const bucketName =
-    process.env.SUPABASE_SOURCE_RANKING_BUCKET ??
-    process.env.NEXT_PUBLIC_SUPABASE_SOURCE_RANKING_BUCKET ??
-    "source-ranking-files";
-
-  const bucketCheckResult = await supabase.storage.getBucket(bucketName);
-  if (bucketCheckResult.error) {
-    const message = String(bucketCheckResult.error.message ?? "").toLowerCase();
-    const notFound =
-      message.includes("not found") ||
-      message.includes("does not exist") ||
-      message.includes("bucket");
-
-    if (notFound) {
-      const createBucketResult = await supabase.storage.createBucket(bucketName, {
-        public: false,
-        fileSizeLimit: "50MB",
-      });
-
-      if (createBucketResult.error) {
-        return {
-          ok: false,
-          message: `No existe el bucket "${bucketName}" y no se pudo crear automaticamente: ${createBucketResult.error.message}`,
-        };
-      }
-    } else {
-      return {
-        ok: false,
-        message: `No se pudo validar bucket "${bucketName}": ${bucketCheckResult.error.message}`,
-      };
-    }
-  }
+  const bucketName = getSourceRankingBucketName();
+  const bucketReadyResult = await ensureSourceRankingBucket(supabase, bucketName);
+  if (!bucketReadyResult.ok) return bucketReadyResult;
 
   const fileBuffer = Buffer.from(await uploadedFile.arrayBuffer());
 
