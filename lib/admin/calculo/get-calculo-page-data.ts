@@ -9,6 +9,8 @@ import {
 
 type SalesForcePeriodRow = {
   period_month: string | null;
+  territorio_individual: string | null;
+  is_active: boolean | null;
 };
 
 type CalculationStatusRow = {
@@ -55,8 +57,8 @@ export type CalculoPageData = {
     periodMonth: string;
     status: "borrador" | "precalculo" | "final" | "publicado";
     finalAmount: number | null;
-    vsMedia: number | null;
-    vsPeriodoAnterior: number | null;
+    headcount: number;
+    averagePayment: number | null;
     updatedAt: string | null;
     updatedBy: string | null;
   }>;
@@ -70,7 +72,7 @@ async function loadCalculoPageData(): Promise<CalculoPageData> {
 
   const periodsResult = await supabase
     .from("sales_force_status")
-    .select("period_month")
+    .select("period_month, territorio_individual, is_active")
     .eq("is_deleted", false)
     .gte("period_month", "2026-01-01")
     .order("period_month", { ascending: false });
@@ -79,9 +81,18 @@ async function loadCalculoPageData(): Promise<CalculoPageData> {
     throw new Error(`Failed to load periods from sales_force_status: ${periodsResult.error.message}`);
   }
 
-  const periods = normalizePeriodCollection(
-    ((periodsResult.data ?? []) as SalesForcePeriodRow[]).map((row) => row.period_month),
-  );
+  const salesForceRows = (periodsResult.data ?? []) as SalesForcePeriodRow[];
+  const periods = normalizePeriodCollection(salesForceRows.map((row) => row.period_month));
+  const territoriesByPeriod = new Map<string, Set<string>>();
+  for (const row of salesForceRows) {
+    if (row.is_active === false) continue;
+    const periodMonth = normalizePeriodMonthInput(String(row.period_month ?? "").trim());
+    const territory = String(row.territorio_individual ?? "").trim();
+    if (!periodMonth || !territory) continue;
+    const current = territoriesByPeriod.get(periodMonth) ?? new Set<string>();
+    current.add(territory);
+    territoriesByPeriod.set(periodMonth, current);
+  }
 
   let storageReady = true;
   let storageMessage: string | null = null;
@@ -186,13 +197,15 @@ async function loadCalculoPageData(): Promise<CalculoPageData> {
       statusRow?.status === "final"
         ? ((baseAmount ?? 0) + ajusteAmount)
         : (baseAmount ?? null);
+    const finalAmount = computedAmount ?? statusRow?.final_amount ?? null;
+    const headcount = territoriesByPeriod.get(periodMonth)?.size ?? 0;
 
     return {
       periodMonth,
       status: statusRow?.status ?? "borrador",
-      finalAmount: computedAmount ?? statusRow?.final_amount ?? null,
-      vsMedia: null,
-      vsPeriodoAnterior: null,
+      finalAmount,
+      headcount,
+      averagePayment: finalAmount !== null && headcount > 0 ? finalAmount / headcount : null,
       updatedAt: statusRow?.updated_at ?? null,
       updatedBy: statusRow?.updated_by ?? null,
     };

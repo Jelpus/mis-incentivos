@@ -9,8 +9,8 @@ type Row = {
   periodMonth: string;
   status: "borrador" | "precalculo" | "final" | "publicado";
   finalAmount: number | null;
-  vsMedia: number | null;
-  vsPeriodoAnterior: number | null;
+  headcount: number;
+  averagePayment: number | null;
   updatedAt: string | null;
   updatedBy: string | null;
 };
@@ -36,9 +36,8 @@ function formatMoney(value: number | null): string {
   return new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 2 }).format(value);
 }
 
-function formatPercent(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return "-";
-  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+function formatInteger(value: number): string {
+  return new Intl.NumberFormat("es-MX", { maximumFractionDigits: 0 }).format(value);
 }
 
 function statusBadge(status: Row["status"]) {
@@ -144,8 +143,8 @@ export function CalculoManagementCard({ rows, bigQueryReady, bigQueryMessage }: 
               <th className="px-3 py-2">Periodo</th>
               <th className="px-3 py-2">Status</th>
               <th className="px-3 py-2">Monto final</th>
-              <th className="px-3 py-2">Vs media</th>
-              <th className="px-3 py-2">Vs periodo anterior</th>
+              <th className="px-3 py-2">Headcount</th>
+              <th className="px-3 py-2">Average Payment</th>
               <th className="px-3 py-2">Actualizado</th>
               <th className="px-3 py-2">Acciones</th>
             </tr>
@@ -171,8 +170,8 @@ export function CalculoManagementCard({ rows, bigQueryReady, bigQueryMessage }: 
                       </span>
                     </td>
                     <td className="px-3 py-2 text-neutral-700">{formatMoney(row.finalAmount)}</td>
-                    <td className="px-3 py-2 text-neutral-700">{formatPercent(row.vsMedia)}</td>
-                    <td className="px-3 py-2 text-neutral-700">{formatPercent(row.vsPeriodoAnterior)}</td>
+                    <td className="px-3 py-2 text-neutral-700">{formatInteger(row.headcount)}</td>
+                    <td className="px-3 py-2 text-neutral-700">{formatMoney(row.averagePayment)}</td>
                     <td className="px-3 py-2 text-neutral-700">
                       <p>{formatDateTime(row.updatedAt)}</p>
                       <p className="text-xs text-neutral-500">{row.updatedBy ?? "-"}</p>
