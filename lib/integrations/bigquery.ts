@@ -1,4 +1,8 @@
 import { BigQuery } from "@google-cloud/bigquery";
+import { randomUUID } from "crypto";
+import { mkdtemp, rm, writeFile } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 
 type BigQueryParameter = {
   name: string;
@@ -9,6 +13,12 @@ type BigQueryParameter = {
 type BigQueryInsertRow = {
   rowId?: string;
   json: Record<string, unknown>;
+};
+
+type BigQuerySchemaField = {
+  name: string;
+  type: "STRING" | "INT64" | "FLOAT64" | "BOOL" | "TIMESTAMP" | "DATE" | "DATETIME" | "NUMERIC";
+  mode?: "NULLABLE" | "REQUIRED" | "REPEATED";
 };
 
 function resolvePrivateKey(): string | null {
@@ -166,6 +176,63 @@ export async function insertBigQueryRows(params: {
 
     const message = error instanceof Error ? error.message : "Unknown BigQuery error.";
     throw new Error(`BigQuery insert failed: ${message}`);
+  }
+}
+
+export async function loadBigQueryJsonRows(params: {
+  datasetId: string;
+  tableId: string;
+  rows: Record<string, unknown>[];
+  schema: BigQuerySchemaField[];
+  writeDisposition?: "WRITE_APPEND" | "WRITE_TRUNCATE" | "WRITE_EMPTY";
+}): Promise<void> {
+  getBigQueryProjectId();
+  const client = getBigQueryClient();
+  const table = client.dataset(params.datasetId).table(params.tableId);
+  const queryLocation = process.env.BQ_LOCATION?.trim() || undefined;
+  const tmpDir = await mkdtemp(join(tmpdir(), `bq-json-${randomUUID()}-`));
+  const filePath = join(tmpDir, "rows.ndjson");
+
+  try {
+    const payload = params.rows.map((row) => JSON.stringify(row)).join("\n");
+    await writeFile(filePath, payload.length > 0 ? `${payload}\n` : "", "utf8");
+    await table.load(filePath, {
+      sourceFormat: "NEWLINE_DELIMITED_JSON",
+      schema: { fields: params.schema },
+      writeDisposition: params.writeDisposition ?? "WRITE_TRUNCATE",
+      createDisposition: "CREATE_IF_NEEDED",
+      ignoreUnknownValues: true,
+      location: queryLocation,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown BigQuery error.";
+    throw new Error(`BigQuery load job failed: ${message}`);
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+export async function copyBigQueryTable(params: {
+  datasetId: string;
+  sourceTableId: string;
+  destinationTableId: string;
+  writeDisposition?: "WRITE_APPEND" | "WRITE_TRUNCATE" | "WRITE_EMPTY";
+}): Promise<void> {
+  getBigQueryProjectId();
+  const client = getBigQueryClient();
+  const sourceTable = client.dataset(params.datasetId).table(params.sourceTableId);
+  const destinationTable = client.dataset(params.datasetId).table(params.destinationTableId);
+  const queryLocation = process.env.BQ_LOCATION?.trim() || undefined;
+
+  try {
+    await sourceTable.copy(destinationTable, {
+      writeDisposition: params.writeDisposition ?? "WRITE_TRUNCATE",
+      createDisposition: "CREATE_IF_NEEDED",
+      location: queryLocation,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown BigQuery error.";
+    throw new Error(`BigQuery copy job failed: ${message}`);
   }
 }
 

@@ -1,11 +1,36 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { fetchBigQueryRows, insertBigQueryRows, isBigQueryConfigured, runBigQueryQuery } from "@/lib/integrations/bigquery";
+import { copyBigQueryTable, fetchBigQueryRows, isBigQueryConfigured, loadBigQueryJsonRows, runBigQueryQuery } from "@/lib/integrations/bigquery";
 import { getMissingRelationName, isMissingRelationError } from "@/lib/admin/incentive-rules/shared";
 
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 220;
-const BQ_DELETE_RETRY_ATTEMPTS = 4;
-const BQ_DELETE_RETRY_DELAY_MS = 8000;
+
+const ASIGNACION_UNIDADES_SCHEMA = [
+  { name: "brick", type: "STRING" as const },
+  { name: "molecula_producto", type: "STRING" as const },
+  { name: "valor", type: "FLOAT64" as const },
+  { name: "trimestre", type: "STRING" as const },
+  { name: "semestre", type: "STRING" as const },
+  { name: "metric", type: "STRING" as const },
+  { name: "fuente", type: "STRING" as const },
+  { name: "periodo", type: "STRING" as const },
+  { name: "index", type: "INT64" as const },
+  { name: "encontrar", type: "STRING" as const },
+  { name: "peso", type: "INT64" as const },
+  { name: "resultadomes", type: "INT64" as const },
+  { name: "resultadosemestre", type: "INT64" as const },
+  { name: "ruta", type: "STRING" as const },
+  { name: "plan", type: "STRING" as const },
+  { name: "teamid", type: "STRING" as const },
+  { name: "cuenta", type: "STRING" as const },
+  { name: "estado", type: "STRING" as const },
+  { name: "medico", type: "STRING" as const },
+  { name: "cedula", type: "STRING" as const },
+  { name: "cp", type: "STRING" as const },
+  { name: "objetivo", type: "INT64" as const },
+];
+
+const ASIGNACION_UNIDADES_COLUMNS = ASIGNACION_UNIDADES_SCHEMA.map((field) => field.name);
 
 type StatusRow = {
   territorio_individual: string | null;
@@ -337,15 +362,6 @@ async function queryWithRetry<T extends { error: { message?: string } | null }>(
   return lastResult;
 }
 
-function isBigQueryStreamingBufferMutationError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes("streaming buffer") &&
-    (normalized.includes("update or delete") || normalized.includes("would affect rows"))
-  );
-}
-
 function levenshtein(a: string, b: string): number {
   if (a === b) return 0;
   if (!a.length) return b.length;
@@ -407,12 +423,39 @@ function computeCobertura(objetivo: number, resultado: number): number {
   return 0;
 }
 
-function chunkArray<T>(rows: T[], chunkSize: number): T[][] {
-  const output: T[][] = [];
-  for (let index = 0; index < rows.length; index += chunkSize) {
-    output.push(rows.slice(index, index + chunkSize));
-  }
-  return output;
+function quoteTableIdentifier(value: string): string {
+  return value.replace(/[^A-Za-z0-9_]/g, "_");
+}
+
+function quoteColumnIdentifier(value: string): string {
+  return `\`${value.replace(/`/g, "")}\``;
+}
+
+function buildAsignacionBigQueryRow(row: AssignmentRow, index: number): Record<string, unknown> {
+  return {
+    brick: row.brick ?? null,
+    molecula_producto: row.molecula_producto ?? null,
+    valor: toOptionalNumber(row.valor),
+    trimestre: null,
+    semestre: null,
+    metric: row.metric ?? null,
+    fuente: row.fuente ?? null,
+    periodo: row.periodo ?? null,
+    index: index + 1,
+    encontrar: row.encontrar ?? null,
+    peso: toIntOrNull(row.peso),
+    resultadomes: toIntOrNull(row.resultado),
+    resultadosemestre: toIntOrNull(row.resultado_total_plan),
+    ruta: row.ruta ?? null,
+    plan: row.plan ?? null,
+    teamid: row.teamid ?? null,
+    cuenta: row.cuenta ?? null,
+    estado: row.encontrar === "estado" ? (row.brick ?? null) : null,
+    medico: null,
+    cedula: null,
+    cp: null,
+    objetivo: toIntOrNull(row.objetivo),
+  };
 }
 
 export async function runCalculoProcess(
@@ -424,11 +467,6 @@ export async function runCalculoProcess(
   const previewLimit = Number.isFinite(previewLimitRaw) && previewLimitRaw > 0
     ? Math.floor(previewLimitRaw)
     : Number.POSITIVE_INFINITY;
-  const persistDeleteRetryAttemptsRaw = Number(options?.persistDeleteRetryAttempts ?? BQ_DELETE_RETRY_ATTEMPTS);
-  const persistDeleteRetryAttempts =
-    Number.isFinite(persistDeleteRetryAttemptsRaw) && persistDeleteRetryAttemptsRaw > 0
-      ? Math.floor(persistDeleteRetryAttemptsRaw)
-      : BQ_DELETE_RETRY_ATTEMPTS;
 
   const supabase = createAdminClient();
   if (!supabase) throw new Error("Admin client no disponible.");
@@ -1009,67 +1047,57 @@ export async function runCalculoProcess(
 
   if (shouldPersist) {
     const asignacionTableRef = `\`${projectId}.${asignacionDataset}.${asignacionTable}\``;
-    let deleteOk = false;
-    let lastDeleteError: unknown = null;
-    for (let attempt = 1; attempt <= persistDeleteRetryAttempts; attempt += 1) {
-      try {
-        await runBigQueryQuery({
-          query: `DELETE FROM ${asignacionTableRef} WHERE periodo = @periodo`,
-          parameters: [{ name: "periodo", type: "STRING", value: periodMonth.slice(0, 7) }],
-        });
-        deleteOk = true;
-        break;
-      } catch (error) {
-        lastDeleteError = error;
-        if (!isBigQueryStreamingBufferMutationError(error)) {
-          throw error;
-        }
-        if (attempt < persistDeleteRetryAttempts) {
-          await wait(BQ_DELETE_RETRY_DELAY_MS * attempt);
-        }
-      }
-    }
-    if (!deleteOk) {
-      const baseMessage =
-        lastDeleteError instanceof Error ? lastDeleteError.message : String(lastDeleteError ?? "");
-      throw new Error(
-        `BigQuery aun tiene filas en streaming buffer para asignacionUnidades (${periodMonth.slice(0, 7)}). Reintenta en unos minutos. Detalle: ${baseMessage}`,
-      );
-    }
+    const periodCode = periodMonth.slice(0, 7);
+    const runId = `${periodCode.replace(/[^0-9]/g, "")}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const stageTable = quoteTableIdentifier(`${asignacionTable}__stage_${runId}`);
+    const replacementTable = quoteTableIdentifier(`${asignacionTable}__replace_${runId}`);
+    const stageTableRef = `\`${projectId}.${asignacionDataset}.${stageTable}\``;
+    const replacementTableRef = `\`${projectId}.${asignacionDataset}.${replacementTable}\``;
+    const rowsForBigQuery = assignments.map((row, index) => buildAsignacionBigQueryRow(row, index));
+    const selectColumns = ASIGNACION_UNIDADES_COLUMNS.map(quoteColumnIdentifier).join(", ");
 
-    const chunks = chunkArray(assignments, 5_000);
-    for (const [chunkIndex, chunk] of chunks.entries()) {
-      await insertBigQueryRows({
-        datasetId: asignacionDataset,
-        tableId: asignacionTable,
-        rows: chunk.map((row, index) => ({
-          rowId: `${row.periodo}-${row.teamid}-${row.ruta}-${row.plan}-${chunkIndex}-${index}`,
-          json: {
-            brick: row.brick ?? null,
-            molecula_producto: row.molecula_producto ?? null,
-            valor: toOptionalNumber(row.valor),
-            trimestre: null,
-            semestre: null,
-            metric: row.metric ?? null,
-            fuente: row.fuente ?? null,
-            periodo: row.periodo ?? null,
-            index: chunkIndex * 5_000 + index + 1,
-            encontrar: row.encontrar ?? null,
-            peso: toIntOrNull(row.peso),
-            resultadomes: toIntOrNull(row.resultado),
-            resultadosemestre: toIntOrNull(row.resultado_total_plan),
-            ruta: row.ruta ?? null,
-            plan: row.plan ?? null,
-            teamid: row.teamid ?? null,
-            cuenta: row.cuenta ?? null,
-            estado: row.encontrar === "estado" ? (row.brick ?? null) : null,
-            medico: null,
-            cedula: null,
-            cp: null,
-            objetivo: toIntOrNull(row.objetivo),
-          } as Record<string, unknown>,
-        })),
+    try {
+      if (rowsForBigQuery.length > 0) {
+        await loadBigQueryJsonRows({
+          datasetId: asignacionDataset,
+          tableId: stageTable,
+          rows: rowsForBigQuery,
+          schema: ASIGNACION_UNIDADES_SCHEMA,
+          writeDisposition: "WRITE_TRUNCATE",
+        });
+      } else {
+        await runBigQueryQuery({
+          query: `
+            CREATE OR REPLACE TABLE ${stageTableRef} AS
+            SELECT ${selectColumns}
+            FROM ${asignacionTableRef}
+            WHERE FALSE
+          `,
+        });
+      }
+
+      await runBigQueryQuery({
+        query: `
+          CREATE OR REPLACE TABLE ${replacementTableRef} AS
+          SELECT ${selectColumns}
+          FROM ${asignacionTableRef}
+          WHERE periodo IS NULL OR periodo != @periodo
+          UNION ALL
+          SELECT ${selectColumns}
+          FROM ${stageTableRef}
+        `,
+        parameters: [{ name: "periodo", type: "STRING", value: periodCode }],
       });
+
+      await copyBigQueryTable({
+        datasetId: asignacionDataset,
+        sourceTableId: replacementTable,
+        destinationTableId: asignacionTable,
+        writeDisposition: "WRITE_TRUNCATE",
+      });
+    } finally {
+      await runBigQueryQuery({ query: `DROP TABLE IF EXISTS ${stageTableRef}` }).catch(() => undefined);
+      await runBigQueryQuery({ query: `DROP TABLE IF EXISTS ${replacementTableRef}` }).catch(() => undefined);
     }
   }
 

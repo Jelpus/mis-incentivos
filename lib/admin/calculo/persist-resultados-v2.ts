@@ -1,12 +1,34 @@
 import { buildResultadosV2Preview, type ResultadosV2PreviewResult } from "@/lib/admin/calculo/build-resultados-v2-preview";
-import { insertBigQueryRows, isBigQueryConfigured, runBigQueryQuery } from "@/lib/integrations/bigquery";
+import { copyBigQueryTable, isBigQueryConfigured, loadBigQueryJsonRows, runBigQueryQuery } from "@/lib/integrations/bigquery";
 
-function chunkArray<T>(rows: T[], chunkSize: number): T[][] {
-  const output: T[][] = [];
-  for (let index = 0; index < rows.length; index += chunkSize) {
-    output.push(rows.slice(index, index + chunkSize));
-  }
-  return output;
+const RESULTADOS_V2_SCHEMA = [
+  { name: "team_id", type: "STRING" as const },
+  { name: "plan_type_name", type: "STRING" as const },
+  { name: "product_name", type: "STRING" as const },
+  { name: "prod_weight", type: "FLOAT64" as const },
+  { name: "agrupador", type: "STRING" as const },
+  { name: "garantia", type: "BOOL" as const },
+  { name: "elemento", type: "STRING" as const },
+  { name: "ruta", type: "STRING" as const },
+  { name: "representante", type: "STRING" as const },
+  { name: "actual", type: "FLOAT64" as const },
+  { name: "resultado", type: "FLOAT64" as const },
+  { name: "objetivo", type: "FLOAT64" as const },
+  { name: "cobertura", type: "FLOAT64" as const },
+  { name: "pagovariable", type: "FLOAT64" as const },
+  { name: "coberturapago", type: "FLOAT64" as const },
+  { name: "nombre", type: "STRING" as const },
+  { name: "linea", type: "STRING" as const },
+  { name: "manager", type: "STRING" as const },
+  { name: "empleado", type: "INT64" as const },
+  { name: "pagoresultado", type: "FLOAT64" as const },
+  { name: "periodo", type: "STRING" as const },
+];
+
+const RESULTADOS_V2_COLUMNS = RESULTADOS_V2_SCHEMA.map((field) => field.name);
+
+function quoteIdentifier(value: string): string {
+  return value.replace(/[^A-Za-z0-9_]/g, "_");
 }
 
 export async function persistResultadosV2(
@@ -30,13 +52,13 @@ export async function persistResultadosV2(
   const tableId = process.env.BQ_RESULTS_TABLE?.trim() || "resultados_v2";
   const periodCode = `${periodMonth.slice(0, 4)}${periodMonth.slice(5, 7)}`;
   const tableRef = `\`${projectId}.${datasetId}.${tableId}\``;
+  const runId = `${periodCode}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const stageTableId = quoteIdentifier(`${tableId}__stage_${runId}`);
+  const replacementTableId = quoteIdentifier(`${tableId}__replace_${runId}`);
+  const stageTableRef = `\`${projectId}.${datasetId}.${stageTableId}\``;
+  const replacementTableRef = `\`${projectId}.${datasetId}.${replacementTableId}\``;
 
   const preview = prebuiltPreview ?? await buildResultadosV2Preview(periodMonth);
-
-  await runBigQueryQuery({
-    query: `DELETE FROM ${tableRef} WHERE periodo = @periodo`,
-    parameters: [{ name: "periodo", type: "STRING", value: periodCode }],
-  });
 
   const rowsForBigQuery = preview.rows.map((row) => ({
     team_id: row.team_id,
@@ -62,16 +84,49 @@ export async function persistResultadosV2(
     periodo: periodCode,
   }));
 
-  const chunks = chunkArray(rowsForBigQuery, 5_000);
-  for (const [chunkIndex, chunk] of chunks.entries()) {
-    await insertBigQueryRows({
-      datasetId,
-      tableId,
-      rows: chunk.map((row, index) => ({
-        rowId: `${periodCode}-${row.team_id}-${row.ruta}-${row.product_name}-${chunkIndex}-${index}`,
-        json: row,
-      })),
+  try {
+    if (rowsForBigQuery.length > 0) {
+      await loadBigQueryJsonRows({
+        datasetId,
+        tableId: stageTableId,
+        rows: rowsForBigQuery,
+        schema: RESULTADOS_V2_SCHEMA,
+        writeDisposition: "WRITE_TRUNCATE",
+      });
+    } else {
+      await runBigQueryQuery({
+        query: `
+          CREATE OR REPLACE TABLE ${stageTableRef} AS
+          SELECT ${RESULTADOS_V2_COLUMNS.join(", ")}
+          FROM ${tableRef}
+          WHERE FALSE
+        `,
+      });
+    }
+
+    const selectColumns = RESULTADOS_V2_COLUMNS.join(", ");
+    await runBigQueryQuery({
+      query: `
+        CREATE OR REPLACE TABLE ${replacementTableRef} AS
+        SELECT ${selectColumns}
+        FROM ${tableRef}
+        WHERE periodo IS NULL OR periodo != @periodo
+        UNION ALL
+        SELECT ${selectColumns}
+        FROM ${stageTableRef}
+      `,
+      parameters: [{ name: "periodo", type: "STRING", value: periodCode }],
     });
+
+    await copyBigQueryTable({
+      datasetId,
+      sourceTableId: replacementTableId,
+      destinationTableId: tableId,
+      writeDisposition: "WRITE_TRUNCATE",
+    });
+  } finally {
+    await runBigQueryQuery({ query: `DROP TABLE IF EXISTS ${stageTableRef}` }).catch(() => undefined);
+    await runBigQueryQuery({ query: `DROP TABLE IF EXISTS ${replacementTableRef}` }).catch(() => undefined);
   }
 
   return {
