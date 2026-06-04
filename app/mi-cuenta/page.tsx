@@ -499,7 +499,8 @@ async function getRankingSummaryCardData(params: {
           .from("ranking_kpi_local_ytd_agg")
           .select("period_month, total_visitas_top, total_objetivos, garantia")
           .eq("tier", "T1")
-          .eq("period_month", normalizedPeriod)
+          .gte("period_month", ytdStartPeriod)
+          .lte("period_month", normalizedPeriod)
           .in("empleado", chunk),
         adminClient
           .from("ranking_icva_48hrs_agg")
@@ -550,7 +551,8 @@ async function getRankingSummaryCardData(params: {
           .from("ranking_kpi_local_ytd_agg")
           .select("period_month, total_visitas_top, total_objetivos, garantia")
           .eq("tier", "T1")
-          .eq("period_month", normalizedPeriod)
+          .gte("period_month", ytdStartPeriod)
+          .lte("period_month", normalizedPeriod)
           .in("territorio_individual", chunk),
         adminClient
           .from("ranking_icva_48hrs_agg")
@@ -901,11 +903,13 @@ async function getRankingScatterGraphData(params: {
 
   const cpdRows: RankingScatterCpdRow[] = [];
   const cpaRows: RankingScatterCpaRow[] = [];
+  const ytdStartPeriod = getYtdStartPeriod(normalizedPeriod);
   for (const chunk of chunkArray(territories, 200)) {
     const cpdResult = await adminClient
       .from("ranking_kpi_local_ytd_agg")
       .select("territorio_individual, nombre, total_visitas")
-      .eq("period_month", normalizedPeriod)
+      .gte("period_month", ytdStartPeriod)
+      .lte("period_month", normalizedPeriod)
       .in("territorio_individual", chunk);
     if (!cpdResult.error) {
       cpdRows.push(...((cpdResult.data ?? []) as RankingScatterCpdRow[]));
@@ -914,7 +918,8 @@ async function getRankingScatterGraphData(params: {
     const cpaResult = await adminClient
       .from("ranking_kpi_local_ytd_agg")
       .select("territorio_individual, total_visitas_top, total_objetivos")
-      .eq("period_month", normalizedPeriod)
+      .gte("period_month", ytdStartPeriod)
+      .lte("period_month", normalizedPeriod)
       .eq("tier", "T1")
       .in("territorio_individual", chunk);
     if (!cpaResult.error) {

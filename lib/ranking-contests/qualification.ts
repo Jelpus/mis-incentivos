@@ -108,6 +108,12 @@ function baseEvaluation(component: RankingContestComponent): Omit<ContestCompone
   };
 }
 
+function formatConfiguredPeriodRange(component: RankingContestComponent, maxCoveragePeriodMonth: string): string {
+  const start = component.periodStart || maxCoveragePeriodMonth;
+  const end = component.periodEnd || maxCoveragePeriodMonth;
+  return `${start} a ${end}`;
+}
+
 async function getParticipantMembers(params: {
   supabase: SupabaseClient;
   participant: ContestParticipant;
@@ -322,9 +328,7 @@ async function evaluateCoverageMetric(params: {
     periodEnd: params.component.periodEnd,
     maxCoveragePeriodMonth: params.maxCoveragePeriodMonth,
   });
-  const evaluationPeriods = params.metric === "cpa_t1" && periods.length > 0
-    ? [periods[periods.length - 1]]
-    : periods;
+  const evaluationPeriods = periods;
   const thresholdRaw = toNumber(params.component.thresholdValue);
   const threshold = thresholdAsPercent(thresholdRaw);
 
@@ -465,7 +469,7 @@ async function evaluateCoverageMetric(params: {
     value: Math.round(valuePercent * 100) / 100,
     passed: averageCoverage >= threshold,
     status: averageCoverage >= threshold ? "passed" : "failed",
-    reason: `${params.participant.scope === "manager" ? "Promedio de equipo" : "Cobertura individual"}: ${coverages.length} participante(s) con datos, periodos ${evaluationPeriods.join(", ")}, threshold ${Math.round(threshold * 10000) / 100}%.`,
+    reason: `${params.participant.scope === "manager" ? "Promedio de equipo" : "Cobertura individual"}: ${coverages.length} participante(s) con datos, rango configurado ${formatConfiguredPeriodRange(params.component, params.maxCoveragePeriodMonth)}, corte ${params.maxCoveragePeriodMonth}, periodos evaluados ${evaluationPeriods.join(", ")}, threshold ${Math.round(threshold * 10000) / 100}%.`,
   };
 }
 

@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getMissingRelationName,
   isMissingRelationError,
+  normalizePeriodMonthInput,
 } from "@/lib/admin/incentive-rules/shared";
 import { RANKING_REQUIRED_FILES } from "@/lib/admin/source-ranking/constants";
 
@@ -11,6 +12,15 @@ type RankingSourceUploadRow = {
   original_file_name: string | null;
   uploaded_at: string | null;
   period_month: string | null;
+};
+
+type PeriodOnlyRow = {
+  period_month: string | null;
+};
+
+type PeriodStat = {
+  periodMonth: string;
+  rows: number;
 };
 
 export type SourceRankingPageData = {
@@ -28,9 +38,65 @@ export type SourceRankingPageData = {
       uploadedAt: string | null;
       originalFileName: string | null;
       periodMonth: string | null;
+      normalizedMaxPeriodMonth: string | null;
+      periodStats: PeriodStat[];
+      coverageStatus: "missing" | "aligned" | "ahead" | "behind" | "unknown";
     }>;
+    cutoff: {
+      periodMonth: string | null;
+      label: string;
+      ready: boolean;
+      message: string;
+    };
   };
 };
+
+function buildPeriodStats(rows: PeriodOnlyRow[]): PeriodStat[] {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const period = normalizePeriodMonthInput(String(row.period_month ?? "").trim());
+    if (!period) continue;
+    counts.set(period, (counts.get(period) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([periodMonth, rowsCount]) => ({ periodMonth, rows: rowsCount }))
+    .sort((a, b) => a.periodMonth.localeCompare(b.periodMonth));
+}
+
+async function loadNormalizedPeriodStats(
+  supabase: NonNullable<ReturnType<typeof createAdminClient>>,
+  tableName: string,
+): Promise<{ stats: PeriodStat[]; message: string | null }> {
+  const result = await supabase
+    .from(tableName)
+    .select("period_month")
+    .order("period_month", { ascending: true })
+    .limit(50000);
+
+  if (result.error) {
+    if (isMissingRelationError(result.error)) {
+      return { stats: [], message: `Falta ${getMissingRelationName(result.error) ?? tableName}.` };
+    }
+    return { stats: [], message: result.error.message };
+  }
+
+  return { stats: buildPeriodStats((result.data ?? []) as PeriodOnlyRow[]), message: null };
+}
+
+function getMaxPeriod(stats: PeriodStat[]): string | null {
+  return stats.length > 0 ? stats[stats.length - 1].periodMonth : null;
+}
+
+function getCoverageStatus(params: {
+  uploaded: boolean;
+  maxPeriod: string | null;
+  cutoff: string | null;
+}): "missing" | "aligned" | "ahead" | "behind" | "unknown" {
+  if (!params.uploaded) return "missing";
+  if (!params.maxPeriod || !params.cutoff) return "unknown";
+  if (params.maxPeriod === params.cutoff) return "aligned";
+  return params.maxPeriod > params.cutoff ? "ahead" : "behind";
+}
 
 export async function getSourceRankingPageData(): Promise<SourceRankingPageData> {
   const supabase = createAdminClient();
@@ -68,8 +134,27 @@ export async function getSourceRankingPageData(): Promise<SourceRankingPageData>
     }
   }
 
+  const [kpiStatsResult, icvaStatsResult] = await Promise.all([
+    loadNormalizedPeriodStats(supabase, "ranking_kpi_local_ytd_raw"),
+    loadNormalizedPeriodStats(supabase, "ranking_icva_48hrs_raw"),
+  ]);
+  const periodStatsByCode = new Map<string, PeriodStat[]>([
+    ["kpi_local_ytd", kpiStatsResult.stats],
+    ["icva_48hrs", icvaStatsResult.stats],
+  ]);
+  const maxPeriodByCode = new Map<string, string | null>([
+    ["kpi_local_ytd", getMaxPeriod(kpiStatsResult.stats)],
+    ["icva_48hrs", getMaxPeriod(icvaStatsResult.stats)],
+  ]);
+  const normalizedMaxPeriods = Array.from(maxPeriodByCode.values()).filter((value): value is string => Boolean(value));
+  const cutoffPeriodMonth = normalizedMaxPeriods.length === RANKING_REQUIRED_FILES.length
+    ? normalizedMaxPeriods.sort((a, b) => a.localeCompare(b))[0]
+    : null;
+  const diagnosticsMessages = [kpiStatsResult.message, icvaStatsResult.message].filter((value): value is string => Boolean(value));
+
   const sourceFileRows = RANKING_REQUIRED_FILES.map((requiredFile) => {
     const uploadedInfo = uploadedSourceFilesByCode.get(requiredFile.fileCode);
+    const normalizedMaxPeriodMonth = maxPeriodByCode.get(requiredFile.fileCode) ?? null;
     return {
       fileCode: requiredFile.fileCode,
       displayName: requiredFile.displayName,
@@ -78,9 +163,27 @@ export async function getSourceRankingPageData(): Promise<SourceRankingPageData>
       uploadedAt: uploadedInfo?.uploaded_at ?? null,
       originalFileName: uploadedInfo?.original_file_name ?? null,
       periodMonth: uploadedInfo?.period_month ?? null,
+      normalizedMaxPeriodMonth,
+      periodStats: periodStatsByCode.get(requiredFile.fileCode) ?? [],
+      coverageStatus: getCoverageStatus({
+        uploaded: Boolean(uploadedInfo),
+        maxPeriod: normalizedMaxPeriodMonth,
+        cutoff: cutoffPeriodMonth,
+      }),
     };
   });
   const uploadedCount = sourceFileRows.filter((row) => row.uploaded).length;
+  const hasAllFiles = uploadedCount === sourceFileRows.length;
+  const aligned = hasAllFiles && sourceFileRows.every((row) => row.coverageStatus === "aligned");
+  const cutoffMessage = diagnosticsMessages.length > 0
+    ? `No se pudo validar completo: ${diagnosticsMessages.join(" ")}`
+    : !hasAllFiles
+      ? "Faltan archivos requeridos para definir un corte usable."
+      : cutoffPeriodMonth
+        ? aligned
+          ? `Los dos archivos estan alineados al corte ${cutoffPeriodMonth.slice(0, 7)}.`
+          : `El corte usable sera ${cutoffPeriodMonth.slice(0, 7)} porque algun archivo no llega al mes maximo de los demas.`
+        : "No se detectaron periodos normalizados en los archivos cargados.";
 
   return {
     sourceFiles: {
@@ -90,6 +193,12 @@ export async function getSourceRankingPageData(): Promise<SourceRankingPageData>
       uploadedCount,
       missingCount: sourceFileRows.length - uploadedCount,
       rows: sourceFileRows,
+      cutoff: {
+        periodMonth: cutoffPeriodMonth,
+        label: cutoffPeriodMonth ? cutoffPeriodMonth.slice(0, 7) : "-",
+        ready: aligned,
+        message: cutoffMessage,
+      },
     },
   };
 }

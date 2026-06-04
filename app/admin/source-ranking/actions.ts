@@ -97,6 +97,16 @@ function getMaxPeriodMonth(values: Array<string | null | undefined>, fallback: s
   return normalizedValues[0] ?? fallback;
 }
 
+function getUniquePeriodMonths(values: Array<string | null | undefined>): string[] {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => normalizePeriodMonthInput(value))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+}
+
 function toComparableNumber(value: unknown): number {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed)) return 0;
@@ -606,9 +616,11 @@ export async function uploadSourceRankingFileAction(
     }
   }
 
-  const metadataPeriodMonth = icvaNormalization
-    ? getMaxPeriodMonth(icvaNormalization.rows.map((row) => row.period_month), periodMonth)
-    : periodMonth;
+  const metadataPeriodMonth = kpiNormalization
+    ? getMaxPeriodMonth(kpiNormalization.rows.map((row) => row.period_month), periodMonth)
+    : icvaNormalization
+      ? getMaxPeriodMonth(icvaNormalization.rows.map((row) => row.period_month), periodMonth)
+      : periodMonth;
   const safeFileName = sanitizeUploadedFileName(uploadedFile.name);
   const safeCodeChunk = sanitizeStoragePathChunk(fileCodeInput) || "source-ranking";
   const targetPath = `${metadataPeriodMonth.slice(0, 7)}/${safeCodeChunk}/${Date.now()}-${safeFileName}`;
@@ -662,10 +674,12 @@ export async function uploadSourceRankingFileAction(
   let normalizationSummary: string | undefined;
   let aggregatedRowsCount: number | undefined;
   if (kpiNormalization) {
+    const kpiPeriods = getUniquePeriodMonths(kpiNormalization.rows.map((row) => row.period_month));
+    const periodsToReplace = kpiPeriods.length > 0 ? kpiPeriods : [periodMonth];
     const deleteResult = await supabase
       .from("ranking_kpi_local_ytd_raw")
       .delete()
-      .eq("period_month", periodMonth);
+      .in("period_month", periodsToReplace);
 
     if (deleteResult.error) {
       if (isMissingRelationError(deleteResult.error)) {
@@ -707,7 +721,7 @@ export async function uploadSourceRankingFileAction(
     const deleteAggResult = await supabase
       .from("ranking_kpi_local_ytd_agg")
       .delete()
-      .eq("period_month", periodMonth);
+      .in("period_month", periodsToReplace);
 
     if (deleteAggResult.error) {
       if (isMissingRelationError(deleteAggResult.error)) {
@@ -793,7 +807,7 @@ export async function uploadSourceRankingFileAction(
     }
 
     normalizationSummary =
-      `KPI raw: ${kpiNormalization.rows.length} filas | agregado: ${aggregatedRows.length} reps | CPD raw: ${kpiNormalization.cpdRows.length} filas | filas YTD: ${kpiNormalization.summary.ytdRows} | ` +
+      `KPI raw: ${kpiNormalization.rows.length} filas | periodos: ${periodsToReplace.length} | corte: ${metadataPeriodMonth.slice(0, 7)} | agregado: ${aggregatedRows.length} reps | CPD raw: ${kpiNormalization.cpdRows.length} filas | filas YTD: ${kpiNormalization.summary.ytdRows} | ` +
       `match nombre: ${kpiNormalization.summary.nameMatchedRows} | fallback territorio: ${kpiNormalization.summary.territoryFallbackRows} | ` +
       `sin match: ${kpiNormalization.summary.unmatchedRows}` +
       (kpiNormalization.summary.cpdRowsWithoutDiasCiclo > 0
@@ -802,13 +816,7 @@ export async function uploadSourceRankingFileAction(
   }
 
   if (icvaNormalization) {
-    const icvaPeriods = Array.from(
-      new Set(
-        icvaNormalization.rows
-          .map((row) => normalizePeriodMonthInput(row.period_month))
-          .filter((value): value is string => Boolean(value)),
-      ),
-    );
+    const icvaPeriods = getUniquePeriodMonths(icvaNormalization.rows.map((row) => row.period_month));
     const periodsToReplace = icvaPeriods.length > 0 ? icvaPeriods : [periodMonth];
     const deleteRawResult = await supabase
       .from("ranking_icva_48hrs_raw")

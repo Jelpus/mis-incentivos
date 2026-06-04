@@ -765,23 +765,22 @@ export async function runCalculoProcess(
         );
         const targetIsCuentas = targetPlanType.includes("CUENTA");
         const targetIsEstado = targetPlanType.includes("ESTADO");
+        const inferredIsEstado =
+          targetIsEstado || isLikelyEstadoCode(estadoCodeValue);
         const isPrivateTarget =
           (toUpperTrim(targetRow.brick) === "PRIVATE" || !String(targetRow.brick ?? "").trim()) &&
           (toUpperTrim(targetRow.cuenta) === "PRIVATE" || !String(targetRow.cuenta ?? "").trim());
         const objectiveBlock: AssignmentRow["objective_block"] = isPrivateTarget
           ? "private"
-          : targetIsCuentas
-            ? "drilldown_cuentas"
-            : targetIsEstado
-              ? "drilldown_estados"
-              : "otros";
-        const inferredIsEstado =
-          !targetIsCuentas &&
-          (targetIsEstado || isLikelyEstadoCode(estadoCodeValue));
-        const findingMode: "brick" | "estado" | "global" = targetIsCuentas
-          ? "brick"
           : inferredIsEstado
-            ? "estado"
+              ? "drilldown_estados"
+              : targetIsCuentas
+                ? "drilldown_cuentas"
+                : "otros";
+        const findingMode: "brick" | "estado" | "global" = inferredIsEstado
+          ? "estado"
+          : targetIsCuentas
+            ? "brick"
             : nonPrivateTargets.length > 0
               ? "brick"
               : "global";

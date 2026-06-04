@@ -18,6 +18,12 @@ type SourceRankingFileRow = {
   uploadedAt: string | null;
   originalFileName: string | null;
   periodMonth: string | null;
+  normalizedMaxPeriodMonth: string | null;
+  periodStats: Array<{
+    periodMonth: string;
+    rows: number;
+  }>;
+  coverageStatus: "missing" | "aligned" | "ahead" | "behind" | "unknown";
 };
 
 type SourceRankingFilesState = {
@@ -27,6 +33,12 @@ type SourceRankingFilesState = {
   uploadedCount: number;
   missingCount: number;
   rows: SourceRankingFileRow[];
+  cutoff: {
+    periodMonth: string | null;
+    label: string;
+    ready: boolean;
+    message: string;
+  };
 };
 
 type Props = {
@@ -51,6 +63,26 @@ type UploadState =
 
 function formatDateTime(value: string | null) {
   return formatDateTimeNoTimezoneShift(value, "es-MX", "-");
+}
+
+function formatRows(value: number) {
+  return new Intl.NumberFormat("es-MX", { maximumFractionDigits: 0 }).format(value);
+}
+
+function getStatusBadge(row: SourceRankingFileRow) {
+  if (row.coverageStatus === "aligned") {
+    return { label: "Alineado", className: "bg-emerald-50 text-emerald-700" };
+  }
+  if (row.coverageStatus === "ahead") {
+    return { label: "Adelantado", className: "bg-blue-50 text-blue-700" };
+  }
+  if (row.coverageStatus === "behind") {
+    return { label: "Atrasado", className: "bg-amber-50 text-amber-700" };
+  }
+  if (row.coverageStatus === "missing") {
+    return { label: "Pendiente", className: "bg-amber-50 text-amber-700" };
+  }
+  return { label: "Sin validar", className: "bg-neutral-100 text-neutral-600" };
 }
 
 function SourceRankingFileUploadRowItem({ row }: { row: SourceRankingFileRow }) {
@@ -206,7 +238,7 @@ function SourceRankingFileUploadRowItem({ row }: { row: SourceRankingFileRow }) 
               <p className="mt-2 truncate text-xs font-medium text-neutral-900">{row.originalFileName}</p>
               <p className="text-xs text-neutral-500">{formatDateTime(row.uploadedAt)}</p>
               {row.periodMonth ? (
-                <p className="text-xs text-neutral-500">Periodo: {formatPeriodMonthLabel(row.periodMonth)}</p>
+                <p className="text-xs text-neutral-500">Metadata: {formatPeriodMonthLabel(row.periodMonth)}</p>
               ) : null}
             </div>
           ) : (
@@ -214,6 +246,39 @@ function SourceRankingFileUploadRowItem({ row }: { row: SourceRankingFileRow }) 
               Pendiente
             </span>
           )}
+        </td>
+        <td className="px-4 py-3 text-sm text-neutral-700">
+          <div className="min-w-56">
+            <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${getStatusBadge(row).className}`}>
+              {getStatusBadge(row).label}
+            </span>
+            <p className="mt-2 text-xs text-neutral-500">
+              Max detectado:{" "}
+              <span className="font-medium text-neutral-800">
+                {row.normalizedMaxPeriodMonth ? formatPeriodMonthLabel(row.normalizedMaxPeriodMonth) : "-"}
+              </span>
+            </p>
+            {row.periodStats.length > 0 ? (
+              <div className="mt-2 flex max-w-sm flex-wrap gap-1.5">
+                {row.periodStats.slice(-6).map((item) => (
+                  <span
+                    key={`${row.fileCode}-${item.periodMonth}`}
+                    className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[11px] text-neutral-600"
+                    title={`${formatPeriodMonthLabel(item.periodMonth)}: ${formatRows(item.rows)} filas`}
+                  >
+                    {item.periodMonth.slice(0, 7)} · {formatRows(item.rows)}
+                  </span>
+                ))}
+                {row.periodStats.length > 6 ? (
+                  <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[11px] text-neutral-600">
+                    +{row.periodStats.length - 6}
+                  </span>
+                ) : null}
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-neutral-500">Sin filas normalizadas.</p>
+            )}
+          </div>
         </td>
         <td className="px-4 py-3">
           <div className="flex flex-col gap-2">
@@ -350,6 +415,19 @@ export function SourceRankingFilesCard({ sourceFiles }: Props) {
             <p className="mt-1 text-xl font-semibold text-amber-800">{sourceFiles.missingCount}</p>
           </div>
         </div>
+        <div className={`mt-4 rounded-2xl border px-4 py-3 ${
+          sourceFiles.cutoff.ready
+            ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+            : "border-amber-200 bg-amber-50 text-amber-800"
+        }`}>
+          <p className="text-[11px] uppercase tracking-wide">
+            Corte usable para Ranking
+          </p>
+          <p className="mt-1 text-lg font-semibold">
+            {sourceFiles.cutoff.periodMonth ? formatPeriodMonthLabel(sourceFiles.cutoff.periodMonth) : "No definido"}
+          </p>
+          <p className="mt-1 text-sm">{sourceFiles.cutoff.message}</p>
+        </div>
       </div>
 
       {!sourceFiles.storageReady && sourceFiles.storageMessage ? (
@@ -364,6 +442,7 @@ export function SourceRankingFilesCard({ sourceFiles }: Props) {
             <tr className="border-b border-neutral-200 text-left text-xs uppercase tracking-wide text-neutral-500">
               <th className="px-4 py-3">Archivo</th>
               <th className="px-4 py-3">Estado</th>
+              <th className="px-4 py-3">Cobertura de periodos</th>
               <th className="px-4 py-3">Accion</th>
             </tr>
           </thead>

@@ -207,11 +207,11 @@ function nameSimilarityScore(a: string, b: string): number {
   return Math.round((tokenScore * 0.85 + lenScore * 0.15) * 100);
 }
 
-function findSheet(rowsBySheetName: Map<string, FlatRow[]>, expectedName: string): FlatRow[] | null {
+function findSheetName(sheetNames: string[], expectedName: string): string | null {
   const normalizedExpected = normalizeHeader(expectedName);
-  for (const [sheetName, rows] of rowsBySheetName.entries()) {
+  for (const sheetName of sheetNames) {
     const normalizedSheetName = normalizeHeader(sheetName);
-    if (normalizedSheetName === normalizedExpected) return rows;
+    if (normalizedSheetName === normalizedExpected) return sheetName;
   }
   return null;
 }
@@ -231,10 +231,20 @@ function getValueByKeys(row: FlatRow, possibleKeys: string[]): unknown {
   return null;
 }
 
-function buildYtdCodes(periodMonth: string, catCalenRows: FlatRow[]): Set<string> {
-  const periodYear = Number(periodMonth.slice(0, 4));
-  const periodMonthNum = Number(periodMonth.slice(5, 7));
-  const yy = String(periodYear).slice(2, 4);
+function buildYtdCodes(periodMonth: string, catCalenRows: FlatRow[], baseVisitasRows: FlatRow[]): Set<string> {
+  const sourceCodes = Array.from(
+    new Set(
+      baseVisitasRows
+        .map((row) => toYyMmCode(getValueByKeys(row, ["ANNIO_MES", "ANIO_MES", "FECHA", "MES"])))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+
+  const maxSourceCode = sourceCodes[sourceCodes.length - 1] ?? null;
+  const fallbackYear = Number(periodMonth.slice(0, 4));
+  const fallbackMonth = Number(periodMonth.slice(5, 7));
+  const yy = maxSourceCode?.slice(0, 2) ?? String(fallbackYear).slice(2, 4);
+  const target = maxSourceCode ?? `${yy}${String(fallbackMonth).padStart(2, "0")}`;
 
   const codesFromCatalog = Array.from(
     new Set(
@@ -245,13 +255,12 @@ function buildYtdCodes(periodMonth: string, catCalenRows: FlatRow[]): Set<string
   ).sort((a, b) => a.localeCompare(b));
 
   if (codesFromCatalog.length > 0) {
-    const target = `${yy}${String(periodMonthNum).padStart(2, "0")}`;
     return new Set(codesFromCatalog.filter((code) => code <= target));
   }
 
-  return new Set(
-    Array.from({ length: periodMonthNum }, (_, index) => `${yy}${String(index + 1).padStart(2, "0")}`),
-  );
+  if (sourceCodes.length > 0) return new Set(sourceCodes.filter((code) => code.startsWith(yy) && code <= target));
+
+  return new Set(Array.from({ length: fallbackMonth }, (_, index) => `${yy}${String(index + 1).padStart(2, "0")}`));
 }
 
 function buildDiasCicloByPeriod(rows: DiasCicloRow[]) {
@@ -279,25 +288,25 @@ export function normalizeKpiLocalYtdRaw(params: {
   const minimumNameMatchScore = params.minimumNameMatchScore ?? 80;
   const workbook = read(params.fileBuffer, { type: "buffer" });
 
-  const rowsBySheetName = new Map<string, FlatRow[]>();
-  for (const sheetName of workbook.SheetNames ?? []) {
+  function readExpectedSheet(expectedName: string): FlatRow[] | null {
+    const sheetName = findSheetName(workbook.SheetNames ?? [], expectedName);
+    if (!sheetName) return null;
     const sheet = workbook.Sheets[sheetName];
-    if (!sheet) continue;
-    const rows = utils.sheet_to_json<FlatRow>(sheet, { defval: null, raw: false });
-    rowsBySheetName.set(sheetName, rows);
+    if (!sheet) return null;
+    return utils.sheet_to_json<FlatRow>(sheet, { defval: null, raw: false, blankrows: false });
   }
 
-  const baseVisitasRows = findSheet(rowsBySheetName, "BASE VISITAS");
-  const catGarantiaRows = findSheet(rowsBySheetName, "CAT_GARANTIA");
-  const catCalenRows = findSheet(rowsBySheetName, "CAT CALEN");
-  const tftReporteRows = findSheet(rowsBySheetName, "TFT REPORTE");
+  const baseVisitasRows = readExpectedSheet("BASE VISITAS");
+  const catGarantiaRows = readExpectedSheet("CAT_GARANTIA");
+  const catCalenRows = readExpectedSheet("CAT CALEN");
+  const tftReporteRows = readExpectedSheet("TFT REPORTE");
 
   if (!baseVisitasRows) throw new Error('No se encontro la pestana "BASE VISITAS".');
   if (!catGarantiaRows) throw new Error('No se encontro la pestana "CAT_GARANTIA".');
   if (!catCalenRows) throw new Error('No se encontro la pestana "CAT CALEN".');
   if (!tftReporteRows) throw new Error('No se encontro la pestana "TFT REPORTE".');
 
-  const ytdCodes = buildYtdCodes(params.periodMonth, catCalenRows);
+  const ytdCodes = buildYtdCodes(params.periodMonth, catCalenRows, baseVisitasRows);
 
   const garantiaSet = new Set<string>();
   for (const row of catGarantiaRows) {
@@ -390,9 +399,10 @@ export function normalizeKpiLocalYtdRaw(params: {
 
     const hasGarantia = garantiaSet.has(`${territorio}|${annioMesCode}`);
     if (hasGarantia) garantiaRows += 1;
+    const sourcePeriodMonth = yyMmToPeriodMonth(annioMesCode) ?? params.periodMonth;
 
     outputRows.push({
-      period_month: params.periodMonth,
+      period_month: sourcePeriodMonth,
       annio_mes: annioMesCode,
       territory_source: territorio,
       status_nombre_source: statusNombre || null,

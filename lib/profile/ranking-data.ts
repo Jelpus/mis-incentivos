@@ -144,9 +144,25 @@ function normalizeTerritory(value: string | null | undefined): string {
 
 function getYtdPeriods(periodMonth: string, availablePeriods: string[]) {
   const ytdStart = getYtdStartPeriod(periodMonth);
-  return availablePeriods
-    .filter((period) => period >= ytdStart && period <= periodMonth)
-    .sort((a, b) => a.localeCompare(b));
+  const normalizedPeriod = normalizePeriodMonthInput(periodMonth);
+  const normalizedStart = normalizePeriodMonthInput(ytdStart);
+  if (!normalizedPeriod || !normalizedStart) {
+    return availablePeriods
+      .filter((period) => period >= ytdStart && period <= periodMonth)
+      .sort((a, b) => a.localeCompare(b));
+  }
+
+  const start = new Date(Date.UTC(Number(normalizedStart.slice(0, 4)), Number(normalizedStart.slice(5, 7)) - 1, 1));
+  const end = new Date(Date.UTC(Number(normalizedPeriod.slice(0, 4)), Number(normalizedPeriod.slice(5, 7)) - 1, 1));
+  if (start.getTime() > end.getTime()) return [normalizedPeriod];
+
+  const periods: string[] = [];
+  const cursor = new Date(start.getTime());
+  while (cursor.getTime() <= end.getTime()) {
+    periods.push(`${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}-01`);
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return periods;
 }
 
 function resolvePerformancePeriods(params: {
