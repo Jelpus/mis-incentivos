@@ -11,6 +11,7 @@ type MetricKey = "cpa_t1" | "documentacion_48h" | "icva" | "cpd";
 type TeamMember = {
   empleado: number | null;
   territorio_individual: string | null;
+  team_id?: string | null;
 };
 
 type KpiAggRow = {
@@ -123,13 +124,26 @@ async function getParticipantMembers(params: {
     return [{
       empleado: toNumber(params.participant.employeeNumber) ?? null,
       territorio_individual: params.participant.territory ?? null,
+      team_id: params.participant.teamId ?? null,
     }];
   }
 
+  const statusPeriodResult = await params.supabase
+    .from("sales_force_status")
+    .select("period_month")
+    .eq("is_deleted", false)
+    .eq("is_active", true)
+    .order("period_month", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ period_month: string | null }>();
+
+  const statusPeriod = String(statusPeriodResult.data?.period_month ?? "").trim();
+  if (!statusPeriod || statusPeriodResult.error) return [];
+
   let query = params.supabase
     .from("sales_force_status")
-    .select("no_empleado, territorio_individual")
-    .eq("period_month", params.maxCoveragePeriodMonth)
+    .select("no_empleado, territorio_individual, team_id")
+    .eq("period_month", statusPeriod)
     .eq("is_deleted", false)
     .eq("is_active", true)
     .eq("is_vacant", false);
@@ -147,9 +161,10 @@ async function getParticipantMembers(params: {
   const result = await query;
   if (result.error) return [];
 
-  return ((result.data ?? []) as Array<{ no_empleado: number | null; territorio_individual: string | null }>).map((row) => ({
+  return ((result.data ?? []) as Array<{ no_empleado: number | null; territorio_individual: string | null; team_id: string | null }>).map((row) => ({
     empleado: row.no_empleado ?? null,
     territorio_individual: row.territorio_individual ?? null,
+    team_id: row.team_id ?? null,
   }));
 }
 
@@ -163,23 +178,29 @@ function safeCoverage(numerator: number, denominator: number): number | null {
   return denominator > 0 ? numerator / denominator : null;
 }
 
-async function getCpdObjective(params: {
+async function getCpdObjectivesByTeamId(params: {
   supabase: SupabaseClient;
-  teamId: string | null | undefined;
-}): Promise<number | null> {
-  const teamId = String(params.teamId ?? "").trim();
-  if (!teamId) return null;
+  teamIds: string[];
+}): Promise<Map<string, number>> {
+  const teamIds = Array.from(new Set(params.teamIds.map((teamId) => String(teamId ?? "").trim()).filter(Boolean)));
+  const objectives = new Map<string, number>();
+  if (teamIds.length === 0) return objectives;
 
   const result = await params.supabase
     .from("ranking_cpd_objectives")
-    .select("objective_cpd")
-    .eq("team_id", teamId)
-    .eq("is_active", true)
-    .maybeSingle<{ objective_cpd: number | string | null }>();
+    .select("team_id, objective_cpd")
+    .in("team_id", teamIds)
+    .eq("is_active", true);
 
-  if (result.error) return null;
-  const objective = toPositiveNumber(result.data?.objective_cpd);
-  return objective > 0 ? objective : null;
+  if (result.error) return objectives;
+
+  for (const row of (result.data ?? []) as Array<{ team_id: string | null; objective_cpd: number | string | null }>) {
+    const teamId = String(row.team_id ?? "").trim();
+    const objective = toPositiveNumber(row.objective_cpd);
+    if (teamId && objective > 0) objectives.set(teamId, objective);
+  }
+
+  return objectives;
 }
 
 async function evaluateCpdMetric(params: {
@@ -216,20 +237,6 @@ async function evaluateCpdMetric(params: {
     };
   }
 
-  const objective = await getCpdObjective({
-    supabase: params.supabase,
-    teamId: params.participant.teamId,
-  });
-  if (!objective) {
-    return {
-      ...baseEvaluation(params.component),
-      value: null,
-      passed: false,
-      status: "pending",
-      reason: `No hay objetivo CPD activo para team_id ${params.participant.teamId ?? "-"}.`,
-    };
-  }
-
   const members = await getParticipantMembers({
     supabase: params.supabase,
     participant: params.participant,
@@ -249,6 +256,11 @@ async function evaluateCpdMetric(params: {
   const employeeIds = Array.from(new Set(members.map((member) => toNumber(member.empleado)).filter((value): value is number => Boolean(value && value > 0))));
   const territories = Array.from(new Set(members.map((member) => String(member.territorio_individual ?? "").trim()).filter(Boolean)));
   const memberKeys = new Set(members.map(makeMemberKey));
+  const teamIdByMemberKey = new Map(members.map((member) => [makeMemberKey(member), String(member.team_id ?? params.participant.teamId ?? "").trim()] as const));
+  const objectivesByTeamId = await getCpdObjectivesByTeamId({
+    supabase: params.supabase,
+    teamIds: Array.from(teamIdByMemberKey.values()),
+  });
   const totalsByMember = new Map<string, { visitas: number; diasEfectivos: number }>();
   for (const member of members) {
     totalsByMember.set(makeMemberKey(member), { visitas: 0, diasEfectivos: 0 });
@@ -285,34 +297,45 @@ async function evaluateCpdMetric(params: {
     totalsByMember.set(key, current);
   }
 
-  const cpdValues = Array.from(totalsByMember.values())
-    .map((item) => {
+  const missingObjectiveTeamIds = new Set<string>();
+  const cpdCoverageValues = Array.from(totalsByMember.entries())
+    .map(([memberKey, item]) => {
       const cpd = safeCoverage(item.visitas, item.diasEfectivos);
-      return cpd === null ? null : cpd;
+      if (cpd === null) return null;
+      const teamId = teamIdByMemberKey.get(memberKey) ?? "";
+      const objective = objectivesByTeamId.get(teamId) ?? null;
+      if (!objective) {
+        if (teamId) missingObjectiveTeamIds.add(teamId);
+        return null;
+      }
+      return safeCoverage(cpd, objective);
     })
     .filter((value): value is number => value !== null);
 
-  if (cpdValues.length === 0) {
+  if (cpdCoverageValues.length === 0) {
     return {
       ...baseEvaluation(params.component),
       value: null,
-      passed: true,
-      status: "passed",
-      reason: "No hubo dias efectivos validos para calcular CPD.",
+      passed: false,
+      status: missingObjectiveTeamIds.size > 0 ? "pending" : "passed",
+      reason: missingObjectiveTeamIds.size > 0
+        ? `No hay objetivo CPD activo para team_id ${Array.from(missingObjectiveTeamIds).join(", ")}.`
+        : "No hubo dias efectivos validos para calcular CPD.",
     };
   }
 
-  const averageCpd = cpdValues.reduce((sum, value) => sum + value, 0) / cpdValues.length;
-  const averageCoverage = safeCoverage(averageCpd, objective) ?? 0;
+  const averageCoverage = cpdCoverageValues.reduce((sum, value) => sum + value, 0) / cpdCoverageValues.length;
   const periodText = periods.join(", ");
+  const missingObjectiveText = missingObjectiveTeamIds.size > 0
+    ? ` ${missingObjectiveTeamIds.size} team_id sin objetivo CPD fueron omitidos.`
+    : "";
 
   return {
     ...baseEvaluation(params.component),
-    thresholdValue: objective,
-    value: Math.round(averageCpd * 100) / 100,
+    value: Math.round(averageCoverage * 10000) / 100,
     passed: averageCoverage >= threshold,
     status: averageCoverage >= threshold ? "passed" : "failed",
-    reason: `${params.participant.scope === "manager" ? "Promedio de equipo CPD" : "Cobertura CPD"}: ${cpdValues.length} participante(s) con datos, periodos ${periodText}.`,
+    reason: `${params.participant.scope === "manager" ? "Promedio de equipo CPD" : "Cobertura CPD"}: ${cpdCoverageValues.length} participante(s) con datos, periodos ${periodText}.${missingObjectiveText}`,
   };
 }
 

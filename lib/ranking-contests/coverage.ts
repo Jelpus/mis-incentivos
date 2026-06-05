@@ -22,6 +22,21 @@ function toNumber(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function formatBigQueryErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("fetch failed") ||
+    normalized.includes("econnreset") ||
+    normalized.includes("timeout") ||
+    normalized.includes("request to https://bigquery.googleapis.com")
+  ) {
+    return "No se pudieron cargar puntos desde BigQuery por un problema de conexion. Los calificadores se evaluan con las fuentes de ranking locales.";
+  }
+
+  return `No se pudieron cargar puntos desde BigQuery: ${message || "error desconocido"}.`;
+}
+
 function isGuarantee(value: unknown): boolean {
   if (value === true) return true;
   return String(value ?? "").trim().toLowerCase() === "true";
@@ -143,13 +158,18 @@ export async function fetchCoverageRowsForPeriods(periods: string[]): Promise<{ 
   const tableRef = `\`${projectId}.${datasetId}.${tableId}\``;
   const periodList = uniquePeriods.map((period) => `'${period}'`).join(", ");
 
-  const rows = await fetchBigQueryRows<BigQueryCoverageRow>({
-    query: `
-      SELECT team_id, product_name, prod_weight, cobertura, garantia, nombre, empleado, representante, manager, periodo
-      FROM ${tableRef}
-      WHERE periodo IN (${periodList})
-    `,
-  });
+  let rows: BigQueryCoverageRow[] = [];
+  try {
+    rows = await fetchBigQueryRows<BigQueryCoverageRow>({
+      query: `
+        SELECT team_id, product_name, prod_weight, cobertura, garantia, nombre, empleado, representante, manager, periodo
+        FROM ${tableRef}
+        WHERE periodo IN (${periodList})
+      `,
+    });
+  } catch (error) {
+    return { rows: [], message: formatBigQueryErrorMessage(error) };
+  }
 
   return { rows, message: rows.length === 0 ? "No hay resultados de BigQuery para el rango evaluado." : null };
 }

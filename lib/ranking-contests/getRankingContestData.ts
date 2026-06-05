@@ -445,8 +445,10 @@ async function loadRankingContestData(params?: GetRankingContestDataParams): Pro
     const allowedGroups = allowedGroupsByContest.get(contest.id);
     const contestParticipants = participants.filter((participant) => {
       if (participant.scope !== contest.scope) return false;
-      if (allowedGroups && allowedGroups.size > 0) return allowedGroups.has(normalizeGroupKey(participant.rankingGroup));
-      if (contest.participationScope === "ranking_groups") return false;
+      if (contest.participationScope === "ranking_groups") {
+        if (!allowedGroups || allowedGroups.size === 0) return false;
+        return allowedGroups.has(normalizeGroupKey(participant.rankingGroup));
+      }
       return true;
     });
 
