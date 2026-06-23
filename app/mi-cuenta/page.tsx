@@ -8,6 +8,7 @@ import {
   isMissingRelationError,
   normalizePeriodMonthInput,
 } from "@/lib/admin/incentive-rules/shared";
+import { SOURCE_RANKING_READY_TABLE_NAMES } from "@/lib/admin/source-ranking/constants";
 import { getResultadosV2Data } from "@/lib/results/get-resultados-v2-data";
 import type { ResultadoRecord } from "@/lib/results/get-resultados-v2-data";
 import {
@@ -112,11 +113,6 @@ type TeamMemberRow = {
 
 type RankingPeriodRow = {
   period_month: string | null;
-};
-
-type RankingSourceFilePeriodRow = {
-  period_month: string | null;
-  file_code: string | null;
 };
 
 type MatchSource =
@@ -321,52 +317,26 @@ async function getLatestAvailableRankingPeriodMonth(): Promise<string | null> {
   const adminClient = createAdminClient();
   if (!adminClient) return null;
 
-  const sourceFilesResult = await adminClient
-    .from("ranking_source_files")
-    .select("period_month, file_code")
-    .in("file_code", ["kpi_local_ytd", "icva_48hrs"])
-    .order("period_month", { ascending: false })
-    .limit(100);
+  const periodResults = await Promise.all(
+    SOURCE_RANKING_READY_TABLE_NAMES.map((tableName) =>
+      adminClient
+        .from(tableName)
+        .select("period_month")
+        .order("period_month", { ascending: false })
+        .limit(50000),
+    ),
+  );
 
-  if (!sourceFilesResult.error) {
-    const filesByPeriod = new Map<string, Set<string>>();
-    for (const row of (sourceFilesResult.data ?? []) as RankingSourceFilePeriodRow[]) {
-      const periodMonth = normalizePeriodMonthInput(String(row.period_month ?? "").trim());
-      const fileCode = String(row.file_code ?? "").trim().toLowerCase();
-      if (!periodMonth || !fileCode) continue;
-      const current = filesByPeriod.get(periodMonth) ?? new Set<string>();
-      current.add(fileCode);
-      filesByPeriod.set(periodMonth, current);
-    }
+  if (periodResults.some((result) => result.error)) return null;
 
-    const latestCompleteSourcePeriod = Array.from(filesByPeriod.entries())
-      .filter(([, fileCodes]) => fileCodes.has("kpi_local_ytd") && fileCodes.has("icva_48hrs"))
-      .map(([periodMonth]) => periodMonth)
-      .sort((a, b) => b.localeCompare(a))[0];
+  const periodSets = periodResults.map((result) =>
+    normalizePeriodSet((result.data ?? []) as RankingPeriodRow[]),
+  );
+  const [firstSet, ...remainingSets] = periodSets;
+  if (!firstSet) return null;
 
-    if (latestCompleteSourcePeriod) return latestCompleteSourcePeriod;
-  }
-
-  const [kpiPeriodsResult, icvaPeriodsResult] = await Promise.all([
-    adminClient
-      .from("ranking_kpi_local_ytd_agg")
-      .select("period_month")
-      .order("period_month", { ascending: false })
-      .limit(24),
-    adminClient
-      .from("ranking_icva_48hrs_agg")
-      .select("period_month")
-      .order("period_month", { ascending: false })
-      .limit(24),
-  ]);
-
-  if (kpiPeriodsResult.error || icvaPeriodsResult.error) return null;
-
-  const kpiPeriods = normalizePeriodSet((kpiPeriodsResult.data ?? []) as RankingPeriodRow[]);
-  const icvaPeriods = normalizePeriodSet((icvaPeriodsResult.data ?? []) as RankingPeriodRow[]);
-
-  return Array.from(kpiPeriods)
-    .filter((periodMonth) => icvaPeriods.has(periodMonth))
+  return Array.from(firstSet)
+    .filter((periodMonth) => remainingSets.every((set) => set.has(periodMonth)))
     .sort((a, b) => b.localeCompare(a))[0] ?? null;
 }
 

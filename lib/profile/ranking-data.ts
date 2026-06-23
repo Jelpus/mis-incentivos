@@ -4,6 +4,7 @@ import {
   formatPeriodMonthLabel,
   normalizePeriodMonthInput,
 } from "@/lib/admin/incentive-rules/shared";
+import { SOURCE_RANKING_READY_TABLE_NAMES } from "@/lib/admin/source-ranking/constants";
 import {
   getRankingContestsData,
   type RankingContestsData,
@@ -209,51 +210,31 @@ async function getAvailableRankingPeriods() {
   const supabase = createAdminClient();
   if (!supabase) return [];
 
-  const sourceFilesResult = await supabase
-    .from("ranking_source_files")
-    .select("period_month, file_code")
-    .in("file_code", ["kpi_local_ytd", "icva_48hrs"])
-    .order("period_month", { ascending: false })
-    .limit(100);
-
-  if (!sourceFilesResult.error) {
-    const filesByPeriod = new Map<string, Set<string>>();
-    for (const row of (sourceFilesResult.data ?? []) as PeriodRow[]) {
-      const period = normalizePeriodMonthInput(String(row.period_month ?? "").trim());
-      const fileCode = String(row.file_code ?? "").trim();
-      if (!period || !fileCode) continue;
-      const current = filesByPeriod.get(period) ?? new Set<string>();
-      current.add(fileCode);
-      filesByPeriod.set(period, current);
-    }
-
-    const completePeriods = Array.from(filesByPeriod.entries())
-      .filter(([, files]) => files.has("kpi_local_ytd") && files.has("icva_48hrs"))
-      .map(([period]) => period)
-      .sort((a, b) => b.localeCompare(a));
-
-    if (completePeriods.length > 0) return completePeriods;
-  }
-
-  const [kpiResult, icvaResult] = await Promise.all([
-    supabase.from("ranking_kpi_local_ytd_agg").select("period_month").order("period_month", { ascending: false }).limit(24),
-    supabase.from("ranking_icva_48hrs_agg").select("period_month").order("period_month", { ascending: false }).limit(24),
-  ]);
-
-  if (kpiResult.error || icvaResult.error) return [];
-  const kpiPeriods = new Set(
-    ((kpiResult.data ?? []) as PeriodRow[])
-      .map((row) => normalizePeriodMonthInput(String(row.period_month ?? "")))
-      .filter((value): value is string => Boolean(value)),
-  );
-  const icvaPeriods = new Set(
-    ((icvaResult.data ?? []) as PeriodRow[])
-      .map((row) => normalizePeriodMonthInput(String(row.period_month ?? "")))
-      .filter((value): value is string => Boolean(value)),
+  const periodResults = await Promise.all(
+    SOURCE_RANKING_READY_TABLE_NAMES.map((tableName) =>
+      supabase
+        .from(tableName)
+        .select("period_month")
+        .order("period_month", { ascending: false })
+        .limit(50000),
+    ),
   );
 
-  return Array.from(kpiPeriods)
-    .filter((period) => icvaPeriods.has(period))
+  if (periodResults.some((result) => result.error)) return [];
+
+  const periodSets = periodResults.map((result) =>
+    new Set(
+      ((result.data ?? []) as PeriodRow[])
+        .map((row) => normalizePeriodMonthInput(String(row.period_month ?? "")))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+
+  const [firstSet, ...remainingSets] = periodSets;
+  if (!firstSet) return [];
+
+  return Array.from(firstSet)
+    .filter((period) => remainingSets.every((set) => set.has(period)))
     .sort((a, b) => b.localeCompare(a));
 }
 

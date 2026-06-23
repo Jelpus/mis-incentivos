@@ -10,7 +10,11 @@ import {
   normalizePeriodMonthInput,
   sanitizeStoragePathChunk,
 } from "@/lib/admin/incentive-rules/shared";
-import { RANKING_REQUIRED_FILES } from "@/lib/admin/source-ranking/constants";
+import {
+  isSourceRankingPeriodAllowed,
+  RANKING_REQUIRED_FILES,
+  SOURCE_RANKING_MIN_PERIOD_MONTH,
+} from "@/lib/admin/source-ranking/constants";
 import {
   aggregateKpiLocalYtdRawRows,
   type DiasCicloRow,
@@ -105,6 +109,31 @@ function getUniquePeriodMonths(values: Array<string | null | undefined>): string
         .filter((value): value is string => Boolean(value)),
     ),
   ).sort((a, b) => a.localeCompare(b));
+}
+
+function getSourceRankingPeriodRangeMessage() {
+  return `Selecciona un periodo entre ${SOURCE_RANKING_MIN_PERIOD_MONTH.slice(0, 7)} y ${getCurrentPeriodMonth().slice(0, 7)}.`;
+}
+
+function parseOptionalSourceRankingPeriod(value: string | null | undefined):
+  | { ok: true; periodMonth: string | null }
+  | { ok: false; message: string } {
+  const raw = String(value ?? "").trim();
+  if (!raw) return { ok: true, periodMonth: null };
+
+  const periodMonth = normalizePeriodMonthInput(raw);
+  if (!periodMonth) {
+    return { ok: false, message: "Periodo invalido. Usa formato YYYY-MM." };
+  }
+
+  if (!isSourceRankingPeriodAllowed(periodMonth)) {
+    return {
+      ok: false,
+      message: `Periodo fuera de rango. ${getSourceRankingPeriodRangeMessage()}`,
+    };
+  }
+
+  return { ok: true, periodMonth };
 }
 
 function toComparableNumber(value: unknown): number {
@@ -304,6 +333,7 @@ async function syncIcvaAggRows(params: {
 export async function prepareSourceRankingDirectUploadAction(params: {
   fileCode: string;
   displayName?: string | null;
+  periodMonth?: string | null;
   fileName: string;
   fileSize: number;
   contentType?: string | null;
@@ -315,6 +345,8 @@ export async function prepareSourceRankingDirectUploadAction(params: {
 
   const fileCodeInput = String(params.fileCode ?? "").trim().toLowerCase();
   const fileSize = Number(params.fileSize ?? 0);
+  const requestedPeriodResult = parseOptionalSourceRankingPeriod(params.periodMonth);
+  if (!requestedPeriodResult.ok) return requestedPeriodResult;
 
   if (!Number.isFinite(fileSize) || fileSize <= 0) {
     return { ok: false, message: "El archivo esta vacio." };
@@ -343,7 +375,8 @@ export async function prepareSourceRankingDirectUploadAction(params: {
 
   const safeFileName = sanitizeUploadedFileName(params.fileName);
   const safeCodeChunk = sanitizeStoragePathChunk(fileCodeInput) || "source-ranking";
-  const targetPath = `_incoming/${safeCodeChunk}/${Date.now()}-${safeFileName}`;
+  const periodPathChunk = requestedPeriodResult.periodMonth?.slice(0, 7);
+  const targetPath = `_incoming/${periodPathChunk ? `${periodPathChunk}/` : ""}${safeCodeChunk}/${Date.now()}-${safeFileName}`;
   const signedUploadResult = await supabase.storage.from(bucketName).createSignedUploadUrl(targetPath);
 
   if (signedUploadResult.error || !signedUploadResult.data?.token) {
@@ -366,6 +399,7 @@ export async function completeSourceRankingDirectUploadAction(params: {
   path: string;
   fileCode: string;
   displayName?: string | null;
+  periodMonth?: string | null;
   fileName: string;
   fileSize: number;
   contentType?: string | null;
@@ -378,6 +412,9 @@ export async function completeSourceRankingDirectUploadAction(params: {
   const bucketName = getSourceRankingBucketName();
   const bucket = String(params.bucket ?? "").trim();
   const path = String(params.path ?? "").trim();
+  const requestedPeriodResult = parseOptionalSourceRankingPeriod(params.periodMonth);
+  if (!requestedPeriodResult.ok) return requestedPeriodResult;
+
   if (bucket !== bucketName || !path || !path.startsWith("_incoming/")) {
     return { ok: false, message: "Ruta temporal invalida para procesar el archivo." };
   }
@@ -410,6 +447,9 @@ export async function completeSourceRankingDirectUploadAction(params: {
       { type: params.contentType || undefined },
     );
     const formData = new FormData();
+    if (requestedPeriodResult.periodMonth) {
+      formData.append("period_month", requestedPeriodResult.periodMonth);
+    }
     formData.append("file_code", String(params.fileCode ?? ""));
     formData.append("display_name", String(params.displayName ?? ""));
     formData.append("file", file);
@@ -433,7 +473,9 @@ export async function uploadSourceRankingFileAction(
   const displayNameInput = String(formData.get("display_name") ?? "").trim();
   const uploadedFile = formData.get("file");
 
-  const requestedPeriodMonth = normalizePeriodMonthInput(periodInput);
+  const requestedPeriodResult = parseOptionalSourceRankingPeriod(periodInput);
+  if (!requestedPeriodResult.ok) return requestedPeriodResult;
+  const requestedPeriodMonth = requestedPeriodResult.periodMonth;
 
   if (!(uploadedFile instanceof File)) {
     return { ok: false, message: "Debes seleccionar un archivo." };
@@ -477,7 +519,11 @@ export async function uploadSourceRankingFileAction(
   const latestStatusPeriod = normalizePeriodMonthInput(
     String(latestStatusPeriodResult.data?.[0]?.period_month ?? "").trim(),
   );
-  const periodMonth = requestedPeriodMonth ?? latestStatusPeriod ?? getCurrentPeriodMonth();
+  const fallbackStatusPeriod =
+    latestStatusPeriod && isSourceRankingPeriodAllowed(latestStatusPeriod)
+      ? latestStatusPeriod
+      : null;
+  const periodMonth = requestedPeriodMonth ?? fallbackStatusPeriod ?? getCurrentPeriodMonth();
 
   const bucketName = getSourceRankingBucketName();
   const bucketReadyResult = await ensureSourceRankingBucket(supabase, bucketName);
@@ -616,11 +662,29 @@ export async function uploadSourceRankingFileAction(
     }
   }
 
-  const metadataPeriodMonth = kpiNormalization
+  const normalizedPeriodMonths = kpiNormalization
+    ? getUniquePeriodMonths(kpiNormalization.rows.map((row) => row.period_month))
+    : icvaNormalization
+      ? getUniquePeriodMonths(icvaNormalization.rows.map((row) => row.period_month))
+      : [];
+
+  if (
+    requestedPeriodMonth &&
+    (kpiNormalization || icvaNormalization) &&
+    !normalizedPeriodMonths.includes(requestedPeriodMonth)
+  ) {
+    return {
+      ok: false,
+      message: `El archivo no contiene filas normalizadas para ${requestedPeriodMonth.slice(0, 7)}. Revisa el periodo seleccionado o el archivo cargado.`,
+    };
+  }
+
+  const detectedMaxPeriodMonth = kpiNormalization
     ? getMaxPeriodMonth(kpiNormalization.rows.map((row) => row.period_month), periodMonth)
     : icvaNormalization
       ? getMaxPeriodMonth(icvaNormalization.rows.map((row) => row.period_month), periodMonth)
       : periodMonth;
+  const metadataPeriodMonth = requestedPeriodMonth ?? detectedMaxPeriodMonth;
   const safeFileName = sanitizeUploadedFileName(uploadedFile.name);
   const safeCodeChunk = sanitizeStoragePathChunk(fileCodeInput) || "source-ranking";
   const targetPath = `${metadataPeriodMonth.slice(0, 7)}/${safeCodeChunk}/${Date.now()}-${safeFileName}`;
@@ -912,7 +976,9 @@ export async function createSourceRankingFileDownloadUrlAction(params: {
     return { ok: false, message: "No autorizado." };
   }
 
-  const periodMonth = normalizePeriodMonthInput(params.periodMonth);
+  const periodResult = parseOptionalSourceRankingPeriod(params.periodMonth);
+  if (!periodResult.ok) return periodResult;
+  const periodMonth = periodResult.periodMonth;
   const fileCode = String(params.fileCode ?? "").trim().toLowerCase();
   if (!fileCode) {
     return { ok: false, message: "Archivo invalido." };

@@ -4,7 +4,13 @@ import {
   isMissingRelationError,
   normalizePeriodMonthInput,
 } from "@/lib/admin/incentive-rules/shared";
-import { RANKING_REQUIRED_FILES } from "@/lib/admin/source-ranking/constants";
+import {
+  getSourceRankingPeriodOptions,
+  isSourceRankingPeriodAllowed,
+  RANKING_REQUIRED_FILES,
+  SOURCE_RANKING_PERIOD_CHECKS,
+  SOURCE_RANKING_READY_TABLE_NAMES,
+} from "@/lib/admin/source-ranking/constants";
 
 type RankingSourceUploadRow = {
   file_code: string | null;
@@ -23,6 +29,20 @@ type PeriodStat = {
   rows: number;
 };
 
+type PeriodCheck = {
+  key: string;
+  label: string;
+  tableName: string;
+  rows: number | null;
+  status: "ok" | "missing" | "unknown";
+};
+
+type TableDiagnostics = {
+  stats: PeriodStat[];
+  selectedRows: number | null;
+  message: string | null;
+};
+
 export type SourceRankingPageData = {
   sourceFiles: {
     storageReady: boolean;
@@ -39,14 +59,16 @@ export type SourceRankingPageData = {
       originalFileName: string | null;
       periodMonth: string | null;
       normalizedMaxPeriodMonth: string | null;
+      selectedPeriodChecks: PeriodCheck[];
       periodStats: PeriodStat[];
-      coverageStatus: "missing" | "aligned" | "ahead" | "behind" | "unknown";
+      coverageStatus: "missing" | "aligned" | "ahead" | "behind" | "missing_period" | "unknown";
     }>;
     cutoff: {
       periodMonth: string | null;
       label: string;
       ready: boolean;
       message: string;
+      options: string[];
     };
   };
 };
@@ -83,6 +105,26 @@ async function loadNormalizedPeriodStats(
   return { stats: buildPeriodStats((result.data ?? []) as PeriodOnlyRow[]), message: null };
 }
 
+async function loadSelectedPeriodRows(
+  supabase: NonNullable<ReturnType<typeof createAdminClient>>,
+  tableName: string,
+  periodMonth: string,
+): Promise<{ rows: number | null; message: string | null }> {
+  const result = await supabase
+    .from(tableName)
+    .select("period_month", { count: "exact", head: true })
+    .eq("period_month", periodMonth);
+
+  if (result.error) {
+    if (isMissingRelationError(result.error)) {
+      return { rows: null, message: `Falta ${getMissingRelationName(result.error) ?? tableName}.` };
+    }
+    return { rows: null, message: result.error.message };
+  }
+
+  return { rows: result.count ?? 0, message: null };
+}
+
 function getMaxPeriod(stats: PeriodStat[]): string | null {
   return stats.length > 0 ? stats[stats.length - 1].periodMonth : null;
 }
@@ -91,27 +133,56 @@ function getCoverageStatus(params: {
   uploaded: boolean;
   maxPeriod: string | null;
   cutoff: string | null;
-}): "missing" | "aligned" | "ahead" | "behind" | "unknown" {
+  checks: PeriodCheck[];
+}): "missing" | "aligned" | "ahead" | "behind" | "missing_period" | "unknown" {
   if (!params.uploaded) return "missing";
   if (!params.maxPeriod || !params.cutoff) return "unknown";
+  if (params.checks.some((check) => check.status === "unknown")) return "unknown";
+  if (params.checks.some((check) => check.status === "missing")) {
+    return params.maxPeriod < params.cutoff ? "behind" : "missing_period";
+  }
   if (params.maxPeriod === params.cutoff) return "aligned";
   return params.maxPeriod > params.cutoff ? "ahead" : "behind";
 }
 
-export async function getSourceRankingPageData(): Promise<SourceRankingPageData> {
+function getPrimaryDiagnosticsTableName(fileCode: string): string {
+  if (fileCode === "kpi_local_ytd") return "ranking_kpi_local_ytd_agg";
+  if (fileCode === "icva_48hrs") return "ranking_icva_48hrs_agg";
+  return "ranking_source_files";
+}
+
+function buildCheckStatus(rows: number | null): PeriodCheck["status"] {
+  if (rows === null) return "unknown";
+  return rows > 0 ? "ok" : "missing";
+}
+
+export async function getSourceRankingPageData(periodMonthInput?: string | null): Promise<SourceRankingPageData> {
   const supabase = createAdminClient();
   if (!supabase) {
     throw new Error("Admin client not available");
   }
 
+  const periodOptions = getSourceRankingPeriodOptions();
+  const requestedPeriod = normalizePeriodMonthInput(periodMonthInput);
+  const selectedPeriodMonth =
+    requestedPeriod && isSourceRankingPeriodAllowed(requestedPeriod)
+      ? requestedPeriod
+      : periodOptions[0] ?? null;
+
   let storageReady = true;
   let storageMessage: string | null = null;
   const uploadedSourceFilesByCode = new Map<string, RankingSourceUploadRow>();
 
-  const sourceFilesResult = await supabase
+  let sourceFilesQuery = supabase
     .from("ranking_source_files")
     .select("period_month, file_code, display_name, original_file_name, uploaded_at")
     .order("uploaded_at", { ascending: false });
+
+  if (selectedPeriodMonth) {
+    sourceFilesQuery = sourceFilesQuery.eq("period_month", selectedPeriodMonth);
+  }
+
+  const sourceFilesResult = await sourceFilesQuery;
 
   if (sourceFilesResult.error) {
     if (isMissingRelationError(sourceFilesResult.error)) {
@@ -134,27 +205,60 @@ export async function getSourceRankingPageData(): Promise<SourceRankingPageData>
     }
   }
 
-  const [kpiStatsResult, icvaStatsResult] = await Promise.all([
-    loadNormalizedPeriodStats(supabase, "ranking_kpi_local_ytd_raw"),
-    loadNormalizedPeriodStats(supabase, "ranking_icva_48hrs_raw"),
-  ]);
-  const periodStatsByCode = new Map<string, PeriodStat[]>([
-    ["kpi_local_ytd", kpiStatsResult.stats],
-    ["icva_48hrs", icvaStatsResult.stats],
-  ]);
-  const maxPeriodByCode = new Map<string, string | null>([
-    ["kpi_local_ytd", getMaxPeriod(kpiStatsResult.stats)],
-    ["icva_48hrs", getMaxPeriod(icvaStatsResult.stats)],
-  ]);
-  const normalizedMaxPeriods = Array.from(maxPeriodByCode.values()).filter((value): value is string => Boolean(value));
-  const cutoffPeriodMonth = normalizedMaxPeriods.length === RANKING_REQUIRED_FILES.length
-    ? normalizedMaxPeriods.sort((a, b) => a.localeCompare(b))[0]
-    : null;
-  const diagnosticsMessages = [kpiStatsResult.message, icvaStatsResult.message].filter((value): value is string => Boolean(value));
+  const tableDiagnosticsEntries = await Promise.all(
+    SOURCE_RANKING_READY_TABLE_NAMES.map(async (tableName) => {
+      const [statsResult, selectedRowsResult] = await Promise.all([
+        loadNormalizedPeriodStats(supabase, tableName),
+        selectedPeriodMonth
+          ? loadSelectedPeriodRows(supabase, tableName, selectedPeriodMonth)
+          : Promise.resolve({ rows: null, message: null }),
+      ]);
+
+      return [
+        tableName,
+        {
+          stats: statsResult.stats,
+          selectedRows: selectedRowsResult.rows,
+          message: statsResult.message ?? selectedRowsResult.message,
+        },
+      ] as const;
+    }),
+  );
+  const tableDiagnosticsByName = new Map<string, TableDiagnostics>(tableDiagnosticsEntries);
+  const maxPeriodByCode = new Map<string, string | null>(
+    RANKING_REQUIRED_FILES.map((requiredFile) => {
+      const tableName = getPrimaryDiagnosticsTableName(requiredFile.fileCode);
+      return [
+        requiredFile.fileCode,
+        getMaxPeriod(tableDiagnosticsByName.get(tableName)?.stats ?? []),
+      ];
+    }),
+  );
+  const cutoffPeriodMonth = selectedPeriodMonth;
+  const diagnosticsMessages = Array.from(
+    new Set(
+      Array.from(tableDiagnosticsByName.values())
+        .map((diagnostics) => diagnostics.message)
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
 
   const sourceFileRows = RANKING_REQUIRED_FILES.map((requiredFile) => {
     const uploadedInfo = uploadedSourceFilesByCode.get(requiredFile.fileCode);
     const normalizedMaxPeriodMonth = maxPeriodByCode.get(requiredFile.fileCode) ?? null;
+    const selectedPeriodChecks = SOURCE_RANKING_PERIOD_CHECKS
+      .filter((check) => check.fileCode === requiredFile.fileCode)
+      .map((check) => {
+        const rows = tableDiagnosticsByName.get(check.tableName)?.selectedRows ?? null;
+        return {
+          key: check.key,
+          label: check.label,
+          tableName: check.tableName,
+          rows,
+          status: buildCheckStatus(rows),
+        };
+      });
+    const primaryTableName = getPrimaryDiagnosticsTableName(requiredFile.fileCode);
     return {
       fileCode: requiredFile.fileCode,
       displayName: requiredFile.displayName,
@@ -164,25 +268,38 @@ export async function getSourceRankingPageData(): Promise<SourceRankingPageData>
       originalFileName: uploadedInfo?.original_file_name ?? null,
       periodMonth: uploadedInfo?.period_month ?? null,
       normalizedMaxPeriodMonth,
-      periodStats: periodStatsByCode.get(requiredFile.fileCode) ?? [],
+      selectedPeriodChecks,
+      periodStats: tableDiagnosticsByName.get(primaryTableName)?.stats ?? [],
       coverageStatus: getCoverageStatus({
         uploaded: Boolean(uploadedInfo),
         maxPeriod: normalizedMaxPeriodMonth,
         cutoff: cutoffPeriodMonth,
+        checks: selectedPeriodChecks,
       }),
     };
   });
   const uploadedCount = sourceFileRows.filter((row) => row.uploaded).length;
   const hasAllFiles = uploadedCount === sourceFileRows.length;
-  const aligned = hasAllFiles && sourceFileRows.every((row) => row.coverageStatus === "aligned");
+  const missingChecks = sourceFileRows.flatMap((row) =>
+    row.selectedPeriodChecks
+      .filter((check) => check.status === "missing")
+      .map((check) => `${row.displayName}: ${check.label}`),
+  );
+  const hasUnknownChecks = sourceFileRows.some((row) =>
+    row.selectedPeriodChecks.some((check) => check.status === "unknown"),
+  );
+  const hasSelectedPeriodRows = missingChecks.length === 0 && !hasUnknownChecks;
+  const aligned = hasAllFiles && hasSelectedPeriodRows;
   const cutoffMessage = diagnosticsMessages.length > 0
     ? `No se pudo validar completo: ${diagnosticsMessages.join(" ")}`
     : !hasAllFiles
-      ? "Faltan archivos requeridos para definir un corte usable."
+      ? "Faltan archivos requeridos para el periodo seleccionado."
+      : missingChecks.length > 0
+        ? `Para ${cutoffPeriodMonth?.slice(0, 7) ?? "el periodo seleccionado"} falta informacion en: ${missingChecks.join(", ")}.`
       : cutoffPeriodMonth
         ? aligned
-          ? `Los dos archivos estan alineados al corte ${cutoffPeriodMonth.slice(0, 7)}.`
-          : `El corte usable sera ${cutoffPeriodMonth.slice(0, 7)} porque algun archivo no llega al mes maximo de los demas.`
+          ? `Periodo listo: los archivos y las tablas de ranking tienen datos para ${cutoffPeriodMonth.slice(0, 7)}.`
+          : `Falta informacion normalizada para ${cutoffPeriodMonth.slice(0, 7)} en al menos un archivo.`
         : "No se detectaron periodos normalizados en los archivos cargados.";
 
   return {
@@ -198,6 +315,7 @@ export async function getSourceRankingPageData(): Promise<SourceRankingPageData>
         label: cutoffPeriodMonth ? cutoffPeriodMonth.slice(0, 7) : "-",
         ready: aligned,
         message: cutoffMessage,
+        options: periodOptions,
       },
     },
   };

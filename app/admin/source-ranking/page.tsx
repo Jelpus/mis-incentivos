@@ -3,7 +3,13 @@ import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { getSourceRankingPageData } from "@/lib/admin/source-ranking/get-source-ranking-page-data";
 import { SourceRankingFilesCard } from "@/components/admin/source-ranking-files-card";
 
-export default async function AdminSourceRankingPage() {
+type PageProps = {
+  searchParams?: Promise<{
+    period?: string;
+  }>;
+};
+
+export default async function AdminSourceRankingPage({ searchParams }: PageProps) {
   const { user, role, isActive } = await getCurrentAuthContext();
 
   if (!user) {
@@ -21,7 +27,8 @@ export default async function AdminSourceRankingPage() {
     redirect("/");
   }
 
-  const data = await getSourceRankingPageData();
+  const params = searchParams ? await searchParams : {};
+  const data = await getSourceRankingPageData(params?.period ?? null);
 
   return (
     <main className="min-h-screen bg-neutral-50">
@@ -32,7 +39,7 @@ export default async function AdminSourceRankingPage() {
             Data Source Ranking
           </h1>
           <p className="mt-2 max-w-4xl text-sm text-neutral-600">
-            Carga de fuentes base para ranking. Los periodos se derivan desde la estructura de los archivos.
+            Carga de fuentes base para ranking por periodo de trabajo.
           </p>
         </header>
 

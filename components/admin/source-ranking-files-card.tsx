@@ -6,6 +6,7 @@ import {
   createSourceRankingFileDownloadUrlAction,
   prepareSourceRankingDirectUploadAction,
 } from "@/app/admin/source-ranking/actions";
+import { StatusPeriodPicker } from "@/components/admin/status-period-picker";
 import { formatPeriodMonthLabel } from "@/lib/admin/incentive-rules/shared";
 import { formatDateTimeNoTimezoneShift } from "@/lib/date-time";
 import { createClient } from "@/lib/supabase/client";
@@ -19,11 +20,18 @@ type SourceRankingFileRow = {
   originalFileName: string | null;
   periodMonth: string | null;
   normalizedMaxPeriodMonth: string | null;
+  selectedPeriodChecks: Array<{
+    key: string;
+    label: string;
+    tableName: string;
+    rows: number | null;
+    status: "ok" | "missing" | "unknown";
+  }>;
   periodStats: Array<{
     periodMonth: string;
     rows: number;
   }>;
-  coverageStatus: "missing" | "aligned" | "ahead" | "behind" | "unknown";
+  coverageStatus: "missing" | "aligned" | "ahead" | "behind" | "missing_period" | "unknown";
 };
 
 type SourceRankingFilesState = {
@@ -38,6 +46,7 @@ type SourceRankingFilesState = {
     label: string;
     ready: boolean;
     message: string;
+    options: string[];
   };
 };
 
@@ -82,10 +91,25 @@ function getStatusBadge(row: SourceRankingFileRow) {
   if (row.coverageStatus === "missing") {
     return { label: "Pendiente", className: "bg-amber-50 text-amber-700" };
   }
+  if (row.coverageStatus === "missing_period") {
+    return { label: "Periodo faltante", className: "bg-red-50 text-red-700" };
+  }
   return { label: "Sin validar", className: "bg-neutral-100 text-neutral-600" };
 }
 
-function SourceRankingFileUploadRowItem({ row }: { row: SourceRankingFileRow }) {
+function getCheckClassName(status: "ok" | "missing" | "unknown") {
+  if (status === "ok") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  if (status === "missing") return "border-red-200 bg-red-50 text-red-700";
+  return "border-neutral-200 bg-neutral-50 text-neutral-600";
+}
+
+function SourceRankingFileUploadRowItem({
+  row,
+  selectedPeriodMonth,
+}: {
+  row: SourceRankingFileRow;
+  selectedPeriodMonth: string | null;
+}) {
   const [state, setState] = useState<UploadState>(null);
   const [isPending, startTransition] = useTransition();
   const [isDownloading, startDownloadTransition] = useTransition();
@@ -138,6 +162,11 @@ function SourceRankingFileUploadRowItem({ row }: { row: SourceRankingFileRow }) 
   }
 
   function handleUpload() {
+    if (!selectedPeriodMonth) {
+      setState({ ok: false, message: "Debes seleccionar un periodo." });
+      return;
+    }
+
     if (!selectedFile) {
       setState({ ok: false, message: "Debes seleccionar un archivo." });
       return;
@@ -150,6 +179,7 @@ function SourceRankingFileUploadRowItem({ row }: { row: SourceRankingFileRow }) 
         const prepareResult = await prepareSourceRankingDirectUploadAction({
           fileCode: row.fileCode,
           displayName: row.displayName,
+          periodMonth: selectedPeriodMonth,
           fileName: selectedFile.name,
           fileSize: selectedFile.size,
           contentType: selectedFile.type || null,
@@ -183,6 +213,7 @@ function SourceRankingFileUploadRowItem({ row }: { row: SourceRankingFileRow }) 
           path: prepareResult.path,
           fileCode: row.fileCode,
           displayName: row.displayName,
+          periodMonth: selectedPeriodMonth,
           fileName: selectedFile.name,
           fileSize: selectedFile.size,
           contentType: selectedFile.type || null,
@@ -203,6 +234,7 @@ function SourceRankingFileUploadRowItem({ row }: { row: SourceRankingFileRow }) 
   function handleDownloadLatest() {
     startDownloadTransition(async () => {
       const result = await createSourceRankingFileDownloadUrlAction({
+        periodMonth: row.uploaded ? selectedPeriodMonth : null,
         fileCode: row.fileCode,
       });
 
@@ -258,6 +290,20 @@ function SourceRankingFileUploadRowItem({ row }: { row: SourceRankingFileRow }) 
                 {row.normalizedMaxPeriodMonth ? formatPeriodMonthLabel(row.normalizedMaxPeriodMonth) : "-"}
               </span>
             </p>
+            <p className="text-xs text-neutral-500">
+              Tablas del periodo seleccionado
+            </p>
+            <div className="mt-1 flex max-w-sm flex-wrap gap-1.5">
+              {row.selectedPeriodChecks.map((check) => (
+                <span
+                  key={`${row.fileCode}-${check.key}`}
+                  className={`rounded-full border px-2 py-0.5 text-[11px] ${getCheckClassName(check.status)}`}
+                  title={`${check.tableName}: ${check.rows === null ? "sin validar" : `${formatRows(check.rows)} filas`}`}
+                >
+                  {check.label}: {check.rows === null ? "-" : formatRows(check.rows)}
+                </span>
+              ))}
+            </div>
             {row.periodStats.length > 0 ? (
               <div className="mt-2 flex max-w-sm flex-wrap gap-1.5">
                 {row.periodStats.slice(-6).map((item) => (
@@ -393,6 +439,10 @@ function SourceRankingFileUploadRowItem({ row }: { row: SourceRankingFileRow }) 
 }
 
 export function SourceRankingFilesCard({ sourceFiles }: Props) {
+  const selectedPeriodMonth = sourceFiles.cutoff.periodMonth;
+  const selectedPeriodInput = selectedPeriodMonth ? selectedPeriodMonth.slice(0, 7) : "";
+  const periodOptions = sourceFiles.cutoff.options.map((period) => period.slice(0, 7));
+
   return (
     <section className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
       <div>
@@ -420,13 +470,25 @@ export function SourceRankingFilesCard({ sourceFiles }: Props) {
             ? "border-emerald-200 bg-emerald-50 text-emerald-800"
             : "border-amber-200 bg-amber-50 text-amber-800"
         }`}>
-          <p className="text-[11px] uppercase tracking-wide">
-            Corte usable para Ranking
-          </p>
-          <p className="mt-1 text-lg font-semibold">
-            {sourceFiles.cutoff.periodMonth ? formatPeriodMonthLabel(sourceFiles.cutoff.periodMonth) : "No definido"}
-          </p>
-          <p className="mt-1 text-sm">{sourceFiles.cutoff.message}</p>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="text-[11px] uppercase tracking-wide">
+                Corte usable para Ranking
+              </p>
+              <p className="mt-1 text-lg font-semibold">
+                {sourceFiles.cutoff.periodMonth ? formatPeriodMonthLabel(sourceFiles.cutoff.periodMonth) : "No definido"}
+              </p>
+              <p className="mt-1 text-sm">{sourceFiles.cutoff.message}</p>
+            </div>
+            <div className="flex flex-col gap-1 text-neutral-900">
+              <span className="text-[11px] uppercase tracking-wide text-neutral-600">Periodo de carga</span>
+              <StatusPeriodPicker
+                value={selectedPeriodInput}
+                paramName="period"
+                options={periodOptions}
+              />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -451,6 +513,7 @@ export function SourceRankingFilesCard({ sourceFiles }: Props) {
               <SourceRankingFileUploadRowItem
                 key={row.fileCode}
                 row={row}
+                selectedPeriodMonth={selectedPeriodMonth}
               />
             ))}
           </tbody>
