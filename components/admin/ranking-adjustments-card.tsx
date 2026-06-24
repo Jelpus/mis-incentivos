@@ -221,11 +221,6 @@ export function RankingAdjustmentsCard({
               Audita puntos calculados y suma, resta o define puntos por periodo, territorio y producto.
             </p>
           </div>
-          <StatusPeriodPicker
-            value={periodInput}
-            paramName="period"
-            options={availablePeriodInputs}
-          />
         </div>
 
         {messages.length > 0 ? (
