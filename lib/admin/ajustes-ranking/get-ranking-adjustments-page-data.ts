@@ -56,6 +56,11 @@ type AuditRow = {
   changed_at: string | null;
 };
 
+type ProfileEmailRow = {
+  user_id: string | null;
+  email: string | null;
+};
+
 export type RankingAdjustmentPointRow = {
   id: string;
   participantId: string;
@@ -345,6 +350,30 @@ function normalizeAuditAction(row: AuditRow): string {
   return action || "update";
 }
 
+async function loadProfileEmailsByUserId(params: {
+  supabase: NonNullable<ReturnType<typeof createAdminClient>>;
+  userIds: string[];
+}): Promise<Map<string, string>> {
+  const userIds = Array.from(new Set(params.userIds.map(normalizeText).filter(Boolean)));
+  const emailsByUserId = new Map<string, string>();
+  if (userIds.length === 0) return emailsByUserId;
+
+  const result = await params.supabase
+    .from("profiles")
+    .select("user_id, email")
+    .in("user_id", userIds);
+
+  if (result.error) return emailsByUserId;
+
+  for (const row of (result.data ?? []) as ProfileEmailRow[]) {
+    const userId = normalizeText(row.user_id);
+    const email = normalizeText(row.email);
+    if (userId && email) emailsByUserId.set(userId, email);
+  }
+
+  return emailsByUserId;
+}
+
 async function loadAuditItems(): Promise<{
   rows: RankingAdjustmentAuditItem[];
   message: string | null;
@@ -366,12 +395,19 @@ async function loadAuditItems(): Promise<{
     return { rows: [], message: `No se pudo cargar auditoria ranking: ${result.error.message}` };
   }
 
+  const auditRows = (result.data ?? []) as AuditRow[];
+  const emailsByUserId = await loadProfileEmailsByUserId({
+    supabase,
+    userIds: auditRows.map((row) => row.changed_by ?? ""),
+  });
+
   return {
-    rows: ((result.data ?? []) as AuditRow[]).map((row) => {
+    rows: auditRows.map((row) => {
       const newSnapshot = row.new_data;
       const previousSnapshot = row.previous_data;
       const effectiveSnapshot = newSnapshot ?? previousSnapshot;
       const periodMonth = normalizePeriodMonthInput(String(getSnapshotValue(effectiveSnapshot, "period_month") ?? ""));
+      const changedBy = normalizeText(row.changed_by);
       return {
         id: String(row.id ?? "").trim(),
         adjustmentId: row.adjustment_id ? String(row.adjustment_id) : null,
@@ -384,7 +420,7 @@ async function loadAuditItems(): Promise<{
         previousActive: previousSnapshot ? getSnapshotValue(previousSnapshot, "is_active") !== false : null,
         newActive: newSnapshot ? getSnapshotValue(newSnapshot, "is_active") !== false : null,
         changedAt: row.changed_at ?? null,
-        changedBy: row.changed_by ?? null,
+        changedBy: emailsByUserId.get(changedBy) ?? (changedBy || null),
       };
     }).filter((row) => row.id),
     message: null,
