@@ -1,7 +1,11 @@
-import { unstable_cache } from "next/cache";
 import { getRankingContestsData } from "@/lib/admin/reglas-ranking/get-ranking-contests-data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buildCoveragePeriods, belongsToParticipant, calculateCoveragePoints, fetchCoverageRowsForPeriods } from "@/lib/ranking-contests/coverage";
+import {
+  applyRankingPointAdjustment,
+  getActiveRankingPointAdjustmentsForPeriods,
+  type RankingPointAdjustmentLookup,
+} from "@/lib/ranking-contests/pointAdjustments";
 import { getContestParticipants } from "@/lib/ranking-contests/participants";
 import { evaluateContestComponent, resolveQualification } from "@/lib/ranking-contests/qualification";
 import { attachRankingGroupsToParticipants, getLatestRankingComplementsByTeamIds, normalizeTeamKey } from "@/lib/ranking-contests/rankingGroups";
@@ -228,34 +232,118 @@ function getActiveTeamMembersInRanking(params: {
   });
 }
 
+function getContestParticipantsForContest(params: {
+  participants: ContestParticipant[];
+  contest: RankingContest;
+  allowedGroups?: Set<string>;
+}) {
+  return params.participants.filter((participant) => {
+    if (participant.scope !== params.contest.scope) return false;
+    if (params.contest.participationScope === "ranking_groups") {
+      if (!params.allowedGroups || params.allowedGroups.size === 0) return false;
+      return params.allowedGroups.has(normalizeGroupKey(participant.rankingGroup));
+    }
+    return true;
+  });
+}
+
+function buildCoverageRowFiltersForTarget(params: {
+  targetParticipantId: string;
+  contests: RankingContest[];
+  participants: ContestParticipant[];
+  allowedGroupsByContest: Map<string, Set<string>>;
+}) {
+  const employeeNumbers = new Set<string | number>();
+  const territories = new Set<string>();
+
+  for (const contest of params.contests) {
+    const contestParticipants = getContestParticipantsForContest({
+      participants: params.participants,
+      contest,
+      allowedGroups: params.allowedGroupsByContest.get(contest.id),
+    });
+    const targetParticipants = contestParticipants.filter((participant) => participant.id === params.targetParticipantId);
+    for (const participant of targetParticipants) {
+      const sourceParticipants = participant.scope === "manager"
+        ? getActiveTeamMembersInRanking({ manager: participant, participants: params.participants, contest })
+        : [participant];
+
+      for (const sourceParticipant of sourceParticipants) {
+        if (sourceParticipant.employeeNumber) employeeNumbers.add(sourceParticipant.employeeNumber);
+        const territory = String(sourceParticipant.territory ?? "").trim();
+        if (territory) territories.add(territory);
+      }
+    }
+  }
+
+  if (employeeNumbers.size === 0 && territories.size === 0) return undefined;
+  return {
+    employeeNumbers: Array.from(employeeNumbers),
+    territories: Array.from(territories),
+  };
+}
+
+function calculateAdjustedCoveragePoints(params: {
+  result: BigQueryCoverageRow;
+  contest: RankingContest;
+  participant: ContestParticipant;
+  rankingComplementsForTeam?: RankingComplement[];
+  pointAdjustments: RankingPointAdjustmentLookup;
+}) {
+  return applyRankingPointAdjustment({
+    detail: calculateCoveragePoints({
+      result: params.result,
+      contest: params.contest,
+      rankingComplementsForTeam: params.rankingComplementsForTeam,
+    }),
+    participant: params.participant,
+    adjustments: params.pointAdjustments,
+  });
+}
+
 function buildTeamAveragePointDetails(params: {
   manager: ContestParticipant;
   members: ContestParticipant[];
   contest: RankingContest;
   contestCoverageRows: BigQueryCoverageRow[];
   complementsByTeamId: Map<string, RankingComplement[]>;
+  pointAdjustments: RankingPointAdjustmentLookup;
 }): CoveragePointDetail[] {
-  const teamMemberPoints: Array<{ period: string; representativeName: string; points: number }> = [];
+  const teamMemberPoints: Array<{
+    period: string;
+    representativeName: string;
+    basePoints: number;
+    adjustmentDelta: number;
+    points: number;
+  }> = [];
   const memberSummaries = params.members.map((member) => {
     const memberCoverageRows = params.contestCoverageRows.filter((result) => belongsToParticipant(result, member));
     const complements = params.complementsByTeamId.get(normalizeTeamKey(member.teamId));
-    const memberPointDetails = memberCoverageRows.map((result) => calculateCoveragePoints({
+    const memberPointDetails = memberCoverageRows.map((result) => calculateAdjustedCoveragePoints({
       result,
       contest: params.contest,
+      participant: member,
       rankingComplementsForTeam: complements,
+      pointAdjustments: params.pointAdjustments,
     }));
     const points = memberPointDetails.reduce((sum, detail) => sum + toNumber(detail.points), 0);
 
-    const pointsByPeriod = new Map<string, number>();
+    const pointsByPeriod = new Map<string, { basePoints: number; adjustmentDelta: number; points: number }>();
     for (const detail of memberPointDetails) {
       const period = String(detail.period || "-");
-      pointsByPeriod.set(period, (pointsByPeriod.get(period) ?? 0) + toNumber(detail.points));
+      const current = pointsByPeriod.get(period) ?? { basePoints: 0, adjustmentDelta: 0, points: 0 };
+      current.basePoints += toNumber(detail.basePoints ?? detail.points);
+      current.adjustmentDelta += toNumber(detail.adjustmentDelta);
+      current.points += toNumber(detail.points);
+      pointsByPeriod.set(period, current);
     }
     for (const [period, periodPoints] of pointsByPeriod.entries()) {
       teamMemberPoints.push({
         period,
         representativeName: member.name,
-        points: periodPoints,
+        basePoints: periodPoints.basePoints,
+        adjustmentDelta: periodPoints.adjustmentDelta,
+        points: periodPoints.points,
       });
     }
 
@@ -333,6 +421,7 @@ function calculateTeamAveragePoints(params: {
   contest: RankingContest;
   contestCoverageRows: BigQueryCoverageRow[];
   complementsByTeamId: Map<string, RankingComplement[]>;
+  pointAdjustments: RankingPointAdjustmentLookup;
 }): number {
   if (params.members.length === 0) return 0;
 
@@ -340,10 +429,12 @@ function calculateTeamAveragePoints(params: {
     const memberCoverageRows = params.contestCoverageRows.filter((result) => belongsToParticipant(result, member));
     const complements = params.complementsByTeamId.get(normalizeTeamKey(member.teamId));
     const memberPoints = memberCoverageRows.reduce((memberSum, result) => {
-      const detail = calculateCoveragePoints({
+      const detail = calculateAdjustedCoveragePoints({
         result,
         contest: params.contest,
+        participant: member,
         rankingComplementsForTeam: complements,
+        pointAdjustments: params.pointAdjustments,
       });
       return memberSum + toNumber(detail.points);
     }, 0);
@@ -396,13 +487,7 @@ async function loadRankingContestData(params?: GetRankingContestDataParams): Pro
     maxCoveragePeriodMonth,
   }))));
 
-  const [participantsResult, coverageResultSettled] = await Promise.all([
-    getContestParticipants({ supabase, maxCoveragePeriodMonth }),
-    fetchCoverageRowsForPeriods(periods).then(
-      (coverageResult) => ({ ok: true as const, coverageResult }),
-      (error: unknown) => ({ ok: false as const, error }),
-    ),
-  ]);
+  const participantsResult = await getContestParticipants({ supabase, maxCoveragePeriodMonth });
   if (participantsResult.message) messages.push(participantsResult.message);
 
   if (participantsResult.participants.length === 0) {
@@ -422,6 +507,20 @@ async function loadRankingContestData(params?: GetRankingContestDataParams): Pro
     complementsByTeamId,
   });
 
+  const targetParticipantId = String(params?.participantId ?? "").trim();
+  const coverageFilters = targetParticipantId
+    ? buildCoverageRowFiltersForTarget({
+      targetParticipantId,
+      contests,
+      participants,
+      allowedGroupsByContest,
+    })
+    : undefined;
+  const coverageResultSettled = await fetchCoverageRowsForPeriods(periods, coverageFilters).then(
+    (coverageResult) => ({ ok: true as const, coverageResult }),
+    (error: unknown) => ({ ok: false as const, error }),
+  );
+
   let coverageRows: BigQueryCoverageRow[] = [];
   if (coverageResultSettled.ok) {
     coverageRows = coverageResultSettled.coverageResult.rows;
@@ -431,8 +530,14 @@ async function loadRankingContestData(params?: GetRankingContestDataParams): Pro
     messages.push(error instanceof Error ? error.message : "No se pudieron cargar resultados de BigQuery.");
   }
 
+  const pointAdjustmentsResult = await getActiveRankingPointAdjustmentsForPeriods({
+    supabase,
+    periodCodes: periods,
+  });
+  if (pointAdjustmentsResult.message) messages.push(pointAdjustmentsResult.message);
+  const pointAdjustments = pointAdjustmentsResult.adjustments;
+
   const rows: ContestRankingRow[] = [];
-  const targetParticipantId = String(params?.participantId ?? "").trim();
 
   for (const contest of contests) {
     const contestPeriods = new Set(buildCoveragePeriods({
@@ -442,14 +547,10 @@ async function loadRankingContestData(params?: GetRankingContestDataParams): Pro
     }));
 
     const contestCoverageRows = coverageRows.filter((row) => contestPeriods.has(String(row.periodo ?? "")));
-    const allowedGroups = allowedGroupsByContest.get(contest.id);
-    const contestParticipants = participants.filter((participant) => {
-      if (participant.scope !== contest.scope) return false;
-      if (contest.participationScope === "ranking_groups") {
-        if (!allowedGroups || allowedGroups.size === 0) return false;
-        return allowedGroups.has(normalizeGroupKey(participant.rankingGroup));
-      }
-      return true;
+    const contestParticipants = getContestParticipantsForContest({
+      participants,
+      contest,
+      allowedGroups: allowedGroupsByContest.get(contest.id),
     });
 
     const targetParticipants = targetParticipantId
@@ -480,11 +581,14 @@ async function loadRankingContestData(params?: GetRankingContestDataParams): Pro
             contest,
             contestCoverageRows,
             complementsByTeamId,
+            pointAdjustments,
           })
-          : participantCoverageRows.map((result) => calculateCoveragePoints({
+          : participantCoverageRows.map((result) => calculateAdjustedCoveragePoints({
             result,
             contest,
+            participant,
             rankingComplementsForTeam: complements,
+            pointAdjustments,
           }))
         : [];
       const totalPoints = includeDetails
@@ -495,12 +599,15 @@ async function loadRankingContestData(params?: GetRankingContestDataParams): Pro
             contest,
             contestCoverageRows,
             complementsByTeamId,
+            pointAdjustments,
           })
           : participantCoverageRows.reduce((sum, result) => {
-            const detail = calculateCoveragePoints({
+            const detail = calculateAdjustedCoveragePoints({
               result,
               contest,
+              participant,
               rankingComplementsForTeam: complements,
+              pointAdjustments,
             });
             return sum + toNumber(detail.points);
           }, 0);
@@ -537,14 +644,8 @@ async function loadRankingContestData(params?: GetRankingContestDataParams): Pro
   };
 }
 
-const getCachedRankingContestData = unstable_cache(
-  async (params?: GetRankingContestDataParams) => loadRankingContestData(params),
-  ["ranking-contest-data"],
-  { revalidate: 90, tags: ["ranking-contests"] },
-);
-
 export async function getRankingContestData(params?: GetRankingContestDataParams): Promise<RankingContestData> {
-  return getCachedRankingContestData({
+  return loadRankingContestData({
     contestId: params?.contestId ?? null,
     participantId: params?.participantId ?? null,
     maxCoveragePeriodMonth: params?.maxCoveragePeriodMonth ?? null,

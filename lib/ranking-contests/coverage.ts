@@ -13,6 +13,10 @@ const LVU_CONTEST_IDS = new Set([
   "efbaea8b-ef99-4994-9dce-9efb6b88f8f9",
 ]);
 
+export function isLvuRankingContestId(contestId: string): boolean {
+  return LVU_CONTEST_IDS.has(contestId);
+}
+
 function normalizeKey(value: unknown): string {
   return String(value ?? "").trim().toUpperCase();
 }
@@ -51,6 +55,10 @@ function toMonthDate(value: string): Date | null {
 
 function toPeriodCode(date: Date): string {
   return `${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function sqlStringLiteral(value: string): string {
+  return `'${String(value).replace(/'/g, "''")}'`;
 }
 
 export function buildCoveragePeriods(params: {
@@ -101,12 +109,13 @@ export function calculateCoveragePoints(params: {
     teamId,
     productName,
   });
-  const isLvuContest = LVU_CONTEST_IDS.has(params.contest.id);
+  const isLvuContest = isLvuRankingContestId(params.contest.id);
   const resolvedWeight = isLvuContest
     ? complement?.puntosRankingLvu ?? complement?.prodWeight ?? toNumber(params.result.prod_weight)
     : complement?.prodWeight ?? toNumber(params.result.prod_weight);
 
   if (isGuarantee(params.result.garantia)) {
+    const points = resolvedWeight * 100;
     return {
       period: String(params.result.periodo ?? "").trim(),
       teamId,
@@ -115,12 +124,15 @@ export function calculateCoveragePoints(params: {
       cappedCoverage: 1,
       weight: resolvedWeight,
       formula: "guarantee",
-      points: resolvedWeight * 100,
+      basePoints: points,
+      adjustmentDelta: 0,
+      points,
     };
   }
 
   if (isLvuContest) {
     const weight = resolvedWeight;
+    const points = cappedCoverage * weight * 100;
     return {
       period: String(params.result.periodo ?? "").trim(),
       teamId,
@@ -129,12 +141,15 @@ export function calculateCoveragePoints(params: {
       cappedCoverage,
       weight,
       formula: "lvu",
-      points: cappedCoverage * weight * 100,
+      basePoints: points,
+      adjustmentDelta: 0,
+      points,
       missingComplement: !complement,
     };
   }
 
   const weight = resolvedWeight;
+  const points = cappedCoverage * weight * 100;
   return {
     period: String(params.result.periodo ?? "").trim(),
     teamId,
@@ -143,11 +158,19 @@ export function calculateCoveragePoints(params: {
     cappedCoverage,
     weight,
     formula: "standard",
-    points: cappedCoverage * weight * 100,
+    basePoints: points,
+    adjustmentDelta: 0,
+    points,
   };
 }
 
-export async function fetchCoverageRowsForPeriods(periods: string[]): Promise<{ rows: BigQueryCoverageRow[]; message: string | null }> {
+export async function fetchCoverageRowsForPeriods(
+  periods: string[],
+  filters?: {
+    employeeNumbers?: Array<string | number | null | undefined>;
+    territories?: Array<string | null | undefined>;
+  },
+): Promise<{ rows: BigQueryCoverageRow[]; message: string | null }> {
   const uniquePeriods = Array.from(new Set(periods.filter((period) => /^\d{6}$/.test(period))));
   if (uniquePeriods.length === 0) return { rows: [], message: null };
   if (!isBigQueryConfigured()) return { rows: [], message: "BigQuery no esta configurado." };
@@ -156,7 +179,31 @@ export async function fetchCoverageRowsForPeriods(periods: string[]): Promise<{ 
   const datasetId = process.env.BQ_RESULTS_DATASET?.trim() || "incentivos";
   const tableId = process.env.BQ_RESULTS_TABLE?.trim() || "resultados_v2";
   const tableRef = `\`${projectId}.${datasetId}.${tableId}\``;
-  const periodList = uniquePeriods.map((period) => `'${period}'`).join(", ");
+  const periodList = uniquePeriods.map((period) => sqlStringLiteral(period)).join(", ");
+  const employeeList = Array.from(
+    new Set(
+      (filters?.employeeNumbers ?? [])
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean),
+    ),
+  );
+  const territoryList = Array.from(
+    new Set(
+      (filters?.territories ?? [])
+        .map((value) => normalizeKey(value))
+        .filter(Boolean),
+    ),
+  );
+  const filterClauses: string[] = [];
+  if (employeeList.length > 0) {
+    filterClauses.push(`CAST(empleado AS STRING) IN (${employeeList.map(sqlStringLiteral).join(", ")})`);
+  }
+  if (territoryList.length > 0) {
+    filterClauses.push(`UPPER(TRIM(CAST(representante AS STRING))) IN (${territoryList.map(sqlStringLiteral).join(", ")})`);
+  }
+  const participantFilterSql = filterClauses.length > 0
+    ? `AND (${filterClauses.join(" OR ")})`
+    : "";
 
   let rows: BigQueryCoverageRow[] = [];
   try {
@@ -165,6 +212,7 @@ export async function fetchCoverageRowsForPeriods(periods: string[]): Promise<{ 
         SELECT team_id, product_name, prod_weight, cobertura, garantia, nombre, empleado, representante, manager, periodo
         FROM ${tableRef}
         WHERE periodo IN (${periodList})
+          ${participantFilterSql}
       `,
     });
   } catch (error) {

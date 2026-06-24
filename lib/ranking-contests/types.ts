@@ -81,6 +81,10 @@ export type CoveragePointDetail = {
   cappedCoverage: number;
   weight: number;
   formula: "lvu" | "standard" | "guarantee" | "team_average";
+  basePoints?: number;
+  adjustmentDelta?: number;
+  adjustmentId?: string;
+  adjustmentReason?: string | null;
   points: number;
   missingComplement?: boolean;
   teamTotalPoints?: number;
@@ -88,6 +92,8 @@ export type CoveragePointDetail = {
   teamMemberPoints?: Array<{
     period: string;
     representativeName: string;
+    basePoints?: number;
+    adjustmentDelta?: number;
     points: number;
   }>;
   teamPeriodSummaries?: Array<{

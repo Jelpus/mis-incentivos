@@ -205,6 +205,7 @@ function getTitle(pathname: string) {
   if (pathname.startsWith("/admin/curvas-de-pago")) return "Curvas de pago";
   if (pathname.startsWith("/admin/incentive-rules")) return "Reglas de incentivos";
   if (pathname.startsWith("/admin/reglas-ranking")) return "Reglas de Ranking";
+  if (pathname.startsWith("/admin/ajustes-ranking")) return "Ajustes Ranking";
   if (pathname.startsWith("/admin/teams-admin")) return "Teams Admin";
   if (pathname.startsWith("/admin/data-sources")) return "Fuentes de datos";
   if (pathname.startsWith("/admin/source-ranking")) return "Data Source Ranking";
@@ -255,6 +256,7 @@ function getNavGroups(role: ProfileRole | null): NavGroup[] {
         items: [
           { href: "/admin/reglas-ranking", label: "Reglas de Ranking", icon: IconListCheck },
           { href: "/admin/source-ranking", label: "Data Source Ranking", icon: IconDatabase },
+          { href: "/admin/ajustes-ranking", label: "Ajustes Ranking", icon: IconSettings },
           { href: "/perfil/ranking", label: "Dashboard Ranking", icon: IconStar },
         ],
       },

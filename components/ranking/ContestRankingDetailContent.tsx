@@ -110,18 +110,24 @@ export function ContestRankingDetailContent({ row }: { row: ContestRankingRow })
                   <tr>
                     <th className="px-3 py-2">Periodo</th>
                     <th className="px-3 py-2">Representante</th>
+                    <th className="px-3 py-2 text-right">Base</th>
+                    <th className="px-3 py-2 text-right">Ajuste</th>
                     <th className="px-3 py-2 text-right">Puntos</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#edf2fb] bg-white">
                   {selectedTeamMemberPoints.length === 0 ? (
                     <tr>
-                      <td className="px-3 py-3 text-[#667085]" colSpan={3}>Sin integrantes con puntos para este periodo.</td>
+                      <td className="px-3 py-3 text-[#667085]" colSpan={5}>Sin integrantes con puntos para este periodo.</td>
                     </tr>
                   ) : selectedTeamMemberPoints.map((item, index) => (
                     <tr key={`${item.period}-${item.representativeName}-${index}`}>
                       <td className="px-3 py-2 text-[#334155]">{item.period}</td>
                       <td className="px-3 py-2 font-medium text-[#334155]">{item.representativeName}</td>
+                      <td className="px-3 py-2 text-right text-[#334155]">{formatNumber(item.basePoints ?? item.points)}</td>
+                      <td className={`px-3 py-2 text-right font-semibold ${(item.adjustmentDelta ?? 0) === 0 ? "text-[#667085]" : (item.adjustmentDelta ?? 0) > 0 ? "text-emerald-700" : "text-red-700"}`}>
+                        {formatNumber(item.adjustmentDelta ?? 0)}
+                      </td>
                       <td className="px-3 py-2 text-right font-semibold text-[#002b7f]">{formatNumber(item.points)}</td>
                     </tr>
                   ))}
@@ -141,6 +147,8 @@ export function ContestRankingDetailContent({ row }: { row: ContestRankingRow })
                       <th className="px-3 py-2">Formula</th>
                       <th className="px-3 py-2 text-right">Cobertura</th>
                       <th className="px-3 py-2 text-right">Peso</th>
+                      <th className="px-3 py-2 text-right">Base</th>
+                      <th className="px-3 py-2 text-right">Ajuste</th>
                       <th className="px-3 py-2 text-right">Puntos</th>
                     </tr>
                   </thead>
@@ -155,6 +163,10 @@ export function ContestRankingDetailContent({ row }: { row: ContestRankingRow })
                         <td className="px-3 py-2 font-semibold text-[#475467]">{detail.formula}</td>
                         <td className="px-3 py-2 text-right text-[#334155]">{formatPercent(detail.cappedCoverage)}</td>
                         <td className="px-3 py-2 text-right text-[#334155]">{formatPercent(detail.weight)}</td>
+                        <td className="px-3 py-2 text-right text-[#334155]">{formatNumber(detail.basePoints ?? detail.points)}</td>
+                        <td className={`px-3 py-2 text-right font-semibold ${(detail.adjustmentDelta ?? 0) === 0 ? "text-[#667085]" : (detail.adjustmentDelta ?? 0) > 0 ? "text-emerald-700" : "text-red-700"}`}>
+                          {formatNumber(detail.adjustmentDelta ?? 0)}
+                        </td>
                         <td className="px-3 py-2 text-right font-semibold text-[#002b7f]">{formatNumber(detail.points)}</td>
                       </tr>
                     ))}
