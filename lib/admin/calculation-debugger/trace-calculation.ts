@@ -364,12 +364,7 @@ function getRequiredHeaderGroupsForSourceFile(fileLogicKey: string): RequiredHea
     return [
       { label: "product_id/product/producto", candidates: ["product_id", "product", "producto"] },
       { label: "brick", candidates: ["brick"] },
-      { label: "month01", candidates: ["month01"] },
-      { label: "month02", candidates: ["month02"] },
-      { label: "month03", candidates: ["month03"] },
-      { label: "month04", candidates: ["month04"] },
-      { label: "month05", candidates: ["month05"] },
-      { label: "month06", candidates: ["month06"] },
+      { label: "ytd/YTD", candidates: ["ytd"] },
     ];
   }
 
@@ -386,12 +381,7 @@ function getRequiredHeaderGroupsForSourceFile(fileLogicKey: string): RequiredHea
       { label: "molecula_h", candidates: ["molecula_h"] },
       { label: "metric", candidates: ["metric"] },
       { label: "fuente_db", candidates: ["fuente_db"] },
-      { label: "month01", candidates: ["month01"] },
-      { label: "month02", candidates: ["month02"] },
-      { label: "month03", candidates: ["month03"] },
-      { label: "month04", candidates: ["month04"] },
-      { label: "month05", candidates: ["month05"] },
-      { label: "month06", candidates: ["month06"] },
+      { label: "ytd/YTD", candidates: ["ytd"] },
     ];
   }
 
