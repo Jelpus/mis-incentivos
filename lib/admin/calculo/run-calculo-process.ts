@@ -16,7 +16,7 @@ const ASIGNACION_UNIDADES_SCHEMA = [
   { name: "periodo", type: "STRING" as const },
   { name: "index", type: "INT64" as const },
   { name: "encontrar", type: "STRING" as const },
-  { name: "peso", type: "INT64" as const },
+  { name: "peso", type: "FLOAT64" as const },
   { name: "resultadomes", type: "INT64" as const },
   { name: "resultadosemestre", type: "INT64" as const },
   { name: "ruta", type: "STRING" as const },
@@ -126,7 +126,7 @@ type AssignmentRow = {
   resultado_total_plan: number;
   match_mode: "exact" | "fuzzy" | "none";
   none_reason: string | null;
-  objective_block: "private" | "drilldown_cuentas" | "drilldown_estados" | "otros";
+  objective_block: "private" | "drilldown_cuentas" | "drilldown_estados" | "drilldown_nacional" | "otros";
   matched_rows_count: number;
   valor_imss: number;
   valor_issste: number;
@@ -162,7 +162,7 @@ export type CalculoProcessRunResult = {
     cobertura: number;
     match_mode: "exact" | "fuzzy" | "none";
     none_reason: string | null;
-    objective_block: "private" | "drilldown_cuentas" | "drilldown_estados" | "otros";
+    objective_block: "private" | "drilldown_cuentas" | "drilldown_estados" | "drilldown_nacional" | "otros";
     matched_rows_count: number;
     valor_imss: number;
     valor_issste: number;
@@ -203,6 +203,20 @@ function normalizeCodeToken(value: unknown): string {
 
 function isLikelyEstadoCode(value: string): boolean {
   return /^\d{1,3}$/.test(value);
+}
+
+function normalizeObjectiveMetodo(value: unknown): "PRIVATE" | "CUENTAS" | "ESTADOS" | "NACIONAL" | "" {
+  const normalized = normalizeTextForCompare(value);
+  if (!normalized) return "";
+  if (normalized.includes("NACIONAL") || normalized.includes("GLOBAL")) return "NACIONAL";
+  if (normalized.includes("ESTADO")) return "ESTADOS";
+  if (normalized.includes("CUENTA")) return "CUENTAS";
+  if (normalized.includes("PRIVATE")) return "PRIVATE";
+  return "";
+}
+
+function isNationalObjectiveRow(row: Pick<ObjectiveTargetRow, "metodo" | "plan_type_name">): boolean {
+  return normalizeObjectiveMetodo(row.metodo || row.plan_type_name) === "NACIONAL";
 }
 
 function isFlexibleBrickMatch(expectedBrick: string, rowBrick: string): boolean {
@@ -445,7 +459,7 @@ function buildAsignacionBigQueryRow(row: AssignmentRow, index: number): Record<s
     periodo: row.periodo ?? null,
     index: index + 1,
     encontrar: row.encontrar ?? null,
-    peso: toIntOrNull(row.peso),
+    peso: toOptionalNumber(row.peso),
     resultadomes: toIntOrNull(row.resultado),
     resultadosemestre: toIntOrNull(row.resultado_total_plan),
     ruta: row.ruta ?? null,
@@ -679,6 +693,42 @@ export async function runCalculoProcess(
     targetsByRouteProduct.set(key, current);
   }
 
+  const teamIdByRoute = new Map<string, string>();
+  for (const row of statusRows) {
+    const route = toUpperTrim(row.territorio_individual);
+    const teamId = String(row.team_id ?? "").trim();
+    if (route && teamId) teamIdByRoute.set(route, teamId);
+  }
+
+  const nationalObjectiveGroups = new Map<
+    string,
+    { nationalTarget: number; totalWeight: number; rowsCount: number }
+  >();
+  const nationalObjectiveKey = (row: ObjectiveTargetRow): string | null => {
+    const route = toUpperTrim(row.territorio_individual);
+    const teamId = String(row.team_id ?? "").trim() || teamIdByRoute.get(route) || "";
+    const product = toUpperTrim(row.product_name);
+    if (!teamId || !product) return null;
+    return `${teamId}::${product}`;
+  };
+
+  for (const row of objectiveRowsData) {
+    if (!isNationalObjectiveRow(row)) continue;
+    const key = nationalObjectiveKey(row);
+    if (!key) continue;
+    const weightRaw = toOptionalNumber(row.sales_credity);
+    const weight = weightRaw === null ? 1 : Math.max(weightRaw, 0);
+    const current = nationalObjectiveGroups.get(key) ?? {
+      nationalTarget: 0,
+      totalWeight: 0,
+      rowsCount: 0,
+    };
+    current.nationalTarget = Math.max(current.nationalTarget, round6(toNumber(row.target)));
+    current.totalWeight = round6(current.totalWeight + weight);
+    current.rowsCount += 1;
+    nationalObjectiveGroups.set(key, current);
+  }
+
   const filesByCode = new Map<string, BigQueryFilesRow[]>();
   const filesByDisplay = new Map<string, BigQueryFilesRow[]>();
   for (const row of filesDataPeriodo) {
@@ -728,10 +778,14 @@ export async function runCalculoProcess(
 
       const planTypeName = String(item.plan_type_name ?? targetRows[0]?.plan_type_name ?? "").trim() || null;
 
-      const privateTargets = targetRows.filter((row) => toUpperTrim(row.brick) === "PRIVATE" || !String(row.brick ?? "").trim());
+      const privateTargets = targetRows.filter(
+        (row) =>
+          !isNationalObjectiveRow(row) &&
+          (toUpperTrim(row.brick) === "PRIVATE" || !String(row.brick ?? "").trim()),
+      );
       const nonPrivateTargets = targetRows.filter((row) => !privateTargets.includes(row));
       const evaluatedTargets = nonPrivateTargets.length > 0 ? nonPrivateTargets : privateTargets;
-      const objetivoTotalPlan = round6(targetRows.reduce((sum, row) => sum + toNumber(row.target), 0));
+      let objetivoTotalPlan = round6(targetRows.reduce((sum, row) => sum + toNumber(row.target), 0));
       const groupedTargets = new Map<
         string,
         {
@@ -751,18 +805,14 @@ export async function runCalculoProcess(
         const brickValue = toUpperTrim(targetRow.brick);
         const estadoValue = toUpperTrim(targetRow.cuenta);
         const estadoCodeValue = normalizeCodeToken(targetRow.brick);
-        const metodoRaw = toUpperTrim(targetRow.metodo);
-        const normalizedMetodo =
-          metodoRaw.includes("ESTADO")
-            ? "ESTADOS"
-            : metodoRaw.includes("CUENTA")
-              ? "CUENTAS"
-              : metodoRaw.includes("PRIVATE")
-                ? "PRIVATE"
-                : "";
+        const normalizedMetodo = normalizeObjectiveMetodo(targetRow.metodo);
         const targetPlanType = toUpperTrim(
           normalizedMetodo || targetRow.plan_type_name || planTypeName,
         );
+        const targetIsNational =
+          normalizedMetodo === "NACIONAL" ||
+          targetPlanType.includes("NACIONAL") ||
+          targetPlanType.includes("GLOBAL");
         const targetIsCuentas = targetPlanType.includes("CUENTA");
         const targetIsEstado = targetPlanType.includes("ESTADO");
         const inferredIsEstado =
@@ -770,23 +820,40 @@ export async function runCalculoProcess(
         const isPrivateTarget =
           (toUpperTrim(targetRow.brick) === "PRIVATE" || !String(targetRow.brick ?? "").trim()) &&
           (toUpperTrim(targetRow.cuenta) === "PRIVATE" || !String(targetRow.cuenta ?? "").trim());
-        const objectiveBlock: AssignmentRow["objective_block"] = isPrivateTarget
-          ? "private"
-          : inferredIsEstado
+        const objectiveBlock: AssignmentRow["objective_block"] = targetIsNational
+          ? "drilldown_nacional"
+          : isPrivateTarget
+            ? "private"
+            : inferredIsEstado
               ? "drilldown_estados"
               : targetIsCuentas
                 ? "drilldown_cuentas"
                 : "otros";
-        const findingMode: "brick" | "estado" | "global" = inferredIsEstado
-          ? "estado"
-          : targetIsCuentas
-            ? "brick"
-            : nonPrivateTargets.length > 0
+        const findingMode: "brick" | "estado" | "global" = targetIsNational
+          ? "global"
+          : inferredIsEstado
+            ? "estado"
+            : targetIsCuentas
               ? "brick"
-              : "global";
-        const objetivo = round6(toNumber(targetRow.target));
+              : nonPrivateTargets.length > 0
+                ? "brick"
+                : "global";
+        let objetivo = round6(toNumber(targetRow.target));
         const pesoRaw = toOptionalNumber((targetRow as { sales_credity?: number | string | null }).sales_credity);
-        const peso = pesoRaw === null ? 1 : pesoRaw;
+        let peso = pesoRaw === null ? 1 : pesoRaw;
+        if (targetIsNational) {
+          const key = nationalObjectiveKey(targetRow);
+          const nationalGroup = key ? nationalObjectiveGroups.get(key) : null;
+          const nationalWeight = Math.max(peso, 0);
+          if (nationalGroup) {
+            const denominator =
+              nationalGroup.totalWeight > 0 ? nationalGroup.totalWeight : nationalGroup.rowsCount;
+            const numerator = nationalGroup.totalWeight > 0 ? nationalWeight : 1;
+            const share = denominator > 0 ? numerator / denominator : 1;
+            objetivo = round6(nationalGroup.nationalTarget * share);
+            peso = round6(share);
+          }
+        }
 
         const groupKey =
           findingMode === "estado"
@@ -821,6 +888,12 @@ export async function runCalculoProcess(
         existing.objetivo = objetivoNuevo;
       }
 
+      if (Array.from(groupedTargets.values()).some((target) => target.objectiveBlock === "drilldown_nacional")) {
+        objetivoTotalPlan = round6(
+          Array.from(groupedTargets.values()).reduce((sum, target) => sum + target.objetivo, 0),
+        );
+      }
+
       let valorTotalPlan = 0;
       let resultadoTotalPlan = 0;
       const perProductAssignments: AssignmentRow[] = [];
@@ -853,6 +926,7 @@ export async function runCalculoProcess(
           const findingMode = groupedTarget.findingMode;
           const preferRouteInGlobal =
             findingMode === "global" &&
+            objectiveBlock !== "drilldown_nacional" &&
             dedupedSourceRows.some((row) => toUpperTrim(row.brick) === route);
 
           const afterFuenteRows: BigQueryFilesRow[] = [];

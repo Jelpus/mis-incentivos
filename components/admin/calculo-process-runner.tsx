@@ -101,8 +101,9 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
     const block1 = orderedPreviewRows.filter((row) => row.objective_block === "private");
     const block2 = orderedPreviewRows.filter((row) => row.objective_block === "drilldown_cuentas");
     const block3 = orderedPreviewRows.filter((row) => row.objective_block === "drilldown_estados");
+    const block4 = orderedPreviewRows.filter((row) => row.objective_block === "drilldown_nacional");
     const others = orderedPreviewRows.filter((row) => row.objective_block === "otros");
-    return { block1, block2, block3, others };
+    return { block1, block2, block3, block4, others };
   }, [orderedPreviewRows]);
   type ResultadosV2Rows = Extract<ResultadosV2PreviewActionResult, { ok: true }>["rows"];
   const resultadosByRoute = useMemo(() => {
@@ -390,10 +391,12 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
       const block1Sheet = XLSX.utils.json_to_sheet(buildSheetRows(groupedRows.block1));
       const block2Sheet = XLSX.utils.json_to_sheet(buildSheetRows(groupedRows.block2));
       const block3Sheet = XLSX.utils.json_to_sheet(buildSheetRows(groupedRows.block3));
+      const block4Sheet = XLSX.utils.json_to_sheet(buildSheetRows(groupedRows.block4));
       XLSX.utils.book_append_sheet(workbook, summarySheet, "Resumen Producto");
       XLSX.utils.book_append_sheet(workbook, block1Sheet, "Bloque 1 Privados");
       XLSX.utils.book_append_sheet(workbook, block2Sheet, "Bloque 2 Cuentas");
       XLSX.utils.book_append_sheet(workbook, block3Sheet, "Bloque 3 Estados");
+      XLSX.utils.book_append_sheet(workbook, block4Sheet, "Bloque 4 Nacional");
 
       const safePeriod = periodLabel.replace(/[^0-9A-Za-z_-]/g, "-");
       const fileName = `Asignacion y Cuotas_${safePeriod}.xlsx`;
@@ -838,6 +841,11 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
                 "Bloque 3: Drill Down Cuotas (plan_type_name = Estado/Estados)",
                 groupedRows.block3,
                 "Sin filas de Drill Down tipo Estado/Estados.",
+              )}
+              {renderPreviewTable(
+                "Bloque 4: Drill Down Nacional",
+                groupedRows.block4,
+                "Sin filas de Drill Down Nacional.",
               )}
               {groupedRows.others.length > 0
                 ? renderPreviewTable(

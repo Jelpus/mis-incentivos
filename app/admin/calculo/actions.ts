@@ -101,7 +101,7 @@ export type CalculoPreviewResult =
       cobertura: number;
       match_mode: "exact" | "fuzzy" | "none";
       none_reason: string | null;
-      objective_block: "private" | "drilldown_cuentas" | "drilldown_estados" | "otros";
+      objective_block: "private" | "drilldown_cuentas" | "drilldown_estados" | "drilldown_nacional" | "otros";
       matched_rows_count: number;
       valor_imss: number;
       valor_issste: number;

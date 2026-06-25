@@ -57,8 +57,8 @@ export type ParsedObjectivesInput = {
   columnMappingRequest?: {
     sourceType: "drilldown";
     headers: string[];
-    requiredFields: Array<"ruta" | "productName" | "cuota" | "mes">;
-    missingFields: Array<"ruta" | "productName" | "cuota" | "mes">;
+    requiredFields: Array<"ruta" | "productName" | "cuota">;
+    missingFields: Array<"ruta" | "productName" | "cuota">;
   };
 };
 
@@ -180,7 +180,7 @@ function resolveColumn(headerKey: string): keyof ParsedInputRow | null {
   if (headerKey === "PRODUCT_NAME" || headerKey === "PRODUCTO_NOMBRE") return "productName";
   if (headerKey === "TARGET" || headerKey === "OBJETIVO") return "target";
   if (headerKey === "BRICK" || headerKey === "CLUE_BRICK" || headerKey === "CLUE__BRICK") return "brick";
-  if (headerKey === "CUENTA" || headerKey === "ACCOUNT") return "cuenta";
+  if (headerKey === "CUENTA" || headerKey === "ACCOUNT" || headerKey === "STATE" || headerKey === "ESTADO") return "cuenta";
   if (headerKey === "CANAL") return "canal";
   if (headerKey === "PLAN_TYPE_NAME" || headerKey === "PLAN_TYPE" || headerKey === "TIPO_PLAN") return "planTypeName";
   if (headerKey === "PRODUCTO") return "producto";
@@ -189,8 +189,9 @@ function resolveColumn(headerKey: string): keyof ParsedInputRow | null {
   return null;
 }
 
-function normalizeMetodoValue(value: string | null | undefined): "PRIVATE" | "CUENTAS" | "ESTADOS" {
+function normalizeMetodoValue(value: string | null | undefined): "PRIVATE" | "CUENTAS" | "ESTADOS" | "NACIONAL" {
   const normalized = normalizeKey(value);
+  if (normalized.includes("NACIONAL") || normalized.includes("GLOBAL")) return "NACIONAL";
   if (normalized.includes("ESTADO")) return "ESTADOS";
   if (normalized.includes("CUENTA")) return "CUENTAS";
   return "CUENTAS";
@@ -464,7 +465,7 @@ function resolveDrillDownColumn(headerKey: string): "ruta" | "productName" | "cu
   if (headerKey === "PRODUCT" || headerKey === "PRODUCTO") return "producto";
   if (headerKey === "METODO" || headerKey === "METODOLOGIA" || headerKey === "METHOD" || headerKey === "METODO_") return "metodo";
   if (headerKey === "BRICK" || headerKey === "CLUE_BRICK" || headerKey === "CLUE__BRICK") return "brick";
-  if (headerKey === "CUENTA" || headerKey === "ACCOUNT") return "cuenta";
+  if (headerKey === "CUENTA" || headerKey === "ACCOUNT" || headerKey === "STATE" || headerKey === "ESTADO") return "cuenta";
   if (headerKey === "SALES_CRED" || headerKey === "SALES_CREDIT" || headerKey === "SALES_CREDITY") return "salesCredity";
   return null;
 }
@@ -553,7 +554,7 @@ export function parseDrillDownObjectivesFile(params: {
     columnMap.set(columnIndex, field);
   }
 
-  const mandatoryColumns: Array<"ruta" | "productName" | "cuota" | "mes"> = ["ruta", "productName", "cuota", "mes"];
+  const mandatoryColumns: Array<"ruta" | "productName" | "cuota"> = ["ruta", "productName", "cuota"];
   const mappedFields = Array.from(columnMap.values());
   const missingFields = mandatoryColumns.filter((column) => !mappedFields.includes(column));
   if (missingFields.length > 0) {
@@ -572,9 +573,9 @@ export function parseDrillDownObjectivesFile(params: {
           route: null,
           productName: null,
           teamId: null,
-          actionSuggestion: "Incluye columnas: RUTA, PRODUCT_NAME, CUOTA y MES.",
+          actionSuggestion: "Incluye columnas: RUTA, PRODUCT_NAME y CUOTA.",
           reason:
-            "Faltan columnas requeridas. Minimo: RUTA, PRODUCT_NAME, CUOTA y MES.",
+            "Faltan columnas requeridas. Minimo: RUTA, PRODUCT_NAME y CUOTA.",
         },
       ],
       sourceBreakdown: [],

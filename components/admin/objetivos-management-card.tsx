@@ -42,12 +42,12 @@ type Props = {
 };
 
 const MAX_COMBINED_FILES_SIZE_BYTES = 75 * 1024 * 1024;
-type DrillDownRequiredField = "ruta" | "productName" | "cuota" | "mes";
-type DrillDownOptionalField = "canal" | "producto" | "metodo" | "brick" | "cuenta" | "salesCredity";
+type DrillDownRequiredField = "ruta" | "productName" | "cuota";
+type DrillDownOptionalField = "mes" | "canal" | "producto" | "metodo" | "brick" | "cuenta" | "salesCredity";
 type DrillDownMappingField = DrillDownRequiredField | DrillDownOptionalField;
 
-const DRILLDOWN_REQUIRED_FIELDS: DrillDownRequiredField[] = ["ruta", "productName", "cuota", "mes"];
-const DRILLDOWN_OPTIONAL_FIELDS: DrillDownOptionalField[] = ["canal", "producto", "metodo", "brick", "cuenta", "salesCredity"];
+const DRILLDOWN_REQUIRED_FIELDS: DrillDownRequiredField[] = ["ruta", "productName", "cuota"];
+const DRILLDOWN_OPTIONAL_FIELDS: DrillDownOptionalField[] = ["mes", "canal", "producto", "metodo", "brick", "cuenta", "salesCredity"];
 
 function formatDateTime(value: string | null) {
   return formatDateTimeNoTimezoneShift(value, "es-MX", "-");

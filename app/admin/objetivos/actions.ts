@@ -101,8 +101,8 @@ export type PreviewObjetivosResult =
     mappingRequired?: {
       sourceType: "drilldown";
       headers: string[];
-      requiredFields: Array<"ruta" | "productName" | "cuota" | "mes">;
-      missingFields: Array<"ruta" | "productName" | "cuota" | "mes">;
+      requiredFields: Array<"ruta" | "productName" | "cuota">;
+      missingFields: Array<"ruta" | "productName" | "cuota">;
     };
   };
 

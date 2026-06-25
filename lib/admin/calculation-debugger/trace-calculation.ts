@@ -288,6 +288,7 @@ function explainClosestValue(params: {
 function describeObjectiveBlock(value: unknown): string {
   const normalized = normalizeKey(value);
   if (normalized === "PRIVATE") return "cuotas privadas";
+  if (normalized.includes("NACIONAL") || normalized.includes("GLOBAL")) return "drill down nacional";
   if (normalized.includes("CUENTA")) return "drill down cuentas";
   if (normalized.includes("ESTADO")) return "drill down estados";
   return normalized ? normalized.toLowerCase() : "sin clasificar";
@@ -298,6 +299,7 @@ function hasCuentaEstadoConflict(objectives: ObjectiveRow[]): boolean {
     const metodo = normalizeKey(objective.metodo || objective.plan_type_name);
     const brick = String(objective.brick ?? "").trim();
     const cuenta = normalizeKey(objective.cuenta);
+    if (metodo.includes("NACIONAL") || metodo.includes("GLOBAL")) return false;
     return metodo.includes("CUENTA") && /^\d{1,3}$/.test(brick) && cuenta.length > 0;
   });
 }
