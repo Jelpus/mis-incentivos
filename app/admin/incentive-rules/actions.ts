@@ -242,6 +242,35 @@ type NormalizedSourceRow = {
   meses: Record<string, number>;
 };
 
+type MonthColumnName =
+  | "month01"
+  | "month02"
+  | "month03"
+  | "month04"
+  | "month05"
+  | "month06"
+  | "month07"
+  | "month08"
+  | "month09"
+  | "month10"
+  | "month11"
+  | "month12";
+
+const MONTH_COLUMN_NAMES: MonthColumnName[] = [
+  "month01",
+  "month02",
+  "month03",
+  "month04",
+  "month05",
+  "month06",
+  "month07",
+  "month08",
+  "month09",
+  "month10",
+  "month11",
+  "month12",
+];
+
 type BigQuerySourceRow = {
   archivo: string | null;
   institucion: string | null;
@@ -260,7 +289,8 @@ type BigQuerySourceRow = {
   metric: string | null;
   fuente: string | null;
   periodo: string | null;
-};
+  meses: string | null;
+} & Partial<Record<MonthColumnName, number | null>>;
 
 const MONTH_BY_TOKEN: Record<string, number> = {
   ene: 1,
@@ -346,6 +376,15 @@ function detectHeaderMonthKey(header: string): string | null {
   }
 
   return null;
+}
+
+function detectCalendarMonthIndex(header: string): number | null {
+  const normalized = normalizeHeader(header);
+  const match = normalized.match(/^(?:month|mes)(\d{1,2})$/);
+  if (!match) return null;
+  const index = Number(match[1]);
+  if (!Number.isInteger(index) || index < 1 || index > 12) return null;
+  return index;
 }
 
 function readStringFromRow(
@@ -473,10 +512,16 @@ function sumMonths(months: Record<string, number>, periodMonthInput: string, sta
   return found ? Number(sum.toFixed(6)) : null;
 }
 
-function extractMonthValues(row: Record<string, unknown>): Record<string, number> {
+function extractMonthValues(row: Record<string, unknown>, periodMonthInput: string): Record<string, number> {
   const monthValues: Record<string, number> = {};
+  const periodYear = Number(periodMonthInput.slice(0, 4));
   for (const header of Object.keys(row)) {
-    const monthKey = detectHeaderMonthKey(header);
+    const calendarMonthIndex = detectCalendarMonthIndex(header);
+    const monthKey =
+      detectHeaderMonthKey(header) ??
+      (calendarMonthIndex && Number.isInteger(periodYear)
+        ? toMonthKey(periodYear, calendarMonthIndex)
+        : null);
     if (!monthKey) continue;
     const value = parseOptionalNumber(row[header]);
     if (value === null) continue;
@@ -589,7 +634,7 @@ function normalizeRowsForBigQuery(params: {
     const row = rawRow ?? {};
     const headers = Object.keys(row);
     const normalizedHeaderMap = buildNormalizedHeaderMap(headers);
-    const monthValues = extractMonthValues(row);
+    const monthValues = extractMonthValues(row, periodMonthInput);
     const ytdValue = readNumberFromRow(row, normalizedHeaderMap, ["ytd"]);
     const codigoEstado = normalizeCodigoEstado(
       readStringFromRow(row, normalizedHeaderMap, [
@@ -673,12 +718,10 @@ function normalizeRowsForBigQuery(params: {
     }
 
     if (fileLogicKey.includes("ddd")) {
-      const month01 = readNumberFromRow(row, normalizedHeaderMap, ["month01"]) ?? 0;
-      const month02 = readNumberFromRow(row, normalizedHeaderMap, ["month02"]) ?? 0;
-      const month03 = readNumberFromRow(row, normalizedHeaderMap, ["month03"]) ?? 0;
-      const month04 = readNumberFromRow(row, normalizedHeaderMap, ["month04"]) ?? 0;
-      const month05 = readNumberFromRow(row, normalizedHeaderMap, ["month05"]) ?? 0;
-      const month06 = readNumberFromRow(row, normalizedHeaderMap, ["month06"]) ?? 0;
+      const valorPeriodo = monthValues[periodMonthInput] ?? 0;
+      const trimestre = sumMonths(monthValues, periodMonthInput, 0, 3) ?? 0;
+      const trimestreAnterior = sumMonths(monthValues, periodMonthInput, -3, 3) ?? 0;
+      const semestre = sumMonths(monthValues, periodMonthInput, 0, 6) ?? 0;
       const productRaw = readStringFromRow(row, normalizedHeaderMap, [
         "product_id",
         "product",
@@ -695,10 +738,10 @@ function normalizeRowsForBigQuery(params: {
         codigo_estado: codigoEstado,
         brick: sanitizeBrick(readStringFromRow(row, normalizedHeaderMap, ["brick"])),
         molecula_producto: normalizeUpperText(cleanedProduct),
-        valor: month01,
-        trimestre: month01 + month02 + month03,
-        trimestre_anterior: month04 + month05 + month06,
-        semestre: month01 + month02 + month03 + month04 + month05 + month06,
+        valor: valorPeriodo,
+        trimestre,
+        trimestre_anterior: trimestreAnterior,
+        semestre,
         ytd: ytdValue,
         metric:
           readStringFromRow(row, normalizedHeaderMap, ["metrics", "metric"]) ?? "UNIDADES",
@@ -759,12 +802,10 @@ function normalizeRowsForBigQuery(params: {
       const fuente = readStringFromRow(row, normalizedHeaderMap, ["fuente_db"]);
       if (!clueId || !molecula || !metric || !fuente) continue;
 
-      const month01 = readNumberFromRow(row, normalizedHeaderMap, ["month01"]) ?? 0;
-      const month02 = readNumberFromRow(row, normalizedHeaderMap, ["month02"]) ?? 0;
-      const month03 = readNumberFromRow(row, normalizedHeaderMap, ["month03"]) ?? 0;
-      const month04 = readNumberFromRow(row, normalizedHeaderMap, ["month04"]) ?? 0;
-      const month05 = readNumberFromRow(row, normalizedHeaderMap, ["month05"]) ?? 0;
-      const month06 = readNumberFromRow(row, normalizedHeaderMap, ["month06"]) ?? 0;
+      const valorPeriodo = monthValues[periodMonthInput] ?? 0;
+      const trimestre = sumMonths(monthValues, periodMonthInput, 0, 3) ?? 0;
+      const trimestreAnterior = sumMonths(monthValues, periodMonthInput, -3, 3) ?? 0;
+      const semestre = sumMonths(monthValues, periodMonthInput, 0, 6) ?? 0;
 
       pushIfValid({
         archivo: params.displayName || params.fileCode,
@@ -776,10 +817,10 @@ function normalizeRowsForBigQuery(params: {
         codigo_estado: codigoEstado,
         brick: normalizeUpperText(clueId),
         molecula_producto: normalizeUpperText(molecula),
-        valor: month01,
-        trimestre: month01 + month02 + month03,
-        trimestre_anterior: month04 + month05 + month06,
-        semestre: month01 + month02 + month03 + month04 + month05 + month06,
+        valor: valorPeriodo,
+        trimestre,
+        trimestre_anterior: trimestreAnterior,
+        semestre,
         ytd: ytdValue,
         metric,
         fuente,
@@ -841,15 +882,8 @@ function normalizeRowsForBigQuery(params: {
       "fuente_d",
       "fuente_db",
     ]);
-    const month01Value = readNumberFromRow(row, normalizedHeaderMap, [
-      "month01",
-      "month1",
-      "mes01",
-      "mes1",
-    ]);
     const valor =
       monthValues[periodMonthInput] ??
-      month01Value ??
       readNumberFromRow(row, normalizedHeaderMap, ["valor", "value"]);
 
     const hasContent =
@@ -908,6 +942,35 @@ function sanitizeNumberOrNull(value: unknown): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+function sanitizeMonthsOrNull(value: Record<string, number>): string | null {
+  const output: Record<string, number> = {};
+  for (const [monthKey, monthValue] of Object.entries(value)) {
+    if (!/^\d{4}-\d{2}$/.test(monthKey)) continue;
+    if (!Number.isFinite(monthValue)) continue;
+    output[monthKey] = Number(monthValue.toFixed(6));
+  }
+  return Object.keys(output).length > 0 ? JSON.stringify(output) : null;
+}
+
+function mapCalendarMonthColumns(
+  months: Record<string, number>,
+  periodMonth: string,
+): Partial<Record<MonthColumnName, number | null>> {
+  const output: Partial<Record<MonthColumnName, number | null>> = {};
+  const periodYear = Number(periodMonth.slice(0, 4));
+  if (!Number.isInteger(periodYear)) return output;
+
+  MONTH_COLUMN_NAMES.forEach((columnName, index) => {
+    const monthKey = toMonthKey(periodYear, index + 1);
+    const value = months[monthKey];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      output[columnName] = Number(value.toFixed(6));
+    }
+  });
+
+  return output;
+}
+
 function isBigQueryStreamingBufferMutationError(error: unknown): boolean {
   const message =
     error instanceof Error ? error.message : String(error ?? "");
@@ -954,6 +1017,8 @@ function mapNormalizedRowsToBigQuerySchema(
       metric: sanitizeStringOrNull(row.metric),
       fuente: sanitizeStringOrNull(row.fuente),
       periodo: sanitizeStringOrNull(row.periodo),
+      meses: sanitizeMonthsOrNull(row.meses),
+      ...mapCalendarMonthColumns(row.meses, row.periodo),
     };
 
     // Aunque la tabla los permite null, sin archivo/periodo la fila no es util para trazabilidad.

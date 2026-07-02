@@ -36,14 +36,53 @@ Campos legacy:
 - `periodo` (`YYYY-MM`)
 
 Nuevo para historial mensual:
-- `meses` (objeto `{ "YYYY-MM": number }`)
+- `meses` (JSON `{ "YYYY-MM": number }`, recomendado)
+- `month01` ... `month12` (`FLOAT64`, opcional)
+
+Nota de carga: la app envia `meses` serializado como string JSON en `insertAll`; BigQuery lo parsea al campo `JSON`.
+
+Convencion de columnas calendario:
+- `month01` = enero del anio del periodo de carga.
+- `month02` = febrero del anio del periodo de carga.
+- `month03` = marzo del anio del periodo de carga.
+- Asi sucesivamente hasta `month12` = diciembre del anio del periodo de carga.
+
+Si el archivo trae headers absolutos (`2026-04`, `abr-2026`, etc.), tambien se guardan en `meses`. Si trae `month01`, `month02`, etc., se interpretan usando el anio del `periodo` cargado.
 
 ## Recomendacion de schema en BigQuery
 
-Agregar la columna `meses` para no perder los meses extra:
+Agregar `meses` para no perder los meses extra:
 
 ```sql
 ALTER TABLE `TU_PROYECTO.incentivos.filesNormalizados`
 ADD COLUMN IF NOT EXISTS meses JSON;
 ```
 
+Opcionalmente, si tambien quieres consultar meses como columnas planas:
+
+```sql
+ALTER TABLE `TU_PROYECTO.incentivos.filesNormalizados`
+ADD COLUMN IF NOT EXISTS month01 FLOAT64;
+ALTER TABLE `TU_PROYECTO.incentivos.filesNormalizados`
+ADD COLUMN IF NOT EXISTS month02 FLOAT64;
+ALTER TABLE `TU_PROYECTO.incentivos.filesNormalizados`
+ADD COLUMN IF NOT EXISTS month03 FLOAT64;
+ALTER TABLE `TU_PROYECTO.incentivos.filesNormalizados`
+ADD COLUMN IF NOT EXISTS month04 FLOAT64;
+ALTER TABLE `TU_PROYECTO.incentivos.filesNormalizados`
+ADD COLUMN IF NOT EXISTS month05 FLOAT64;
+ALTER TABLE `TU_PROYECTO.incentivos.filesNormalizados`
+ADD COLUMN IF NOT EXISTS month06 FLOAT64;
+ALTER TABLE `TU_PROYECTO.incentivos.filesNormalizados`
+ADD COLUMN IF NOT EXISTS month07 FLOAT64;
+ALTER TABLE `TU_PROYECTO.incentivos.filesNormalizados`
+ADD COLUMN IF NOT EXISTS month08 FLOAT64;
+ALTER TABLE `TU_PROYECTO.incentivos.filesNormalizados`
+ADD COLUMN IF NOT EXISTS month09 FLOAT64;
+ALTER TABLE `TU_PROYECTO.incentivos.filesNormalizados`
+ADD COLUMN IF NOT EXISTS month10 FLOAT64;
+ALTER TABLE `TU_PROYECTO.incentivos.filesNormalizados`
+ADD COLUMN IF NOT EXISTS month11 FLOAT64;
+ALTER TABLE `TU_PROYECTO.incentivos.filesNormalizados`
+ADD COLUMN IF NOT EXISTS month12 FLOAT64;
+```

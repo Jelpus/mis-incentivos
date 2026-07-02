@@ -203,6 +203,7 @@ function getTitle(pathname: string) {
   if (pathname.startsWith("/admin/calculation-debugger")) return "Calculation Debugger";
   if (pathname.startsWith("/admin/control-acceso")) return "Control de acceso";
   if (pathname.startsWith("/admin/curvas-de-pago")) return "Curvas de pago";
+  if (pathname.startsWith("/admin/period-settings")) return "Period Settings";
   if (pathname.startsWith("/admin/incentive-rules")) return "Reglas de incentivos";
   if (pathname.startsWith("/admin/reglas-ranking")) return "Reglas de Ranking";
   if (pathname.startsWith("/admin/ajustes-ranking")) return "Ajustes Ranking";
@@ -238,6 +239,7 @@ function getNavGroups(role: ProfileRole | null): NavGroup[] {
             title: "Configuraciones",
             items: [
               { href: "/admin/objetivos", label: "Gestión Objetivos", icon: IconTarget },
+              { href: "/admin/period-settings", label: "Period Settings", icon: IconSettings },
               { href: "/admin/curvas-de-pago", label: "Curvas de Pago", icon: IconCurve },
               { href: "/admin/garantias", label: "Gestión Garantias", icon: IconShield },
             ],

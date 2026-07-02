@@ -463,7 +463,15 @@ function resolveDrillDownColumn(headerKey: string): "ruta" | "productName" | "cu
   if (headerKey === "MES" || headerKey === "MONTH" || headerKey === "PERIODO") return "mes";
   if (headerKey === "CHANNEL" || headerKey === "CANAL") return "canal";
   if (headerKey === "PRODUCT" || headerKey === "PRODUCTO") return "producto";
-  if (headerKey === "METODO" || headerKey === "METODOLOGIA" || headerKey === "METHOD" || headerKey === "METODO_") return "metodo";
+  if (
+    headerKey === "METODO" ||
+    headerKey === "METODOLOGIA" ||
+    headerKey === "METHOD" ||
+    headerKey === "METODO_" ||
+    headerKey === "TIPO" ||
+    headerKey === "TYPE" ||
+    headerKey === "TYPO"
+  ) return "metodo";
   if (headerKey === "BRICK" || headerKey === "CLUE_BRICK" || headerKey === "CLUE__BRICK") return "brick";
   if (headerKey === "CUENTA" || headerKey === "ACCOUNT" || headerKey === "STATE" || headerKey === "ESTADO") return "cuenta";
   if (headerKey === "SALES_CRED" || headerKey === "SALES_CREDIT" || headerKey === "SALES_CREDITY") return "salesCredity";

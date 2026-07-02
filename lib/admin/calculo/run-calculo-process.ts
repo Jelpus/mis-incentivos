@@ -1,6 +1,8 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { copyBigQueryTable, fetchBigQueryRows, isBigQueryConfigured, loadBigQueryJsonRows, runBigQueryQuery } from "@/lib/integrations/bigquery";
 import { getMissingRelationName, isMissingRelationError } from "@/lib/admin/incentive-rules/shared";
+import { computeEffectivePeriodCut, isBeforeEffectivePeriodCut, normalizeProductNameKey } from "@/lib/admin/period-settings/effective-period";
+import { loadPeriodSettingsForCalculation } from "@/lib/admin/period-settings/load-period-settings";
 
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 220;
@@ -17,8 +19,8 @@ const ASIGNACION_UNIDADES_SCHEMA = [
   { name: "index", type: "INT64" as const },
   { name: "encontrar", type: "STRING" as const },
   { name: "peso", type: "FLOAT64" as const },
-  { name: "resultadomes", type: "INT64" as const },
-  { name: "resultadosemestre", type: "INT64" as const },
+  { name: "resultadomes", type: "FLOAT64" as const },
+  { name: "resultadosemestre", type: "FLOAT64" as const },
   { name: "ruta", type: "STRING" as const },
   { name: "plan", type: "STRING" as const },
   { name: "teamid", type: "STRING" as const },
@@ -27,7 +29,7 @@ const ASIGNACION_UNIDADES_SCHEMA = [
   { name: "medico", type: "STRING" as const },
   { name: "cedula", type: "STRING" as const },
   { name: "cp", type: "STRING" as const },
-  { name: "objetivo", type: "INT64" as const },
+  { name: "objetivo", type: "FLOAT64" as const },
 ];
 
 function castAsignacionColumnExpression(field: (typeof ASIGNACION_UNIDADES_SCHEMA)[number]): string {
@@ -38,9 +40,39 @@ function castAsignacionColumnExpression(field: (typeof ASIGNACION_UNIDADES_SCHEM
 
 const ASIGNACION_UNIDADES_SELECT_EXPRESSIONS = ASIGNACION_UNIDADES_SCHEMA.map(castAsignacionColumnExpression).join(", ");
 
+type MonthColumnName =
+  | "month01"
+  | "month02"
+  | "month03"
+  | "month04"
+  | "month05"
+  | "month06"
+  | "month07"
+  | "month08"
+  | "month09"
+  | "month10"
+  | "month11"
+  | "month12";
+
+const MONTH_COLUMN_NAMES: MonthColumnName[] = [
+  "month01",
+  "month02",
+  "month03",
+  "month04",
+  "month05",
+  "month06",
+  "month07",
+  "month08",
+  "month09",
+  "month10",
+  "month11",
+  "month12",
+];
+
 type StatusRow = {
   territorio_individual: string | null;
   team_id: string | null;
+  fecha_ingreso: string | null;
   is_active: boolean | null;
   is_vacant: boolean | null;
 };
@@ -99,6 +131,12 @@ type BigQueryFilesRow = {
   ytd: string | null;
   valor: number | null;
   periodo: string | null;
+  meses: string | null;
+} & Partial<Record<MonthColumnName, number | null>>;
+
+type BigQueryColumnRow = {
+  column_name: string | null;
+  data_type: string | null;
 };
 
 type AssignmentRow = {
@@ -346,10 +384,118 @@ function toOptionalNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function toIntOrNull(value: unknown): number | null {
-  const num = toOptionalNumber(value);
-  if (num === null) return null;
-  return Number.isFinite(num) ? Math.round(num) : null;
+function normalizeMonthKey(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  const match = raw.match(/^(\d{4})-(\d{2})/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isInteger(year) || !Number.isInteger(month)) return null;
+  if (month < 1 || month > 12) return null;
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}`;
+}
+
+function shiftMonthKey(monthKey: string, delta: number): string {
+  const normalized = normalizeMonthKey(monthKey);
+  if (!normalized) return monthKey;
+  const year = Number(normalized.slice(0, 4));
+  const month = Number(normalized.slice(5, 7));
+  const date = new Date(Date.UTC(year, month - 1 + delta, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function parseMesesValue(value: unknown): Record<string, number> {
+  if (value === null || value === undefined) return {};
+
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    const raw = value.trim();
+    if (!raw) return {};
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+  const output: Record<string, number> = {};
+  for (const [rawKey, rawValue] of Object.entries(parsed)) {
+    const monthKey = normalizeMonthKey(rawKey);
+    const valueNumber = toOptionalNumber(rawValue);
+    if (!monthKey || valueNumber === null) continue;
+    output[monthKey] = valueNumber;
+  }
+  return output;
+}
+
+function getRowMonthValue(row: BigQueryFilesRow, periodMonth: string, targetMonthKey: string): number | null {
+  const normalizedTargetMonth = normalizeMonthKey(targetMonthKey);
+  if (!normalizedTargetMonth) return null;
+
+  const meses = parseMesesValue(row.meses);
+  const jsonValue = meses[normalizedTargetMonth];
+  if (typeof jsonValue === "number" && Number.isFinite(jsonValue)) return jsonValue;
+
+  const periodYear = Number(periodMonth.slice(0, 4));
+  const targetYear = Number(normalizedTargetMonth.slice(0, 4));
+  const targetMonth = Number(normalizedTargetMonth.slice(5, 7));
+  if (!Number.isInteger(periodYear) || targetYear !== periodYear) return null;
+
+  const columnName = MONTH_COLUMN_NAMES[targetMonth - 1];
+  if (!columnName) return null;
+  return toOptionalNumber(row[columnName]);
+}
+
+function sumRowMonthsFromCut(
+  row: BigQueryFilesRow,
+  periodMonth: string,
+  effectivePeriodCut: string | null,
+): number | null {
+  const startMonth = normalizeMonthKey(effectivePeriodCut);
+  const endMonth = normalizeMonthKey(periodMonth);
+  if (!startMonth || !endMonth || startMonth > endMonth) return null;
+
+  let currentMonth = startMonth;
+  let sum = 0;
+  let found = false;
+
+  for (let guard = 0; guard < 36; guard += 1) {
+    const value = getRowMonthValue(row, periodMonth, currentMonth);
+    if (value !== null) {
+      sum += value;
+      found = true;
+    }
+    if (currentMonth === endMonth) break;
+    currentMonth = shiftMonthKey(currentMonth, 1);
+  }
+
+  return found ? round6(sum) : null;
+}
+
+function shouldUseMonthlyEffectiveCut(periodMonth: string, effectivePeriodCut: string | null): boolean {
+  const startMonth = normalizeMonthKey(effectivePeriodCut);
+  const currentMonth = normalizeMonthKey(periodMonth);
+  if (!startMonth || !currentMonth) return false;
+
+  const firstMonthOfPeriodYear = `${currentMonth.slice(0, 4)}-01`;
+  return startMonth > firstMonthOfPeriodYear && startMonth <= currentMonth;
+}
+
+function resolveFileRowValue(
+  row: BigQueryFilesRow,
+  periodMonth: string,
+  effectivePeriodCut: string | null,
+): number {
+  if (shouldUseMonthlyEffectiveCut(periodMonth, effectivePeriodCut)) {
+    const monthlyValue = sumRowMonthsFromCut(row, periodMonth, effectivePeriodCut);
+    if (monthlyValue !== null) return monthlyValue;
+  }
+
+  const ytd = toNumber(row.ytd);
+  if (ytd !== 0) return ytd;
+  return toNumber(row.valor);
 }
 
 function isRetryableMessage(message: string): boolean {
@@ -460,8 +606,8 @@ function buildAsignacionBigQueryRow(row: AssignmentRow, index: number): Record<s
     index: index + 1,
     encontrar: row.encontrar ?? null,
     peso: toOptionalNumber(row.peso),
-    resultadomes: toIntOrNull(row.resultado),
-    resultadosemestre: toIntOrNull(row.resultado_total_plan),
+    resultadomes: toOptionalNumber(row.resultado),
+    resultadosemestre: toOptionalNumber(row.resultado_total_plan),
     ruta: row.ruta ?? null,
     plan: row.plan ?? null,
     teamid: row.teamid ?? null,
@@ -470,7 +616,7 @@ function buildAsignacionBigQueryRow(row: AssignmentRow, index: number): Record<s
     medico: null,
     cedula: null,
     cp: null,
-    objetivo: toIntOrNull(row.objetivo),
+    objetivo: toOptionalNumber(row.objetivo),
   };
 }
 
@@ -501,6 +647,34 @@ export async function runCalculoProcess(
   const asignacionDataset = process.env.BQ_RESULTS_DATASET?.trim() || "incentivos";
   const asignacionTable = process.env.BQ_ASIGNACION_UNIDADES_TABLE?.trim() || "asignacionUnidades";
   const filesTableRef = `\`${projectId}.${filesDataset}.${filesTable}\``;
+  const fileColumnRows = await fetchBigQueryRows<BigQueryColumnRow>({
+    query: `
+      SELECT column_name, data_type
+      FROM \`${projectId}.${filesDataset}.INFORMATION_SCHEMA.COLUMNS\`
+      WHERE table_name = @table_name
+    `,
+    parameters: [{ name: "table_name", type: "STRING", value: filesTable }],
+  });
+  const fileColumns = new Set(
+    fileColumnRows.map((row) => String(row.column_name ?? "").trim().toLowerCase()).filter(Boolean),
+  );
+  const fileColumnTypes = new Map(
+    fileColumnRows.map((row) => [
+      String(row.column_name ?? "").trim().toLowerCase(),
+      String(row.data_type ?? "").trim().toUpperCase(),
+    ]),
+  );
+  const mesesDataType = fileColumnTypes.get("meses") ?? "";
+  const mesesSelectExpression = fileColumns.has("meses")
+    ? mesesDataType === "STRING"
+      ? "CAST(meses AS STRING) AS meses"
+      : "TO_JSON_STRING(meses) AS meses"
+    : "CAST(NULL AS STRING) AS meses";
+  const monthSelectExpressions = MONTH_COLUMN_NAMES.map((columnName) =>
+    fileColumns.has(columnName)
+      ? `SAFE_CAST(\`${columnName}\` AS FLOAT64) AS \`${columnName}\``
+      : `CAST(NULL AS FLOAT64) AS \`${columnName}\``,
+  ).join(",\n        ");
 
   const filesDataPeriodo = await fetchBigQueryRows<BigQueryFilesRow>({
     query: `
@@ -515,7 +689,9 @@ export async function runCalculoProcess(
         fuente,
         ytd,
         valor,
-        periodo
+        periodo,
+        ${mesesSelectExpression},
+        ${monthSelectExpressions}
       FROM ${filesTableRef}
       WHERE periodo = @periodo
     `,
@@ -525,7 +701,7 @@ export async function runCalculoProcess(
   const statusResult = await queryWithRetry(() =>
     supabase
       .from("sales_force_status")
-      .select("territorio_individual, team_id, is_active, is_vacant")
+      .select("territorio_individual, team_id, fecha_ingreso, is_active, is_vacant")
       .eq("period_month", periodMonth)
       .eq("is_deleted", false)
       .eq("is_active", true),
@@ -538,6 +714,11 @@ export async function runCalculoProcess(
   const statusRows = ((statusResult.data ?? []) as StatusRow[]).filter((row) => {
     return String(row.territorio_individual ?? "").trim() && String(row.team_id ?? "").trim();
   });
+
+  const periodSettings = await loadPeriodSettingsForCalculation(periodMonth);
+  const affectedProductKeys = new Set(
+    periodSettings.affectedProductNames.map((productName) => normalizeProductNameKey(productName)),
+  );
 
   const uniqueTeamIds = Array.from(new Set(statusRows.map((row) => String(row.team_id ?? "").trim())));
 
@@ -693,42 +874,6 @@ export async function runCalculoProcess(
     targetsByRouteProduct.set(key, current);
   }
 
-  const teamIdByRoute = new Map<string, string>();
-  for (const row of statusRows) {
-    const route = toUpperTrim(row.territorio_individual);
-    const teamId = String(row.team_id ?? "").trim();
-    if (route && teamId) teamIdByRoute.set(route, teamId);
-  }
-
-  const nationalObjectiveGroups = new Map<
-    string,
-    { nationalTarget: number; totalWeight: number; rowsCount: number }
-  >();
-  const nationalObjectiveKey = (row: ObjectiveTargetRow): string | null => {
-    const route = toUpperTrim(row.territorio_individual);
-    const teamId = String(row.team_id ?? "").trim() || teamIdByRoute.get(route) || "";
-    const product = toUpperTrim(row.product_name);
-    if (!teamId || !product) return null;
-    return `${teamId}::${product}`;
-  };
-
-  for (const row of objectiveRowsData) {
-    if (!isNationalObjectiveRow(row)) continue;
-    const key = nationalObjectiveKey(row);
-    if (!key) continue;
-    const weightRaw = toOptionalNumber(row.sales_credity);
-    const weight = weightRaw === null ? 1 : Math.max(weightRaw, 0);
-    const current = nationalObjectiveGroups.get(key) ?? {
-      nationalTarget: 0,
-      totalWeight: 0,
-      rowsCount: 0,
-    };
-    current.nationalTarget = Math.max(current.nationalTarget, round6(toNumber(row.target)));
-    current.totalWeight = round6(current.totalWeight + weight);
-    current.rowsCount += 1;
-    nationalObjectiveGroups.set(key, current);
-  }
-
   const filesByCode = new Map<string, BigQueryFilesRow[]>();
   const filesByDisplay = new Map<string, BigQueryFilesRow[]>();
   for (const row of filesDataPeriodo) {
@@ -777,6 +922,49 @@ export async function runCalculoProcess(
       productsEvaluated += 1;
 
       const planTypeName = String(item.plan_type_name ?? targetRows[0]?.plan_type_name ?? "").trim() || null;
+      const effectivePeriodCut =
+        periodSettings.resultFromHireDateEnabled && affectedProductKeys.has(normalizeProductNameKey(productName))
+          ? computeEffectivePeriodCut({
+              hireDate: member.fecha_ingreso,
+              cutoffDay: periodSettings.hireDateCutoffDay,
+              periodMonth,
+            })
+          : null;
+
+      if (isBeforeEffectivePeriodCut(periodMonth, effectivePeriodCut)) {
+        const firstSource = sources[0] ?? null;
+        assignments.push({
+          periodo: periodMonth.slice(0, 7),
+          ruta: route,
+          teamid: teamId,
+          plan: productName,
+          plan_type_name: planTypeName,
+          archivo: firstSource?.file_display ?? null,
+          file_code: firstSource?.file_code ?? null,
+          source_order: firstSource?.source_order ?? null,
+          fuente: firstSource?.fuente ?? null,
+          metric: firstSource?.metric ?? null,
+          molecula_producto: firstSource?.molecula_producto ?? null,
+          brick: null,
+          cuenta: null,
+          encontrar: "global",
+          peso: 0,
+          objetivo: 0,
+          valor: 0,
+          resultado: 0,
+          cobertura: 0,
+          objetivo_total_plan: 0,
+          valor_total_plan: 0,
+          resultado_total_plan: 0,
+          match_mode: "none",
+          none_reason: "effective_period_cut",
+          objective_block: "otros",
+          matched_rows_count: 0,
+          valor_imss: 0,
+          valor_issste: 0,
+        });
+        continue;
+      }
 
       const privateTargets = targetRows.filter(
         (row) =>
@@ -838,21 +1026,13 @@ export async function runCalculoProcess(
               : nonPrivateTargets.length > 0
                 ? "brick"
                 : "global";
-        let objetivo = round6(toNumber(targetRow.target));
+        const objetivo = round6(toNumber(targetRow.target));
         const pesoRaw = toOptionalNumber((targetRow as { sales_credity?: number | string | null }).sales_credity);
         let peso = pesoRaw === null ? 1 : pesoRaw;
         if (targetIsNational) {
-          const key = nationalObjectiveKey(targetRow);
-          const nationalGroup = key ? nationalObjectiveGroups.get(key) : null;
-          const nationalWeight = Math.max(peso, 0);
-          if (nationalGroup) {
-            const denominator =
-              nationalGroup.totalWeight > 0 ? nationalGroup.totalWeight : nationalGroup.rowsCount;
-            const numerator = nationalGroup.totalWeight > 0 ? nationalWeight : 1;
-            const share = denominator > 0 ? numerator / denominator : 1;
-            objetivo = round6(nationalGroup.nationalTarget * share);
-            peso = round6(share);
-          }
+          // La cuota del DrillDown nacional ya es el objetivo efectivo de la ruta.
+          // El sales_credity solo reparte el valor nacional para calcular resultado.
+          peso = round6(Math.max(peso, 0));
         }
 
         const groupKey =
@@ -880,7 +1060,9 @@ export async function runCalculoProcess(
 
         const objetivoPrevio = existing.objetivo;
         const objetivoNuevo = round6(existing.objetivo + objetivo);
-        if (objetivoNuevo > 0) {
+        if (existing.objectiveBlock === "drilldown_nacional" && objectiveBlock === "drilldown_nacional") {
+          existing.peso = round6(existing.peso + peso);
+        } else if (objetivoNuevo > 0) {
           const pesoPonderado =
             ((existing.peso * objetivoPrevio) + (peso * objetivo)) / objetivoNuevo;
           existing.peso = round6(pesoPonderado);
@@ -1049,25 +1231,21 @@ export async function runCalculoProcess(
 
           const valor = round6(
             matchedRows.reduce((sum, row) => {
-              const ytd = toNumber(row.ytd);
-              if (ytd !== 0) return sum + ytd;
-              return sum + toNumber(row.valor);
+              return sum + resolveFileRowValue(row, periodMonth, effectivePeriodCut);
             }, 0),
           );
           const valorImss = round6(
             matchedRows.reduce((sum, row) => {
               const inst = normalizeTextForCompare(row.institucion);
               if (!inst.includes("IMSS")) return sum;
-              const ytd = toNumber(row.ytd);
-              return sum + (ytd !== 0 ? ytd : toNumber(row.valor));
+              return sum + resolveFileRowValue(row, periodMonth, effectivePeriodCut);
             }, 0),
           );
           const valorIssste = round6(
             matchedRows.reduce((sum, row) => {
               const inst = normalizeTextForCompare(row.institucion);
               if (!inst.includes("ISSSTE")) return sum;
-              const ytd = toNumber(row.ytd);
-              return sum + (ytd !== 0 ? ytd : toNumber(row.valor));
+              return sum + resolveFileRowValue(row, periodMonth, effectivePeriodCut);
             }, 0),
           );
           const resultado = round6(valor * peso);
