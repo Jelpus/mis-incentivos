@@ -92,6 +92,9 @@ function DownloadLink({ href, label }: { href: unknown; label: string }) {
 function statusClass(status: unknown): string {
   const normalized = String(status ?? "").toLowerCase();
   if (normalized === "ok" || normalized === "exact") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  if (normalized.includes("meses")) return "border-blue-200 bg-blue-50 text-blue-800";
+  if (normalized.includes("ytd")) return "border-neutral-200 bg-neutral-50 text-neutral-800";
+  if (normalized.includes("pendiente")) return "border-amber-200 bg-amber-50 text-amber-800";
   if (normalized === "warning" || normalized === "fuzzy") return "border-amber-200 bg-amber-50 text-amber-800";
   if (normalized === "error" || normalized === "none") return "border-red-200 bg-red-50 text-red-800";
   return "border-neutral-200 bg-neutral-50 text-neutral-700";
@@ -223,6 +226,7 @@ function ProgressModal() {
 function CalculationEvidence({ result }: { result: DiagnosisResponse }) {
   const trace = asRecord(result.diagnosis.traceData);
   const preview = asRecord(trace.calculationPreview);
+  const calculationSummary = asRecord(preview.summary);
   const objectiveSource = asRecord(trace.objectiveSource);
   const objectiveDownloads = asRecord(objectiveSource.downloads);
   const objectives = asRows(trace.objectives);
@@ -299,8 +303,12 @@ function CalculationEvidence({ result }: { result: DiagnosisResponse }) {
                 columns={[
                   { key: "assignmentKey", label: "Asignacion" },
                   { key: "sourceLookupMode", label: "Busqueda" },
+                  { key: "valueBasis", label: "Base usada", format: "status" },
+                  { key: "effectivePeriodCut", label: "Cut" },
                   { key: "normalizedRows", label: "Filas BQ", format: "number" },
-                  { key: "normalizedTotal", label: "Total BQ", format: "number" },
+                  { key: "fullYtdTotal", label: "Total YTD", format: "number" },
+                  { key: "normalizedTotal", label: "Total usado", format: "number" },
+                  { key: "monthlyImpact", label: "Impacto meses", format: "number" },
                   { key: "assignmentValor", label: "Valor asignado", format: "number" },
                   { key: "differenceVsAssignment", label: "Diferencia", format: "number" },
                 ]}
@@ -324,6 +332,9 @@ function CalculationEvidence({ result }: { result: DiagnosisResponse }) {
                         { key: "codigo_estado", label: "Cod estado" },
                         { key: "ytd", label: "YTD", format: "number" },
                         { key: "valor", label: "Valor", format: "number" },
+                        { key: "value_basis", label: "Base", format: "status" },
+                        { key: "full_ytd_value", label: "YTD usado antes", format: "number" },
+                        { key: "monthly_effective_value", label: "Mes/corte", format: "number" },
                         { key: "effective_value", label: "Usado", format: "number" },
                       ]}
                     />
@@ -405,6 +416,18 @@ function CalculationEvidence({ result }: { result: DiagnosisResponse }) {
         title="Calculo de Resultados"
         verdict={`${assignments.length} filas | resultado ${formatNumber(resultTotal)}`}
       >
+        <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-blue-700">Base de resultado</span>
+            <StatusPill value={calculationSummary.valueBasis} />
+          </div>
+          <div className="mt-2 grid gap-2 text-xs md:grid-cols-4">
+            <p>Fecha ingreso: <span className="font-semibold">{formatText(calculationSummary.fechaIngreso)}</span></p>
+            <p>effective_period_cut: <span className="font-semibold">{formatText(calculationSummary.effectivePeriodCut)}</span></p>
+            <p>Dia corte: <span className="font-semibold">{formatText(calculationSummary.hireDateCutoffDay)}</span></p>
+            <p>Producto afectado: <span className="font-semibold">{calculationSummary.productAffectedByPeriodSettings ? "Si" : "No"}</span></p>
+          </div>
+        </div>
         <p className="mb-3 text-sm text-neutral-600">
           Estas filas muestran que data original entro al calculo. `none` significa que la cuota no encontro
           match contra archivo/filtros y suele explicar resultados en cero.
@@ -439,10 +462,19 @@ function CalculationEvidence({ result }: { result: DiagnosisResponse }) {
             { key: "molecula_producto", label: "Molecula" },
             { key: "brick", label: "Brick" },
             { key: "cuenta", label: "Cuenta" },
+            { key: "base_resultado", label: "Base", format: "status" },
+            { key: "fecha_ingreso", label: "Ingreso" },
+            { key: "effective_period_cut", label: "Cut" },
             { key: "objetivo", label: "Objetivo", format: "number" },
             { key: "valor", label: "Valor", format: "number" },
+            { key: "valor_full_ytd", label: "Valor YTD", format: "number" },
+            { key: "valor_imss", label: "Valor IMSS", format: "number" },
+            { key: "valor_imss_full_ytd", label: "IMSS YTD", format: "number" },
+            { key: "valor_issste", label: "Valor ISSSTE", format: "number" },
+            { key: "valor_issste_full_ytd", label: "ISSSTE YTD", format: "number" },
             { key: "sales_credity", label: "SC", format: "number" },
             { key: "resultado", label: "Resultado", format: "number" },
+            { key: "resultado_full_ytd", label: "Resultado YTD", format: "number" },
             { key: "match_mode", label: "Match", format: "status" },
             { key: "none_reason", label: "Razon" },
           ]}

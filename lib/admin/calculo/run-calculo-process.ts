@@ -159,6 +159,11 @@ type AssignmentRow = {
   valor: number;
   resultado: number;
   cobertura: number;
+  resultado_base: string;
+  fecha_ingreso: string | null;
+  effective_period_cut: string | null;
+  valor_full_ytd: number;
+  resultado_full_ytd: number;
   objetivo_total_plan: number;
   valor_total_plan: number;
   resultado_total_plan: number;
@@ -168,6 +173,8 @@ type AssignmentRow = {
   matched_rows_count: number;
   valor_imss: number;
   valor_issste: number;
+  valor_imss_full_ytd: number;
+  valor_issste_full_ytd: number;
 };
 
 export type CalculoProcessRunResult = {
@@ -198,12 +205,19 @@ export type CalculoProcessRunResult = {
     valor: number;
     resultado: number;
     cobertura: number;
+    resultado_base: string;
+    fecha_ingreso: string | null;
+    effective_period_cut: string | null;
+    valor_full_ytd: number;
+    resultado_full_ytd: number;
     match_mode: "exact" | "fuzzy" | "none";
     none_reason: string | null;
     objective_block: "private" | "drilldown_cuentas" | "drilldown_estados" | "drilldown_nacional" | "otros";
     matched_rows_count: number;
     valor_imss: number;
     valor_issste: number;
+    valor_imss_full_ytd: number;
+    valor_issste_full_ytd: number;
   }>;
 };
 
@@ -496,6 +510,22 @@ function resolveFileRowValue(
   const ytd = toNumber(row.ytd);
   if (ytd !== 0) return ytd;
   return toNumber(row.valor);
+}
+
+function resolveFileRowFullYtdValue(row: BigQueryFilesRow): number {
+  const ytd = toNumber(row.ytd);
+  if (ytd !== 0) return ytd;
+  return toNumber(row.valor);
+}
+
+function describeResultadoBase(periodMonth: string, effectivePeriodCut: string | null): string {
+  if (isBeforeEffectivePeriodCut(periodMonth, effectivePeriodCut)) {
+    return effectivePeriodCut ? `Pendiente hasta ${effectivePeriodCut.slice(0, 7)}` : "YTD completo";
+  }
+  if (shouldUseMonthlyEffectiveCut(periodMonth, effectivePeriodCut)) {
+    return `MESES desde ${String(effectivePeriodCut).slice(0, 7)}`;
+  }
+  return "YTD completo";
 }
 
 function isRetryableMessage(message: string): boolean {
@@ -930,6 +960,7 @@ export async function runCalculoProcess(
               periodMonth,
             })
           : null;
+      const resultadoBase = describeResultadoBase(periodMonth, effectivePeriodCut);
 
       if (isBeforeEffectivePeriodCut(periodMonth, effectivePeriodCut)) {
         const firstSource = sources[0] ?? null;
@@ -953,6 +984,11 @@ export async function runCalculoProcess(
           valor: 0,
           resultado: 0,
           cobertura: 0,
+          resultado_base: resultadoBase,
+          fecha_ingreso: member.fecha_ingreso ?? null,
+          effective_period_cut: effectivePeriodCut,
+          valor_full_ytd: 0,
+          resultado_full_ytd: 0,
           objetivo_total_plan: 0,
           valor_total_plan: 0,
           resultado_total_plan: 0,
@@ -962,6 +998,8 @@ export async function runCalculoProcess(
           matched_rows_count: 0,
           valor_imss: 0,
           valor_issste: 0,
+          valor_imss_full_ytd: 0,
+          valor_issste_full_ytd: 0,
         });
         continue;
       }
@@ -1234,11 +1272,23 @@ export async function runCalculoProcess(
               return sum + resolveFileRowValue(row, periodMonth, effectivePeriodCut);
             }, 0),
           );
+          const valorFullYtd = round6(
+            matchedRows.reduce((sum, row) => {
+              return sum + resolveFileRowFullYtdValue(row);
+            }, 0),
+          );
           const valorImss = round6(
             matchedRows.reduce((sum, row) => {
               const inst = normalizeTextForCompare(row.institucion);
               if (!inst.includes("IMSS")) return sum;
               return sum + resolveFileRowValue(row, periodMonth, effectivePeriodCut);
+            }, 0),
+          );
+          const valorImssFullYtd = round6(
+            matchedRows.reduce((sum, row) => {
+              const inst = normalizeTextForCompare(row.institucion);
+              if (!inst.includes("IMSS")) return sum;
+              return sum + resolveFileRowFullYtdValue(row);
             }, 0),
           );
           const valorIssste = round6(
@@ -1248,7 +1298,15 @@ export async function runCalculoProcess(
               return sum + resolveFileRowValue(row, periodMonth, effectivePeriodCut);
             }, 0),
           );
+          const valorIsssteFullYtd = round6(
+            matchedRows.reduce((sum, row) => {
+              const inst = normalizeTextForCompare(row.institucion);
+              if (!inst.includes("ISSSTE")) return sum;
+              return sum + resolveFileRowFullYtdValue(row);
+            }, 0),
+          );
           const resultado = round6(valor * peso);
+          const resultadoFullYtd = round6(valorFullYtd * peso);
           const cobertura = computeCobertura(objetivo, resultado);
           valorTotalPlan = round6(valorTotalPlan + valor);
           resultadoTotalPlan = round6(resultadoTotalPlan + resultado);
@@ -1273,6 +1331,11 @@ export async function runCalculoProcess(
             valor,
             resultado,
             cobertura,
+            resultado_base: resultadoBase,
+            fecha_ingreso: member.fecha_ingreso ?? null,
+            effective_period_cut: effectivePeriodCut,
+            valor_full_ytd: valorFullYtd,
+            resultado_full_ytd: resultadoFullYtd,
             objetivo_total_plan: objetivoTotalPlan,
             valor_total_plan: 0,
             resultado_total_plan: 0,
@@ -1282,6 +1345,8 @@ export async function runCalculoProcess(
             matched_rows_count: matchedRows.length,
             valor_imss: valorImss,
             valor_issste: valorIssste,
+            valor_imss_full_ytd: valorImssFullYtd,
+            valor_issste_full_ytd: valorIsssteFullYtd,
           });
         }
       }
@@ -1370,12 +1435,19 @@ export async function runCalculoProcess(
     valor: row.valor,
     resultado: row.resultado,
     cobertura: row.cobertura,
+    resultado_base: row.resultado_base,
+    fecha_ingreso: row.fecha_ingreso,
+    effective_period_cut: row.effective_period_cut,
+    valor_full_ytd: row.valor_full_ytd,
+    resultado_full_ytd: row.resultado_full_ytd,
     match_mode: row.match_mode,
     none_reason: row.none_reason,
     objective_block: row.objective_block,
     matched_rows_count: row.matched_rows_count,
     valor_imss: row.valor_imss,
     valor_issste: row.valor_issste,
+    valor_imss_full_ytd: row.valor_imss_full_ytd,
+    valor_issste_full_ytd: row.valor_issste_full_ytd,
   }));
 
   return {

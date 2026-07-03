@@ -99,12 +99,19 @@ export type CalculoPreviewResult =
       valor: number;
       resultado: number;
       cobertura: number;
+      resultado_base: string;
+      fecha_ingreso: string | null;
+      effective_period_cut: string | null;
+      valor_full_ytd: number;
+      resultado_full_ytd: number;
       match_mode: "exact" | "fuzzy" | "none";
       none_reason: string | null;
       objective_block: "private" | "drilldown_cuentas" | "drilldown_estados" | "drilldown_nacional" | "otros";
       matched_rows_count: number;
       valor_imss: number;
       valor_issste: number;
+      valor_imss_full_ytd: number;
+      valor_issste_full_ytd: number;
     }>;
   }
   | { ok: false; message: string };

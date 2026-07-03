@@ -2,6 +2,12 @@ import { buildResultadosV2Preview } from "@/lib/admin/calculo/build-resultados-v
 import { runCalculoProcess } from "@/lib/admin/calculo/run-calculo-process";
 import { fetchBigQueryRows, isBigQueryConfigured } from "@/lib/integrations/bigquery";
 import { normalizePeriodMonthInput, normalizeSourceFileCode } from "@/lib/admin/incentive-rules/shared";
+import {
+  computeEffectivePeriodCut,
+  isBeforeEffectivePeriodCut,
+  normalizeProductNameKey,
+} from "@/lib/admin/period-settings/effective-period";
+import { loadPeriodSettingsForCalculation } from "@/lib/admin/period-settings/load-period-settings";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { CalculationDebuggerTraceData, CalculationDiagnosis } from "@/lib/admin/calculation-debugger/types";
 
@@ -23,6 +29,7 @@ type StatusRow = {
   linea_principal: string | null;
   base_incentivos: number | string | null;
   territorio_padre: string | null;
+  fecha_ingreso?: string | null;
 };
 
 type RuleVersionRow = {
@@ -116,7 +123,42 @@ type NormalizedSourceBQRow = {
   ytd: string | number | null;
   valor: number | string | null;
   periodo: string | null;
+  meses?: string | Record<string, unknown> | null;
+} & Partial<Record<MonthColumnName, number | string | null>>;
+
+type BigQueryColumnRow = {
+  column_name: string | null;
+  data_type: string | null;
 };
+
+type MonthColumnName =
+  | "month01"
+  | "month02"
+  | "month03"
+  | "month04"
+  | "month05"
+  | "month06"
+  | "month07"
+  | "month08"
+  | "month09"
+  | "month10"
+  | "month11"
+  | "month12";
+
+const MONTH_COLUMN_NAMES: MonthColumnName[] = [
+  "month01",
+  "month02",
+  "month03",
+  "month04",
+  "month05",
+  "month06",
+  "month07",
+  "month08",
+  "month09",
+  "month10",
+  "month11",
+  "month12",
+];
 
 type PayCurveRow = {
   id: string | null;
@@ -185,6 +227,131 @@ function toNumber(value: unknown): number {
 
 function round6(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+function normalizeMonthKey(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  const match = raw.match(/^(\d{4})-(\d{2})/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isInteger(year) || !Number.isInteger(month)) return null;
+  if (month < 1 || month > 12) return null;
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}`;
+}
+
+function shiftMonthKey(monthKey: string, delta: number): string {
+  const normalized = normalizeMonthKey(monthKey);
+  if (!normalized) return monthKey;
+  const year = Number(normalized.slice(0, 4));
+  const month = Number(normalized.slice(5, 7));
+  const date = new Date(Date.UTC(year, month - 1 + delta, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function parseMesesValue(value: unknown): Record<string, number> {
+  if (value === null || value === undefined) return {};
+
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    const raw = value.trim();
+    if (!raw) return {};
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+  const output: Record<string, number> = {};
+  for (const [rawKey, rawValue] of Object.entries(parsed)) {
+    const monthKey = normalizeMonthKey(rawKey);
+    const numericValue = toNumber(rawValue);
+    if (!monthKey || !Number.isFinite(numericValue)) continue;
+    output[monthKey] = numericValue;
+  }
+  return output;
+}
+
+function getFullYtdSourceValue(row: NormalizedSourceBQRow): number {
+  const ytd = toNumber(row.ytd);
+  return ytd !== 0 ? ytd : toNumber(row.valor);
+}
+
+function getRowMonthValue(row: NormalizedSourceBQRow, periodMonth: string, targetMonthKey: string): number | null {
+  const normalizedTargetMonth = normalizeMonthKey(targetMonthKey);
+  if (!normalizedTargetMonth) return null;
+
+  const meses = parseMesesValue(row.meses);
+  const jsonValue = meses[normalizedTargetMonth];
+  if (typeof jsonValue === "number" && Number.isFinite(jsonValue)) return jsonValue;
+
+  const periodYear = Number(periodMonth.slice(0, 4));
+  const targetYear = Number(normalizedTargetMonth.slice(0, 4));
+  const targetMonth = Number(normalizedTargetMonth.slice(5, 7));
+  if (!Number.isInteger(periodYear) || targetYear !== periodYear) return null;
+
+  const columnName = MONTH_COLUMN_NAMES[targetMonth - 1];
+  if (!columnName) return null;
+  const columnValue = row[columnName];
+  if (columnValue === null || columnValue === undefined) return null;
+  const numericValue = toNumber(columnValue);
+  return Number.isFinite(numericValue) ? numericValue : null;
+}
+
+function sumRowMonthsFromCut(
+  row: NormalizedSourceBQRow,
+  periodMonth: string,
+  effectivePeriodCut: string | null,
+): number | null {
+  const startMonth = normalizeMonthKey(effectivePeriodCut);
+  const endMonth = normalizeMonthKey(periodMonth);
+  if (!startMonth || !endMonth || startMonth > endMonth) return null;
+
+  let currentMonth = startMonth;
+  let sum = 0;
+  let found = false;
+
+  for (let guard = 0; guard < 36; guard += 1) {
+    const value = getRowMonthValue(row, periodMonth, currentMonth);
+    if (value !== null) {
+      sum += value;
+      found = true;
+    }
+    if (currentMonth === endMonth) break;
+    currentMonth = shiftMonthKey(currentMonth, 1);
+  }
+
+  return found ? round6(sum) : null;
+}
+
+function shouldUseMonthlyEffectiveCut(periodMonth: string, effectivePeriodCut: string | null): boolean {
+  const startMonth = normalizeMonthKey(effectivePeriodCut);
+  const currentMonth = normalizeMonthKey(periodMonth);
+  if (!startMonth || !currentMonth) return false;
+
+  const firstMonthOfPeriodYear = `${currentMonth.slice(0, 4)}-01`;
+  return startMonth > firstMonthOfPeriodYear && startMonth <= currentMonth;
+}
+
+function resolveValueBasisLabel(params: {
+  productAffected: boolean;
+  resultFromHireDateEnabled: boolean;
+  effectivePeriodCut: string | null;
+  periodMonth: string;
+}): string {
+  if (!params.resultFromHireDateEnabled) return "YTD completo";
+  if (!params.productAffected) return "YTD completo";
+  if (!params.effectivePeriodCut) return "YTD completo (sin fecha ingreso)";
+  if (isBeforeEffectivePeriodCut(params.periodMonth, params.effectivePeriodCut)) {
+    return `Pendiente hasta ${params.effectivePeriodCut.slice(0, 7)}`;
+  }
+  if (shouldUseMonthlyEffectiveCut(params.periodMonth, params.effectivePeriodCut)) {
+    return `MESES desde ${params.effectivePeriodCut.slice(0, 7)}`;
+  }
+  return "YTD completo";
 }
 
 function nearlyEqual(a: number, b: number, tolerance = 0.01): boolean {
@@ -694,6 +861,12 @@ async function fetchAdjustments(params: {
 async function fetchIncludedSourceRows(params: {
   periodMonth: string;
   assignments: Array<Record<string, unknown>>;
+  valueContext: {
+    basisLabel: string;
+    effectivePeriodCut: string | null;
+    useMonthlyEffectiveCut: boolean;
+    isBeforeEffectiveCut: boolean;
+  };
 }): Promise<Array<Record<string, unknown>>> {
   if (!isBigQueryConfigured() || params.assignments.length === 0) return [];
   const projectId = process.env.GCP_PROJECT_ID?.trim();
@@ -704,6 +877,34 @@ async function fetchIncludedSourceRows(params: {
   const tableRef = `\`${projectId}.${filesDataset}.${filesTable}\``;
   const period = params.periodMonth.slice(0, 7);
   const output: Array<Record<string, unknown>> = [];
+  const fileColumnRows = await fetchBigQueryRows<BigQueryColumnRow>({
+    query: `
+      SELECT column_name, data_type
+      FROM \`${projectId}.${filesDataset}.INFORMATION_SCHEMA.COLUMNS\`
+      WHERE table_name = @table_name
+    `,
+    parameters: [{ name: "table_name", type: "STRING", value: filesTable }],
+  }).catch(() => []);
+  const fileColumns = new Set(
+    fileColumnRows.map((row) => String(row.column_name ?? "").trim().toLowerCase()).filter(Boolean),
+  );
+  const fileColumnTypes = new Map(
+    fileColumnRows.map((row) => [
+      String(row.column_name ?? "").trim().toLowerCase(),
+      String(row.data_type ?? "").trim().toUpperCase(),
+    ]),
+  );
+  const mesesDataType = fileColumnTypes.get("meses") ?? "";
+  const mesesSelectExpression = fileColumns.has("meses")
+    ? mesesDataType === "STRING"
+      ? "CAST(meses AS STRING) AS meses"
+      : "TO_JSON_STRING(meses) AS meses"
+    : "CAST(NULL AS STRING) AS meses";
+  const monthSelectExpressions = MONTH_COLUMN_NAMES.map((columnName) =>
+    fileColumns.has(columnName)
+      ? `SAFE_CAST(\`${columnName}\` AS FLOAT64) AS \`${columnName}\``
+      : `CAST(NULL AS FLOAT64) AS \`${columnName}\``,
+  ).join(",\n          ");
 
   for (const assignment of params.assignments.slice(0, 25)) {
     const archivo = String(assignment.archivo ?? "").trim();
@@ -718,7 +919,7 @@ async function fetchIncludedSourceRows(params: {
     const brickNormalized = normalizeKey(brick).replace(/[^A-Z0-9]+/g, " ").trim();
     if (!archivo || !molecula) continue;
 
-    const runRowsQuery = (findingMode: string) => fetchBigQueryRows<NormalizedSourceBQRow>({
+    const runRowsQuery = (findingMode: string, exactArchivo: boolean) => fetchBigQueryRows<NormalizedSourceBQRow>({
       query: `
         SELECT
           archivo,
@@ -731,14 +932,21 @@ async function fetchIncludedSourceRows(params: {
           fuente,
           ytd,
           valor,
-          periodo
+          periodo,
+          ${mesesSelectExpression},
+          ${monthSelectExpressions}
         FROM ${tableRef}
         WHERE periodo = @periodo
           AND (
             UPPER(archivo) = UPPER(@archivo)
-            OR REGEXP_REPLACE(LOWER(archivo), r'[^a-z0-9]+', '_') = @archivo_normalized
-            OR STRPOS(REGEXP_REPLACE(LOWER(archivo), r'[^a-z0-9]+', '_'), @archivo_normalized) > 0
-            OR STRPOS(@archivo_normalized, REGEXP_REPLACE(LOWER(archivo), r'[^a-z0-9]+', '_')) > 0
+            OR (
+              @exact_archivo = FALSE
+              AND (
+                REGEXP_REPLACE(LOWER(archivo), r'[^a-z0-9]+', '_') = @archivo_normalized
+                OR STRPOS(REGEXP_REPLACE(LOWER(archivo), r'[^a-z0-9]+', '_'), @archivo_normalized) > 0
+                OR STRPOS(@archivo_normalized, REGEXP_REPLACE(LOWER(archivo), r'[^a-z0-9]+', '_')) > 0
+              )
+            )
           )
           AND (@fuente = '' OR UPPER(fuente) = UPPER(@fuente))
           AND (@metric = '' OR UPPER(metric) = UPPER(@metric))
@@ -777,6 +985,7 @@ async function fetchIncludedSourceRows(params: {
         { name: "periodo", type: "STRING", value: period },
         { name: "archivo", type: "STRING", value: archivo },
         { name: "archivo_normalized", type: "STRING", value: archivoNormalized },
+        { name: "exact_archivo", type: "BOOL", value: exactArchivo },
         { name: "fuente", type: "STRING", value: fuente },
         { name: "metric", type: "STRING", value: metric },
         { name: "molecula", type: "STRING", value: molecula },
@@ -789,19 +998,30 @@ async function fetchIncludedSourceRows(params: {
       ],
     }).catch(() => []);
 
-    let rows = await runRowsQuery(encontrar);
+    let rows = await runRowsQuery(encontrar, true);
+    if (rows.length === 0) {
+      rows = await runRowsQuery(encontrar, false);
+    }
     let sourceLookupMode = encontrar;
     if (rows.length === 0 && /^\d{1,3}$/.test(brick)) {
-      const fallbackRows = await runRowsQuery("estado");
+      let fallbackRows = await runRowsQuery("estado", true);
+      if (fallbackRows.length === 0) {
+        fallbackRows = await runRowsQuery("estado", false);
+      }
       if (fallbackRows.length > 0) {
         rows = fallbackRows;
         sourceLookupMode = "estado_fallback";
       }
     }
 
-    const totalYtd = round6(rows.reduce((sum, row) => {
-      const ytd = toNumber(row.ytd);
-      return sum + (ytd !== 0 ? ytd : toNumber(row.valor));
+    const totalYtd = round6(rows.reduce((sum, row) => sum + getFullYtdSourceValue(row), 0));
+    const effectiveTotal = round6(rows.reduce((sum, row) => {
+      if (params.valueContext.isBeforeEffectiveCut) return sum;
+      if (params.valueContext.useMonthlyEffectiveCut) {
+        const monthlyValue = sumRowMonthsFromCut(row, params.periodMonth, params.valueContext.effectivePeriodCut);
+        return sum + (monthlyValue ?? getFullYtdSourceValue(row));
+      }
+      return sum + getFullYtdSourceValue(row);
     }, 0));
     const assignmentValor = toNumber(assignment.valor);
 
@@ -815,16 +1035,26 @@ async function fetchIncludedSourceRows(params: {
         assignment.cuenta,
       ].join(" | "),
       sourceLookupMode,
+      valueBasis: params.valueContext.basisLabel,
+      effectivePeriodCut: params.valueContext.effectivePeriodCut,
       assignmentValor,
       normalizedRows: rows.length,
-      normalizedTotal: totalYtd,
-      differenceVsAssignment: round6(totalYtd - assignmentValor),
+      normalizedTotal: effectiveTotal,
+      fullYtdTotal: totalYtd,
+      monthlyImpact: round6(totalYtd - effectiveTotal),
+      differenceVsAssignment: round6(effectiveTotal - assignmentValor),
       rows: rows.map((row) => ({
         ...row,
-        effective_value: (() => {
-          const ytd = toNumber(row.ytd);
-          return ytd !== 0 ? ytd : toNumber(row.valor);
-        })(),
+        full_ytd_value: getFullYtdSourceValue(row),
+        monthly_effective_value: params.valueContext.useMonthlyEffectiveCut
+          ? sumRowMonthsFromCut(row, params.periodMonth, params.valueContext.effectivePeriodCut)
+          : null,
+        effective_value: params.valueContext.isBeforeEffectiveCut
+          ? 0
+          : params.valueContext.useMonthlyEffectiveCut
+            ? (sumRowMonthsFromCut(row, params.periodMonth, params.valueContext.effectivePeriodCut) ?? getFullYtdSourceValue(row))
+            : getFullYtdSourceValue(row),
+        value_basis: params.valueContext.basisLabel,
       })),
     });
   }
@@ -853,7 +1083,7 @@ export async function traceCalculation(input: TraceInput): Promise<CalculationDi
   const statusResult = await supabase
     .from("sales_force_status")
     .select(
-      "no_empleado, nombre_completo, territorio_individual, team_id, linea_principal, base_incentivos, territorio_padre",
+      "no_empleado, nombre_completo, territorio_individual, team_id, linea_principal, base_incentivos, territorio_padre, fecha_ingreso",
     )
     .eq("period_month", periodMonth)
     .eq("is_deleted", false)
@@ -1097,18 +1327,50 @@ export async function traceCalculation(input: TraceInput): Promise<CalculationDi
     persist: false,
     previewLimit: Number.POSITIVE_INFINITY,
   });
+  const periodSettings = await loadPeriodSettingsForCalculation(periodMonth);
+  const productAffectedByPeriodSettings =
+    periodSettings.resultFromHireDateEnabled &&
+    periodSettings.affectedProductNames.some(
+      (productName) => normalizeProductNameKey(productName) === normalizeProductNameKey(productInput),
+    );
+  const effectivePeriodCut = productAffectedByPeriodSettings
+    ? computeEffectivePeriodCut({
+        hireDate: representative?.fecha_ingreso,
+        cutoffDay: periodSettings.hireDateCutoffDay,
+        periodMonth,
+      })
+    : null;
+  const beforeEffectiveCut = isBeforeEffectivePeriodCut(periodMonth, effectivePeriodCut);
+  const useMonthlyEffectiveCut =
+    productAffectedByPeriodSettings && shouldUseMonthlyEffectiveCut(periodMonth, effectivePeriodCut);
+  const valueBasisLabel = resolveValueBasisLabel({
+    productAffected: productAffectedByPeriodSettings,
+    resultFromHireDateEnabled: periodSettings.resultFromHireDateEnabled,
+    effectivePeriodCut,
+    periodMonth,
+  });
+  const enrichAssignment = (row: Record<string, unknown>): Record<string, unknown> => ({
+    ...row,
+    fecha_ingreso: representative?.fecha_ingreso ?? null,
+    effective_period_cut: effectivePeriodCut,
+    base_resultado: valueBasisLabel,
+    period_settings_enabled: periodSettings.resultFromHireDateEnabled,
+    product_affected_by_period_settings: productAffectedByPeriodSettings,
+    hire_date_cutoff_day: periodSettings.hireDateCutoffDay,
+  });
   const matchingAssignments = calculation.previewRows.filter((row) => {
     return normalizeKey(row.ruta) === normalizeKey(route) && normalizeKey(row.plan) === normalizeKey(productInput);
-  });
+  }).map((row) => enrichAssignment(row as unknown as Record<string, unknown>));
   const relatedAssignments = calculation.previewRows
     .filter((row) => normalizeKey(row.ruta) === normalizeKey(route))
+    .map((row) => enrichAssignment(row as unknown as Record<string, unknown>))
     .slice(0, 100);
 
   if (sourceFiles.length === 0) {
     const assignmentFileHints = [...matchingAssignments, ...relatedAssignments]
       .map((row) => ({
-        fileCode: row.archivo,
-        fileDisplay: row.archivo,
+        fileCode: String(row.archivo ?? "").trim() || null,
+        fileDisplay: String(row.archivo ?? "").trim() || null,
         source: "assignment_preview",
       }))
       .filter((hint) => String(hint.fileDisplay ?? "").trim().length > 0);
@@ -1158,7 +1420,13 @@ export async function traceCalculation(input: TraceInput): Promise<CalculationDi
   const overrides = await fetchAdjustments({ periodMonth, route, product: productInput });
   const includedSourceRows = await fetchIncludedSourceRows({
     periodMonth,
-    assignments: matchingAssignments.map((row) => publicRecord(row as unknown as Record<string, unknown>)),
+    assignments: matchingAssignments.map((row) => publicRecord(row)),
+    valueContext: {
+      basisLabel: valueBasisLabel,
+      effectivePeriodCut,
+      useMonthlyEffectiveCut,
+      isBeforeEffectiveCut: beforeEffectiveCut,
+    },
   });
   let guarantees: Array<Record<string, unknown>> = [];
   if (representative && route && teamId) {
@@ -1353,6 +1621,7 @@ export async function traceCalculation(input: TraceInput): Promise<CalculationDi
     `Diferencia reportada actual - esperado: ${difference.toFixed(6)}.`,
     `Preview calculado para ${metricKey.includes("PAGO") ? "pagoresultado" : "resultado"}: ${calculatedValue.toFixed(6)}.`,
     `Valor bruto asignado: ${assignmentValorTotal.toFixed(6)}; Resultado despues de Sales Credity: ${assignmentResultadoTotal.toFixed(6)}.`,
+    `Base de resultado por Period Settings: ${valueBasisLabel}; fecha ingreso=${String(representative?.fecha_ingreso ?? "sin fecha")}; effective_period_cut=${effectivePeriodCut ?? "no aplica"}.`,
     normalizedEvidence.length > 0 ? `Filas normalizadas revisadas: ${normalizedEvidence.join(" || ")}.` : "",
     specificEvidence ? `Coincidencia relevante: ${specificEvidence}` : "",
     `Filas de asignacion ruta/producto: ${matchingAssignments.length} (exact=${exactAssignments.length}, fuzzy=${fuzzyAssignments.length}, none=${noneAssignments.length}).`,
@@ -1415,6 +1684,12 @@ export async function traceCalculation(input: TraceInput): Promise<CalculationDi
         totalResultado: calculation.totalResultado,
         finalRowsCount: finalPreview.summary.rowsCount,
         totalPagoResultado: finalPreview.summary.totalPagoResultado,
+        periodSettingsEnabled: periodSettings.resultFromHireDateEnabled,
+        productAffectedByPeriodSettings,
+        hireDateCutoffDay: periodSettings.hireDateCutoffDay,
+        fechaIngreso: representative?.fecha_ingreso ?? null,
+        effectivePeriodCut,
+        valueBasis: valueBasisLabel,
       },
       matchingAssignments: matchingAssignments.map((row) => publicRecord(row as unknown as Record<string, unknown>)),
       includedSourceRows,
@@ -1438,6 +1713,12 @@ export async function traceCalculation(input: TraceInput): Promise<CalculationDi
           noneAssignments: noneAssignments.length,
           objectiveDuplicates: objectiveDuplicateEvidence,
           activeOverrides: activeOverrides.length,
+          periodSettingsEnabled: periodSettings.resultFromHireDateEnabled,
+          productAffectedByPeriodSettings,
+          hireDateCutoffDay: periodSettings.hireDateCutoffDay,
+          fechaIngreso: representative?.fecha_ingreso ?? null,
+          effectivePeriodCut,
+          valueBasis: valueBasisLabel,
         },
       },
     ],
