@@ -769,6 +769,7 @@ function normalizeRowsForBigQuery(params: {
       const region = normalizeUpperText(readStringFromRow(row, normalizedHeaderMap, ["region"]));
       const codigoEstadoFromRegion = region ? diarioRegionCodigoEstado[region] ?? null : null;
       const resolvedCodigoEstado = codigoEstado ?? codigoEstadoFromRegion ?? "999";
+      const billedQuantity = readNumberFromRow(row, normalizedHeaderMap, ["billed_quantity", "ytd"]) ?? 0;
 
       pushIfValid({
         archivo: params.displayName || params.fileCode,
@@ -782,11 +783,11 @@ function normalizeRowsForBigQuery(params: {
         codigo_estado: resolvedCodigoEstado,
         brick: brickParts.length > 0 ? brickParts.join("-") : null,
         molecula_producto: String(material),
-        valor: readNumberFromRow(row, normalizedHeaderMap, ["billed_quantity", "ytd"]) ?? 0,
+        valor: billedQuantity,
         trimestre: null,
         trimestre_anterior: null,
         semestre: null,
-        ytd: readNumberFromRow(row, normalizedHeaderMap, ["billed_quantity", "ytd"]) ?? 0,
+        ytd: billedQuantity,
         metric: "UNIDADES",
         fuente: "DF",
         periodo: periodMonthInput,
