@@ -2,7 +2,8 @@
 
 import { uploadUnifiedStatusImportAction } from "@/app/admin/status/actions";
 import Link from "next/link";
-import { useActionState, useState, type ChangeEvent } from "react";
+import { useRouter } from "next/navigation";
+import { useActionState, useEffect, useState, type ChangeEvent } from "react";
 
 type UploadState =
   | {
@@ -26,6 +27,7 @@ type Props = {
 type ImportMode = "shared" | "separate";
 
 export function MassImportUploadCard({ defaultPeriodMonth }: Props) {
+  const router = useRouter();
   const [importMode, setImportMode] = useState<ImportMode>("shared");
   const [state, formAction, isPending] =
     useActionState<UploadState, FormData>(uploadUnifiedStatusImportAction, null);
@@ -42,6 +44,22 @@ export function MassImportUploadCard({ defaultPeriodMonth }: Props) {
   const [svmSheetNames, setSvmSheetNames] = useState<string[]>([]);
   const [svmSheetName, setSvmSheetName] = useState("");
   const [svmDetectionError, setSvmDetectionError] = useState<string | null>(null);
+
+  const reviewHref = state?.svaBatchId
+    ? state.svmBatchId
+      ? `/admin/status/imports/${state.svaBatchId}?next_batch_id=${state.svmBatchId}&flow_step=1&flow_total=2`
+      : `/admin/status/imports/${state.svaBatchId}`
+    : null;
+
+  useEffect(() => {
+    if (!state?.ok || !reviewHref) return;
+
+    const timeout = setTimeout(() => {
+      router.replace(reviewHref);
+    }, 700);
+
+    return () => clearTimeout(timeout);
+  }, [reviewHref, router, state?.ok]);
 
   async function detectSheetNames(file: File): Promise<string[]> {
     const { read } = await import("xlsx");
@@ -384,22 +402,21 @@ export function MassImportUploadCard({ defaultPeriodMonth }: Props) {
             }`}
           >
             <p>{state.message}</p>
-            {state.svaBatchId ? (
+            {state.ok && reviewHref ? (
+              <p className="mt-1">Redirigiendo a revisar importacion...</p>
+            ) : null}
+            {!state.ok && state.svaBatchId ? (
               <p className="mt-2">
                 Batch SVA:{" "}
                 <Link
-                  href={
-                    state.svmBatchId
-                      ? `/admin/status/imports/${state.svaBatchId}?next_batch_id=${state.svmBatchId}&flow_step=1&flow_total=2`
-                      : `/admin/status/imports/${state.svaBatchId}`
-                  }
+                  href={reviewHref ?? `/admin/status/imports/${state.svaBatchId}`}
                   className="underline underline-offset-2"
                 >
                   revisar importacion
                 </Link>
               </p>
             ) : null}
-            {state.svmBatchId ? (
+            {!state.ok && state.svmBatchId ? (
               <p className="mt-1">
                 Batch SVM:{" "}
                 <Link
