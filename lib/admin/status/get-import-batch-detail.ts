@@ -7,6 +7,7 @@ import {
   SALES_FORCE_OPTIONAL_IMPORT_FIELDS,
   SALES_FORCE_REQUIRED_FIELDS,
 } from "@/lib/import-engine/sales-force-config";
+import { normalizeHeaderText } from "@/lib/import-engine/normalizers";
 
 export type ImportBatchDetail = {
   id: string;
@@ -32,6 +33,19 @@ const REQUIRED_FIELDS_BY_IMPORT_TYPE: Record<string, string[]> = {
 const OPTIONAL_FIELDS_BY_IMPORT_TYPE: Record<string, string[]> = {
   sales_force_status: [...SALES_FORCE_OPTIONAL_IMPORT_FIELDS],
   manager_status: [...MANAGER_OPTIONAL_IMPORT_FIELDS],
+};
+
+const IGNORED_MAPPING_FIELDS_BY_IMPORT_TYPE: Record<string, string[]> = {
+  sales_force_status: ["valid_since_period"],
+};
+
+const IGNORED_SOURCE_HEADERS_BY_IMPORT_TYPE: Record<string, string[]> = {
+  sales_force_status: [
+    "valid_since_period",
+    "valid since period",
+    "pago_desde",
+    "pago desde",
+  ],
 };
 
 export async function getImportBatchDetail(batchId: string) {
@@ -87,7 +101,21 @@ export async function getImportBatchDetail(batchId: string) {
     OPTIONAL_FIELDS_BY_IMPORT_TYPE[batch.import_type.code] ?? [];
 
   const mappingSnapshot = batch.mapping_snapshot ?? {};
-  const detectedHeaders = Object.keys(mappingSnapshot);
+  const ignoredMappingFields = new Set(
+    IGNORED_MAPPING_FIELDS_BY_IMPORT_TYPE[batch.import_type.code] ?? [],
+  );
+  const ignoredSourceHeaders = new Set(
+    (IGNORED_SOURCE_HEADERS_BY_IMPORT_TYPE[batch.import_type.code] ?? [])
+      .map((header) => normalizeHeaderText(header))
+      .filter(Boolean),
+  );
+  const detectedHeaders = Object.keys(mappingSnapshot).filter((header) => {
+    const targetField = mappingSnapshot[header];
+    return (
+      (!targetField || !ignoredMappingFields.has(targetField)) &&
+      !ignoredSourceHeaders.has(normalizeHeaderText(header))
+    );
+  });
 
   // invertimos: header -> field  ==> field -> header
   const fieldAssignments = Object.fromEntries(

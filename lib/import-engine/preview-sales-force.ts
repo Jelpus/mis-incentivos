@@ -28,7 +28,6 @@ type ExistingSalesForceRecord = {
   correo_electronico: string | null;
   ciudad: string | null;
   fecha_ingreso: string | null;
-  valid_since_period: string | null;
   team_id: string | null;
   base_incentivos: number | null;
 };
@@ -44,6 +43,7 @@ type PreviewSalesForceBatchResult = {
 };
 
 const DEFAULT_VALID_SINCE_PERIOD = "2026-01-01";
+const IGNORED_MAPPING_FIELDS = new Set(["valid_since_period"]);
 
 function cleanMappedData(mappedData: Record<string, unknown>) {
   const cleaned: Record<string, unknown> = {};
@@ -111,7 +111,6 @@ function comparableSalesForceData(data: {
   correo_electronico?: unknown;
   ciudad?: unknown;
   fecha_ingreso?: unknown;
-  valid_since_period?: unknown;
   team_id?: unknown;
   base_incentivos?: unknown;
   is_vacant?: unknown;
@@ -128,7 +127,6 @@ function comparableSalesForceData(data: {
     correo_electronico: data.correo_electronico ?? null,
     ciudad: data.ciudad ?? null,
     fecha_ingreso: data.fecha_ingreso ?? null,
-    valid_since_period: data.valid_since_period ?? null,
     team_id: data.team_id ?? null,
     base_incentivos: data.base_incentivos ?? null,
   };
@@ -204,7 +202,14 @@ export async function previewSalesForceImportBatch(
   }
 
   const periodMonth = batch.period_month;
-  const mappingSnapshot = (batch.mapping_snapshot ?? {}) as Record<string, string | null>;
+  const mappingSnapshot = Object.fromEntries(
+    Object.entries((batch.mapping_snapshot ?? {}) as Record<string, string | null>).map(
+      ([header, targetField]) => [
+        header,
+        targetField && IGNORED_MAPPING_FIELDS.has(targetField) ? null : targetField,
+      ],
+    ),
+  ) as Record<string, string | null>;
 
   const { data: rows, error: rowsError } = await supabase
     .from("import_rows")
@@ -230,7 +235,6 @@ export async function previewSalesForceImportBatch(
       correo_electronico,
       ciudad,
       fecha_ingreso,
-      valid_since_period,
       team_id,
       base_incentivos
     `)

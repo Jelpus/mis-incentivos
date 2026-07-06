@@ -832,17 +832,12 @@ export async function saveSalesForceStatusAction(
   const correo = String(formData.get("correo_electronico") ?? "").trim();
   const ciudad = String(formData.get("ciudad") ?? "").trim();
   const fechaIngreso = String(formData.get("fecha_ingreso") ?? "").trim();
-  const validSincePeriodInput = String(
-    formData.get("valid_since_period") ?? "",
-  ).trim();
   const isActiveRow = String(formData.get("is_active") ?? "") === "on";
   const isVacant = String(formData.get("is_vacant") ?? "") === "on";
 
   const noEmpleado = parseOptionalInteger(formData.get("no_empleado"));
   const baseIncentivos = parseOptionalNumber(formData.get("base_incentivos"));
   const normalizedFechaIngreso = normalizeDateInput(fechaIngreso);
-  const validSincePeriod =
-    normalizeDateInput(validSincePeriodInput) ?? DEFAULT_VALID_SINCE_PERIOD;
 
   if (mode !== "create" && mode !== "edit") {
     return {
@@ -938,7 +933,7 @@ export async function saveSalesForceStatusAction(
     correo_electronico: correo || null,
     ciudad: ciudad || null,
     fecha_ingreso: normalizedFechaIngreso,
-    valid_since_period: validSincePeriod,
+    valid_since_period: DEFAULT_VALID_SINCE_PERIOD,
     team_id: teamId,
     base_incentivos: baseIncentivos,
     is_active: isActiveRow,

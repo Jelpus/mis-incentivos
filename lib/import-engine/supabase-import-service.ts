@@ -3,6 +3,7 @@ import { previewExcelImport } from "./import-preview";
 import { parseExcelBuffer } from "./excel-parser";
 import { buildRowsFromSheet } from "./build-rows";
 import { resolveHeaderMappings, type KnownMapping } from "./column-mapper";
+import { normalizeHeaderText } from "./normalizers";
 
 type ImportBatchRow = {
   id: string;
@@ -36,6 +37,19 @@ type CreateImportBatchParams = {
   selectedSheetName?: string | null;
   selectedHeaderRowNumber?: number | null;
   userId?: string | null;
+};
+
+const IGNORED_TARGET_FIELDS_BY_IMPORT_TYPE: Record<string, string[]> = {
+  sales_force_status: ["valid_since_period"],
+};
+
+const IGNORED_SOURCE_HEADERS_BY_IMPORT_TYPE: Record<string, string[]> = {
+  sales_force_status: [
+    "valid_since_period",
+    "valid since period",
+    "pago_desde",
+    "pago desde",
+  ],
 };
 
 export async function createImportBatchFromExcel({
@@ -90,6 +104,14 @@ export async function createImportBatchFromExcel({
   const builtRows = buildRowsFromSheet(selectedMatrix, headerRowIndex);
   const headerRow = selectedMatrix[headerRowIndex] ?? [];
   const headers = headerRow.map((cell) => String(cell ?? "").trim()).filter(Boolean);
+  const ignoredSourceHeaders = new Set(
+    (IGNORED_SOURCE_HEADERS_BY_IMPORT_TYPE[importTypeCode] ?? [])
+      .map((header) => normalizeHeaderText(header))
+      .filter(Boolean),
+  );
+  const headersForMapping = headers.filter(
+    (header) => !ignoredSourceHeaders.has(normalizeHeaderText(header)),
+  );
 
   const { data: validFieldsData, error: validFieldsError } = await supabase.rpc(
     "get_import_type_columns",
@@ -100,10 +122,14 @@ export async function createImportBatchFromExcel({
     throw new Error(validFieldsError.message);
   }
 
+  const ignoredTargetFields = new Set(
+    IGNORED_TARGET_FIELDS_BY_IMPORT_TYPE[importTypeCode] ?? [],
+  );
+
   const validTargetFields =
     (validFieldsData as Array<{ column_name: string }> | null)?.map(
       (item) => item.column_name,
-    ) ?? [];
+    ).filter((columnName) => !ignoredTargetFields.has(columnName)) ?? [];
 
   const { data: mappingsData, error: mappingsError } = await supabase.rpc(
     "get_import_type_mappings",
@@ -117,7 +143,7 @@ export async function createImportBatchFromExcel({
   const knownMappings = (mappingsData as KnownMapping[] | null) ?? [];
 
   const mappingResolution = resolveHeaderMappings(
-    headers,
+    headersForMapping,
     knownMappings,
     validTargetFields,
   );

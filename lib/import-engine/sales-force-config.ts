@@ -25,7 +25,6 @@ export const SALES_FORCE_OPTIONAL_IMPORT_FIELDS = [
   "is_vacant",
   "ciudad",
   "fecha_ingreso",
-  "valid_since_period",
 ] as const;
 
 export type SalesForceField =
@@ -43,7 +42,6 @@ export const SALES_FORCE_FIELD_CLEANERS: Record<string, (value: unknown) => unkn
   correo_electronico: cleanEmail,
   ciudad: cleanText,
   fecha_ingreso: tryParseFlexibleDate,
-  valid_since_period: tryParseFlexibleDate,
   team_id: cleanText,
   base_incentivos: cleanNumber,
   is_vacant: cleanBooleanLike,
