@@ -160,6 +160,24 @@ function getCoverageColor(row: ChartRow) {
   return "#14532d";
 }
 
+function heatColor(percent: number) {
+  const alpha = Math.max(0.08, Math.min(0.85, percent / 100));
+  return `rgba(29, 78, 216, ${alpha})`;
+}
+
+function heatTextColor(percent: number) {
+  return percent >= 55 ? "#ffffff" : "#0f172a";
+}
+
+function averageNumbers(values: number[]) {
+  const finiteValues = values.filter((value) => Number.isFinite(value));
+  if (!finiteValues.length) return null;
+  return finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length;
+}
+
+const PERFORMANCE_SCATTER_X_LABELS = { cpd: "CPD vs objetivo (%)", cpaT1: "CPA T1 (%)" };
+const PERFORMANCE_SCATTER_X_FORMATS = { cpd: "percent", cpaT1: "percent" } as const;
+
 export function PerformanceReportClient({ initialData }: PerformanceReportClientProps) {
   const [data, setData] = useState<PerformanceReportData>(initialData);
   const [groupMode, setGroupMode] = useState<GroupMode>("month");
@@ -308,15 +326,6 @@ export function PerformanceReportClient({ initialData }: PerformanceReportClient
     }));
   }
 
-function heatColor(percent: number) {
-  const alpha = Math.max(0.08, Math.min(0.85, percent / 100));
-  return `rgba(29, 78, 216, ${alpha})`;
-}
-
-function heatTextColor(percent: number) {
-  return percent >= 55 ? "#ffffff" : "#0f172a";
-}
-
   async function exportReportExcel() {
     setExporting(true);
     try {
@@ -358,19 +367,49 @@ function heatTextColor(percent: number) {
         Coverage_151_200_pct: row.totalRoutes ? (row.coverage_151_200 / row.totalRoutes) * 100 : 0,
         Coverage_201_250_pct: row.totalRoutes ? (row.coverage_201_250 / row.totalRoutes) * 100 : 0,
       }));
-      const scatterRows = (data.scatterGraph?.points ?? []).map((point) => ({
+      const scatterPoints = data.scatterGraph?.points ?? [];
+      const defaultScatterMetric = data.scatterGraph?.defaultXMetric ?? "cpd";
+      const scatterXDivider = averageNumbers(
+        scatterPoints.map((point) =>
+          defaultScatterMetric === "cpd"
+            ? Number(point.cpd ?? NaN)
+            : Number(point.cpaT1 ?? NaN),
+        ),
+      );
+      const scatterYAverage = Number(data.scatterGraph?.yAverage ?? NaN);
+      const scatterYDivider = Number.isFinite(scatterYAverage)
+        ? scatterYAverage
+        : (data.scatterGraph?.yTarget ?? 100);
+
+      const resolveScatterQuadrant = (point: NonNullable<PerformanceReportData["scatterGraph"]>["points"][number]) => {
+        if (scatterXDivider === null) return "";
+        const xValue = defaultScatterMetric === "cpd" ? Number(point.cpd ?? NaN) : Number(point.cpaT1 ?? NaN);
+        const yValue = Number(point.y ?? NaN);
+        if (!Number.isFinite(xValue) || !Number.isFinite(yValue)) return "";
+        if (xValue < scatterXDivider && yValue < scatterYDivider) return "Abajo izquierdo";
+        if (xValue >= scatterXDivider && yValue < scatterYDivider) return "Abajo derecho";
+        if (xValue < scatterXDivider && yValue >= scatterYDivider) return "Arriba izquierdo";
+        return "Arriba derecho";
+      };
+
+      const scatterRows = scatterPoints.map((point) => ({
         Territorio: point.id,
         NombreYTerritorio: point.label,
         Cobertura_pct: point.y,
-        CPD: point.cpd,
+        CPD_vs_objetivo_pct: point.cpd,
         CPA_T1_pct: point.cpaT1,
-        Color: point.color,
+        Corte_X_promedio_pct: scatterXDivider,
+        Corte_Y_cobertura_promedio_pct: scatterYDivider,
+        Metrica_default: defaultScatterMetric === "cpd" ? "CPD_vs_objetivo_pct" : "CPA_T1_pct",
+        Cuadrante_default: resolveScatterQuadrant(point),
       }));
+      const lowerLeftRows = scatterRows.filter((row) => row.Cuadrante_default === "Abajo izquierdo");
 
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), "Resumen");
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(binsRows), "Payout Distribution");
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(productRows), "Producto Heatmap");
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(scatterRows), "CPD_CPA_Scatter");
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(lowerLeftRows), "Abajo_Izquierdo");
 
       const periodLabel = data.selectedPeriods.join("_") || "periodo";
       XLSX.writeFile(workbook, `performance_report_${periodLabel}.xlsx`);
@@ -765,6 +804,11 @@ function heatTextColor(percent: number) {
       <ResultadosScatterGraph
         title="Attainment vs CPD/CPA - Quadrant Analysis"
         data={data.scatterGraph}
+        xLabels={PERFORMANCE_SCATTER_X_LABELS}
+        xFormats={PERFORMANCE_SCATTER_X_FORMATS}
+        showReferenceText
+        showLowerLeftList
+        lowerLeftTitle="Abajo izquierdo: debajo del promedio en ambas metricas"
       />
 
       {error ? (

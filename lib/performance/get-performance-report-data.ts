@@ -24,6 +24,7 @@ type BigQueryPeriodRow = {
 
 type BigQueryRouteCoverageRow = {
   route_key: string | null;
+  team_id: string | null;
   total_payout: number | null;
   total_variable: number | null;
   payout_coverage: number | null;
@@ -126,6 +127,7 @@ export type PerformanceScatterPoint = {
 export type PerformanceScatterGraphData = {
   points: PerformanceScatterPoint[];
   yTarget: number;
+  yAverage: number | null;
   defaultXMetric: "cpd" | "cpa_t1";
   message: string | null;
 };
@@ -457,14 +459,25 @@ function computeProductBands(rows: BigQueryProductDistributionBaseRow[]): Perfor
 }
 
 function getScatterPointColor(xValue: number, yValue: number): string {
-  if (yValue >= 100 && xValue >= 7) return "#16a34a";
-  if (yValue >= 100 && xValue < 7) return "#f59e0b";
-  if (yValue < 100 && xValue >= 7) return "#eab308";
+  if (yValue >= 100 && xValue >= 100) return "#16a34a";
+  if (yValue >= 100 && xValue < 100) return "#f59e0b";
+  if (yValue < 100 && xValue >= 100) return "#eab308";
   return "#dc2626";
 }
 
 function normalizeTerritoryKey(value: string | null | undefined) {
   return String(value ?? "").trim().toUpperCase();
+}
+
+function toPositiveNumber(value: unknown): number {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : 0;
+}
+
+function averageFinite(values: number[]): number | null {
+  const finiteValues = values.filter((value) => Number.isFinite(value));
+  if (!finiteValues.length) return null;
+  return finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length;
 }
 
 type RankingAggScatterRow = {
@@ -539,6 +552,7 @@ async function buildScatterGraphData(params: {
     return {
       points: [],
       yTarget: 100,
+      yAverage: null,
       defaultXMetric: "cpd",
       message: "No hay rutas para construir CPD/CPA T1 con los filtros actuales.",
     };
@@ -549,6 +563,7 @@ async function buildScatterGraphData(params: {
     return {
       points: [],
       yTarget: 100,
+      yAverage: null,
       defaultXMetric: "cpd",
       message: "No hay periodos validos para construir CPD/CPA T1.",
     };
@@ -590,6 +605,34 @@ async function buildScatterGraphData(params: {
     territoryKeys,
     periodCodes: params.selectedPeriods,
   });
+  const teamIdByTerritory = new Map<string, string>();
+  for (const row of params.routeRows) {
+    const territory = normalizeTerritoryKey(row.route_key);
+    const teamId = String(row.team_id ?? "").trim();
+    if (territory && teamId && !teamIdByTerritory.has(territory)) {
+      teamIdByTerritory.set(territory, teamId);
+    }
+  }
+
+  const cpdObjectiveByTeamId = new Map<string, number>();
+  const teamIds = Array.from(new Set(Array.from(teamIdByTerritory.values()).filter(Boolean)));
+  for (const teamChunk of chunkArray(teamIds, 200)) {
+    const objectiveResult = await adminClient
+      .from("ranking_cpd_objectives")
+      .select("team_id, objective_cpd")
+      .in("team_id", teamChunk)
+      .eq("is_active", true);
+
+    if (objectiveResult.error) continue;
+    for (const row of (objectiveResult.data ?? []) as Array<{ team_id: string | null; objective_cpd: number | string | null }>) {
+      const teamId = String(row.team_id ?? "").trim();
+      const objectiveCpd = toPositiveNumber(row.objective_cpd);
+      if (teamId && objectiveCpd > 0) {
+        cpdObjectiveByTeamId.set(teamId, objectiveCpd);
+      }
+    }
+  }
+
   const cpdByTerritory = new Map<string, { visitas: number; diasEfectivos: number }>();
   const cpaByTerritory = new Map<string, { visitasTop: number; objetivos: number }>();
 
@@ -615,6 +658,7 @@ async function buildScatterGraphData(params: {
     }
   }
 
+  const missingObjectiveTeamIds = new Set<string>();
   const points = params.routeRows
     .map((row) => {
       const territory = normalizeTerritoryKey(row.route_key);
@@ -623,10 +667,18 @@ async function buildScatterGraphData(params: {
       if (!Number.isFinite(yValue)) return null;
 
       const cpdData = cpdByTerritory.get(territory);
-      const cpd =
+      const cpdReal =
         cpdData && cpdData.diasEfectivos > 0
           ? cpdData.visitas / cpdData.diasEfectivos
           : null;
+      const teamId = teamIdByTerritory.get(territory) ?? "";
+      const objectiveCpd = teamId ? cpdObjectiveByTeamId.get(teamId) ?? null : null;
+      const cpd = cpdReal !== null && objectiveCpd && objectiveCpd > 0
+        ? (cpdReal / objectiveCpd) * 100
+        : null;
+      if (cpdReal !== null && (!objectiveCpd || objectiveCpd <= 0) && teamId) {
+        missingObjectiveTeamIds.add(teamId);
+      }
       const cpaT1Data = cpaByTerritory.get(territory);
       const cpaT1 =
         cpaT1Data && cpaT1Data.objetivos > 0
@@ -649,15 +701,20 @@ async function buildScatterGraphData(params: {
 
   const hasCpd = points.some((point) => Number.isFinite(Number(point.cpd ?? NaN)));
   const hasCpa = points.some((point) => Number.isFinite(Number(point.cpaT1 ?? NaN)));
+  const yAverage = averageFinite(points.map((point) => Number(point.y ?? NaN)));
+  const missingObjectiveText = missingObjectiveTeamIds.size > 0
+    ? ` ${missingObjectiveTeamIds.size} team_id sin objetivo CPD fueron omitidos.`
+    : "";
 
   return {
     points,
     yTarget: 100,
+    yAverage,
     defaultXMetric: hasCpd ? "cpd" : "cpa_t1",
     message:
       hasCpd || hasCpa
-        ? "Cobertura = suma(resultado) / suma(objetivo). CPD = sum(visitas) / sum(dias_efectivos) desde ranking_cpd_raw. CPA T1 = sum(total_visitas_top) / sum(total_objetivos) con tier T1."
-        : "No hay datos KPI para construir CPD/CPA T1.",
+        ? `Cobertura = suma(resultado) / suma(objetivo). CPD = (sum(visitas) / sum(dias_efectivos)) / objetivo_cpd activo x 100. CPA T1 = sum(total_visitas_top) / sum(total_objetivos) con tier T1. Cortes de cuadrantes: promedio del equipo/equipos filtrados.${missingObjectiveText}`
+        : `No hay datos KPI para construir CPD/CPA T1.${missingObjectiveText}`,
   };
 }
 
@@ -822,6 +879,7 @@ export async function getPerformanceReportData(params: {
       WITH route_base AS (
         SELECT
           COALESCE(NULLIF(TRIM(representante), ''), NULLIF(TRIM(ruta), '')) AS route_key,
+          ARRAY_AGG(NULLIF(TRIM(team_id), '') IGNORE NULLS ORDER BY periodo DESC LIMIT 1)[SAFE_OFFSET(0)] AS team_id,
           SUM(IFNULL(pagoresultado, 0)) AS total_payout,
           SUM(IFNULL(pagovariable, 0)) AS total_variable,
           IF(
@@ -835,6 +893,7 @@ export async function getPerformanceReportData(params: {
       )
       SELECT
         route_key,
+        team_id,
         total_payout,
         total_variable,
         IF(total_variable = 0, 0, SAFE_MULTIPLY(SAFE_DIVIDE(total_payout, total_variable), 100)) AS payout_coverage,

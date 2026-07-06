@@ -24,9 +24,12 @@ export type ResultadosScatterPoint = {
 export type ResultadosScatterGraphData = {
   points: ResultadosScatterPoint[];
   yTarget: number;
+  yAverage?: number | null;
   defaultXMetric: "cpd" | "cpa_t1";
   message: string | null;
 };
+
+type XMetricFormat = "number" | "percent";
 
 type ResultadosScatterGraphProps = {
   title?: string;
@@ -35,6 +38,13 @@ type ResultadosScatterGraphProps = {
     cpd?: string;
     cpaT1?: string;
   };
+  xFormats?: {
+    cpd?: XMetricFormat;
+    cpaT1?: XMetricFormat;
+  };
+  showReferenceText?: boolean;
+  showLowerLeftList?: boolean;
+  lowerLeftTitle?: string;
 };
 
 function domainWithPadding(values: number[], fallbackMin: number, fallbackMax: number): [number, number] {
@@ -53,17 +63,23 @@ function clampCoverage(value: number): number {
   return value;
 }
 
-function formatXAxisTick(value: number, metric: "cpd" | "cpa_t1"): string {
-  if (!Number.isFinite(value)) return metric === "cpd" ? "0" : "0%";
-  if (metric === "cpa_t1") {
+function formatXAxisTick(value: number, format: XMetricFormat): string {
+  if (!Number.isFinite(value)) return format === "percent" ? "0%" : "0";
+  if (format === "percent") {
     return `${Math.round(value)}%`;
   }
   return Number.isInteger(value) ? `${value}` : value.toFixed(1);
 }
 
-function getXAxisDomain(values: number[], metric: "cpd" | "cpa_t1"): [number, number] {
-  if (values.length === 0) return metric === "cpa_t1" ? [0, 120] : [0, 10];
-  if (metric === "cpa_t1") {
+function formatMetricValue(value: number, format: XMetricFormat): string {
+  if (!Number.isFinite(value)) return "-";
+  if (format === "percent") return `${value.toFixed(1)}%`;
+  return Number.isInteger(value) ? `${value}` : value.toFixed(2);
+}
+
+function getXAxisDomain(values: number[], format: XMetricFormat): [number, number] {
+  if (values.length === 0) return format === "percent" ? [0, 120] : [0, 10];
+  if (format === "percent") {
     const min = Math.min(...values);
     const max = Math.max(...values);
     const xMin = Math.max(0, min - 20);
@@ -92,17 +108,19 @@ function ScatterTooltip({
   active,
   payload,
   xLabel,
+  xFormat,
 }: {
   active?: boolean;
   payload?: TooltipPayload[];
   xLabel: string;
+  xFormat: XMetricFormat;
 }) {
   if (!active || !payload?.[0]?.payload) return null;
   const point = payload[0].payload as ResultadosScatterPoint & { x: number };
   return (
     <div className="rounded-lg border border-[#d9e5fb] bg-white px-3 py-2 text-xs text-[#334155] shadow-sm">
       <p className="font-semibold text-[#1e3a8a]">{point.label}</p>
-      <p className="mt-1">{xLabel}: {point.x.toFixed(2)}</p>
+      <p className="mt-1">{xLabel}: {formatMetricValue(point.x, xFormat)}</p>
       <p>Coverage: {point.y.toFixed(1)}%</p>
     </div>
   );
@@ -112,10 +130,15 @@ export function ResultadosScatterGraph({
   title = "Attainment vs CPD/CPA - Quadrant Analysis",
   data,
   xLabels,
+  xFormats,
+  showReferenceText = false,
+  showLowerLeftList = false,
+  lowerLeftTitle = "Por debajo de ambos promedios",
 }: ResultadosScatterGraphProps) {
   const safeData: ResultadosScatterGraphData = data ?? {
     points: [],
     yTarget: 100,
+    yAverage: null,
     defaultXMetric: "cpd",
     message: null,
   };
@@ -127,6 +150,10 @@ export function ResultadosScatterGraph({
   const xLabel = effectiveMetric === "cpd"
     ? (xLabels?.cpd ?? "CPD")
     : (xLabels?.cpaT1 ?? "CPA T1 (%)");
+  const xFormat = effectiveMetric === "cpd"
+    ? (xFormats?.cpd ?? "number")
+    : (xFormats?.cpaT1 ?? "percent");
+  const cpdButtonLabel = xFormats?.cpd === "percent" ? "CPD %" : "CPD";
 
   const plottedPoints = useMemo(
     () =>
@@ -155,7 +182,15 @@ export function ResultadosScatterGraph({
 
   const xValues = plottedPoints.map((point) => point.x);
   const xMean = xValues.length > 0 ? xValues.reduce((sum, value) => sum + value, 0) / xValues.length : 0;
-  const [xMin, xMax] = getXAxisDomain(xValues, effectiveMetric);
+  const yAverage = Number(safeData.yAverage ?? NaN);
+  const usesAverageYDivider = Number.isFinite(yAverage);
+  const yDivider = usesAverageYDivider ? clampCoverage(yAverage) : safeData.yTarget;
+  const [xMin, xMax] = getXAxisDomain(xValues, xFormat);
+  const lowerLeftPoints = showLowerLeftList
+    ? plottedPoints
+        .filter((point) => point.x < xMean && point.y < yDivider)
+        .sort((a, b) => (a.y - b.y) || (a.x - b.x) || a.label.localeCompare(b.label, "es"))
+    : [];
 
   return (
     <section className="rounded-xl border border-[#e3ebfa] bg-white p-4 sm:p-5">
@@ -163,6 +198,12 @@ export function ResultadosScatterGraph({
       <p className="mt-1 text-xs text-[#667085]">
         Eje X: {xLabel} | Eje Y: Cobertura (%)
       </p>
+      {showReferenceText ? (
+        <p className="mt-1 text-xs text-[#667085]">
+          Cortes: media {xLabel} ({formatMetricValue(xMean, xFormat)}) y{" "}
+          {usesAverageYDivider ? "media cobertura" : "cobertura objetivo"} ({yDivider.toFixed(1)}%).
+        </p>
+      ) : null}
       {hasCpd || hasCpaT1 ? (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <button
@@ -175,7 +216,7 @@ export function ResultadosScatterGraph({
                 : "border-[#d0d5dd] bg-white text-[#334155] hover:bg-[#f8fafc]"
             } disabled:cursor-not-allowed disabled:opacity-50`}
           >
-            CPD
+            {cpdButtonLabel}
           </button>
           <button
             type="button"
@@ -206,7 +247,7 @@ export function ResultadosScatterGraph({
               dataKey="x"
               name={xLabel}
               domain={[xMin, xMax]}
-              tickFormatter={(value) => formatXAxisTick(Number(value), effectiveMetric)}
+              tickFormatter={(value) => formatXAxisTick(Number(value), xFormat)}
               tick={{ fontSize: 12, fill: "#475467" }}
               stroke="#98a2b3"
             />
@@ -220,12 +261,17 @@ export function ResultadosScatterGraph({
               tick={{ fontSize: 12, fill: "#475467" }}
               stroke="#98a2b3"
             />
-            <Tooltip content={<ScatterTooltip xLabel={xLabel} />} />
+            <Tooltip content={<ScatterTooltip xLabel={xLabel} xFormat={xFormat} />} />
             <ReferenceLine
-              y={data.yTarget}
+              y={yDivider}
               stroke="#6b7280"
               strokeDasharray="5 5"
-              label={{ value: "Cobertura objetivo 100%", position: "insideTopLeft", fill: "#475467", fontSize: 11 }}
+              label={{
+                value: usesAverageYDivider ? "Media cobertura" : "Cobertura objetivo 100%",
+                position: "insideTopLeft",
+                fill: "#475467",
+                fontSize: 11,
+              }}
             />
             <ReferenceLine
               x={xMean}
@@ -239,14 +285,47 @@ export function ResultadosScatterGraph({
               const py = Number(payload?.y ?? NaN);
               const color =
                 Number.isFinite(px) && Number.isFinite(py)
-                  ? getQuadrantColor(px, py, xMean, safeData.yTarget)
+                  ? getQuadrantColor(px, py, xMean, yDivider)
                   : (payload?.color ?? "#2563eb");
               return <circle cx={cx} cy={cy} r={5} fill={color} stroke="#ffffff" strokeWidth={1.5} />;
             }} />
           </ScatterChart>
         </ResponsiveContainer>
       </div>
+      {showLowerLeftList ? (
+        <div className="mt-4 border-t border-[#e3ebfa] pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-[#1e3a8a]">{lowerLeftTitle}</p>
+            <p className="text-xs font-medium text-[#667085]">{lowerLeftPoints.length} ruta(s)</p>
+          </div>
+          {lowerLeftPoints.length > 0 ? (
+            <div className="mt-3 max-h-64 overflow-auto">
+              <table className="w-full table-auto text-xs text-[#344054]">
+                <thead className="sticky top-0 bg-[#f8fbff] text-left uppercase tracking-wide text-[#475467]">
+                  <tr className="border-b border-[#e5e7eb]">
+                    <th className="px-2 py-2">Ruta</th>
+                    <th className="px-2 py-2 text-right">{xLabel}</th>
+                    <th className="px-2 py-2 text-right">Cobertura</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lowerLeftPoints.map((point) => (
+                    <tr key={`lower-left-${effectiveMetric}-${point.id}`} className="border-b border-[#eef2fb]">
+                      <td className="max-w-[18rem] truncate px-2 py-2 font-medium text-[#0f172a]" title={point.label}>
+                        {point.label}
+                      </td>
+                      <td className="px-2 py-2 text-right">{formatMetricValue(point.x, xFormat)}</td>
+                      <td className="px-2 py-2 text-right">{point.y.toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-[#667085]">Sin rutas en el cuadrante abajo izquierdo.</p>
+          )}
+        </div>
+      ) : null}
     </section>
   );
 }
-
