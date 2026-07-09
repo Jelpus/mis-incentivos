@@ -8,7 +8,10 @@ import {
   isMissingRelationError,
   normalizePeriodMonthInput,
 } from "@/lib/admin/incentive-rules/shared";
-import { SOURCE_RANKING_READY_TABLE_NAMES } from "@/lib/admin/source-ranking/constants";
+import {
+  getSourceRankingPeriodOptions,
+  SOURCE_RANKING_READY_TABLE_NAMES,
+} from "@/lib/admin/source-ranking/constants";
 import { getResultadosV2Data } from "@/lib/results/get-resultados-v2-data";
 import type { ResultadoRecord } from "@/lib/results/get-resultados-v2-data";
 import {
@@ -109,10 +112,6 @@ type ProfileRelationRow = {
 type TeamMemberRow = {
   no_empleado: number | null;
   territorio_individual: string | null;
-};
-
-type RankingPeriodRow = {
-  period_month: string | null;
 };
 
 type MatchSource =
@@ -305,39 +304,27 @@ function buildContactMailto(contact: TeamContactData): string | null {
   return `mailto:${contact.email}?${queryParts.join("&")}`;
 }
 
-function normalizePeriodSet(rows: RankingPeriodRow[]): Set<string> {
-  return new Set(
-    rows
-      .map((row) => normalizePeriodMonthInput(String(row.period_month ?? "").trim()))
-      .filter((value): value is string => Boolean(value)),
-  );
-}
-
 async function getLatestAvailableRankingPeriodMonth(): Promise<string | null> {
   const adminClient = createAdminClient();
   if (!adminClient) return null;
 
-  const periodResults = await Promise.all(
-    SOURCE_RANKING_READY_TABLE_NAMES.map((tableName) =>
-      adminClient
-        .from(tableName)
-        .select("period_month")
-        .order("period_month", { ascending: false })
-        .limit(50000),
-    ),
-  );
+  for (const periodMonth of getSourceRankingPeriodOptions()) {
+    const periodResults = await Promise.all(
+      SOURCE_RANKING_READY_TABLE_NAMES.map((tableName) =>
+        adminClient
+          .from(tableName)
+          .select("period_month", { count: "exact", head: true })
+          .eq("period_month", periodMonth),
+      ),
+    );
 
-  if (periodResults.some((result) => result.error)) return null;
+    if (periodResults.some((result) => result.error)) return null;
+    if (periodResults.every((result) => (result.count ?? 0) > 0)) {
+      return periodMonth;
+    }
+  }
 
-  const periodSets = periodResults.map((result) =>
-    normalizePeriodSet((result.data ?? []) as RankingPeriodRow[]),
-  );
-  const [firstSet, ...remainingSets] = periodSets;
-  if (!firstSet) return null;
-
-  return Array.from(firstSet)
-    .filter((periodMonth) => remainingSets.every((set) => set.has(periodMonth)))
-    .sort((a, b) => b.localeCompare(a))[0] ?? null;
+  return null;
 }
 
 async function getLatestStatusPeriodForRanking(

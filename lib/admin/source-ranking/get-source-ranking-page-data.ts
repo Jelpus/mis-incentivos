@@ -20,10 +20,6 @@ type RankingSourceUploadRow = {
   period_month: string | null;
 };
 
-type PeriodOnlyRow = {
-  period_month: string | null;
-};
-
 type PeriodStat = {
   periodMonth: string;
   rows: number;
@@ -73,36 +69,36 @@ export type SourceRankingPageData = {
   };
 };
 
-function buildPeriodStats(rows: PeriodOnlyRow[]): PeriodStat[] {
-  const counts = new Map<string, number>();
-  for (const row of rows) {
-    const period = normalizePeriodMonthInput(String(row.period_month ?? "").trim());
-    if (!period) continue;
-    counts.set(period, (counts.get(period) ?? 0) + 1);
-  }
-  return Array.from(counts.entries())
-    .map(([periodMonth, rowsCount]) => ({ periodMonth, rows: rowsCount }))
-    .sort((a, b) => a.periodMonth.localeCompare(b.periodMonth));
-}
-
-async function loadNormalizedPeriodStats(
+async function loadTableDiagnostics(
   supabase: NonNullable<ReturnType<typeof createAdminClient>>,
   tableName: string,
-): Promise<{ stats: PeriodStat[]; message: string | null }> {
-  const result = await supabase
-    .from(tableName)
-    .select("period_month")
-    .order("period_month", { ascending: true })
-    .limit(50000);
+  periodMonths: string[],
+  selectedPeriodMonth: string | null,
+): Promise<TableDiagnostics> {
+  const periodRows = await Promise.all(
+    periodMonths.map(async (periodMonth) => {
+      const result = await loadSelectedPeriodRows(supabase, tableName, periodMonth);
+      return { periodMonth, ...result };
+    }),
+  );
 
-  if (result.error) {
-    if (isMissingRelationError(result.error)) {
-      return { stats: [], message: `Falta ${getMissingRelationName(result.error) ?? tableName}.` };
+  let selectedRows: number | null = selectedPeriodMonth ? 0 : null;
+  let message: string | null = null;
+  const stats: PeriodStat[] = [];
+
+  for (const row of periodRows) {
+    if (row.message && !message) message = row.message;
+    if (row.periodMonth === selectedPeriodMonth) selectedRows = row.rows;
+    if (row.rows && row.rows > 0) {
+      stats.push({ periodMonth: row.periodMonth, rows: row.rows });
     }
-    return { stats: [], message: result.error.message };
   }
 
-  return { stats: buildPeriodStats((result.data ?? []) as PeriodOnlyRow[]), message: null };
+  return {
+    stats: stats.sort((a, b) => a.periodMonth.localeCompare(b.periodMonth)),
+    selectedRows,
+    message,
+  };
 }
 
 async function loadSelectedPeriodRows(
@@ -207,20 +203,9 @@ export async function getSourceRankingPageData(periodMonthInput?: string | null)
 
   const tableDiagnosticsEntries = await Promise.all(
     SOURCE_RANKING_READY_TABLE_NAMES.map(async (tableName) => {
-      const [statsResult, selectedRowsResult] = await Promise.all([
-        loadNormalizedPeriodStats(supabase, tableName),
-        selectedPeriodMonth
-          ? loadSelectedPeriodRows(supabase, tableName, selectedPeriodMonth)
-          : Promise.resolve({ rows: null, message: null }),
-      ]);
-
       return [
         tableName,
-        {
-          stats: statsResult.stats,
-          selectedRows: selectedRowsResult.rows,
-          message: statsResult.message ?? selectedRowsResult.message,
-        },
+        await loadTableDiagnostics(supabase, tableName, periodOptions, selectedPeriodMonth),
       ] as const;
     }),
   );

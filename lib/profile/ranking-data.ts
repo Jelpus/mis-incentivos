@@ -4,7 +4,10 @@ import {
   formatPeriodMonthLabel,
   normalizePeriodMonthInput,
 } from "@/lib/admin/incentive-rules/shared";
-import { SOURCE_RANKING_READY_TABLE_NAMES } from "@/lib/admin/source-ranking/constants";
+import {
+  getSourceRankingPeriodOptions,
+  SOURCE_RANKING_READY_TABLE_NAMES,
+} from "@/lib/admin/source-ranking/constants";
 import {
   getRankingContestsData,
   type RankingContestsData,
@@ -210,27 +213,34 @@ async function getAvailableRankingPeriods() {
   const supabase = createAdminClient();
   if (!supabase) return [];
 
-  const periodResults = await Promise.all(
-    SOURCE_RANKING_READY_TABLE_NAMES.map((tableName) =>
-      supabase
-        .from(tableName)
-        .select("period_month")
-        .order("period_month", { ascending: false })
-        .limit(50000),
-    ),
+  const periodOptions = getSourceRankingPeriodOptions();
+  const periodSets = await Promise.all(
+    SOURCE_RANKING_READY_TABLE_NAMES.map(async (tableName) => {
+      const periodCounts = await Promise.all(
+        periodOptions.map(async (periodMonth) => {
+          const result = await supabase
+            .from(tableName)
+            .select("period_month", { count: "exact", head: true })
+            .eq("period_month", periodMonth);
+
+          if (result.error) return { periodMonth, rows: null };
+          return { periodMonth, rows: result.count ?? 0 };
+        }),
+      );
+
+      if (periodCounts.some((item) => item.rows === null)) return null;
+      return new Set(
+        periodCounts
+          .filter((item) => (item.rows ?? 0) > 0)
+          .map((item) => item.periodMonth),
+      );
+    }),
   );
 
-  if (periodResults.some((result) => result.error)) return [];
+  const availablePeriodSets = periodSets.filter((set): set is Set<string> => Boolean(set));
+  if (availablePeriodSets.length !== periodSets.length) return [];
 
-  const periodSets = periodResults.map((result) =>
-    new Set(
-      ((result.data ?? []) as PeriodRow[])
-        .map((row) => normalizePeriodMonthInput(String(row.period_month ?? "")))
-        .filter((value): value is string => Boolean(value)),
-    ),
-  );
-
-  const [firstSet, ...remainingSets] = periodSets;
+  const [firstSet, ...remainingSets] = availablePeriodSets;
   if (!firstSet) return [];
 
   return Array.from(firstSet)
