@@ -18,6 +18,7 @@ import type {
 } from "@/lib/performance/get-performance-report-data";
 
 type GroupMode = "month" | "quarter" | "semester" | "year";
+type ReportSection = "payout" | "product" | "scatter";
 
 type PeriodGroup = {
   key: string;
@@ -177,6 +178,11 @@ function averageNumbers(values: number[]) {
 
 const PERFORMANCE_SCATTER_X_LABELS = { cpd: "CPD vs objetivo (%)", cpaT1: "CPA T1 (%)" };
 const PERFORMANCE_SCATTER_X_FORMATS = { cpd: "percent", cpaT1: "percent" } as const;
+const REPORT_SECTIONS: Array<{ key: ReportSection; label: string }> = [
+  { key: "payout", label: "Payout Distribution" },
+  { key: "product", label: "Distribucion Por Producto" },
+  { key: "scatter", label: "Attainment vs CPD/CPA" },
+];
 
 export function PerformanceReportClient({ initialData }: PerformanceReportClientProps) {
   const [data, setData] = useState<PerformanceReportData>(initialData);
@@ -189,6 +195,7 @@ export function PerformanceReportClient({ initialData }: PerformanceReportClient
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [bandMetric, setBandMetric] = useState<"payout" | "coverage">("payout");
+  const [activeSection, setActiveSection] = useState<ReportSection>("payout");
   const [exporting, setExporting] = useState(false);
   const initialKeyRef = useRef(
     buildRequestKey({
@@ -369,20 +376,21 @@ export function PerformanceReportClient({ initialData }: PerformanceReportClient
       }));
       const scatterPoints = data.scatterGraph?.points ?? [];
       const defaultScatterMetric = data.scatterGraph?.defaultXMetric ?? "cpd";
-      const scatterXDivider = averageNumbers(
+      const scatterXAverage = averageNumbers(
         scatterPoints.map((point) =>
           defaultScatterMetric === "cpd"
             ? Number(point.cpd ?? NaN)
             : Number(point.cpaT1 ?? NaN),
         ),
       );
-      const scatterYAverage = Number(data.scatterGraph?.yAverage ?? NaN);
-      const scatterYDivider = Number.isFinite(scatterYAverage)
-        ? scatterYAverage
-        : (data.scatterGraph?.yTarget ?? 100);
+      const scatterXTarget = 100;
+      const scatterXDivider = Math.max(scatterXAverage ?? scatterXTarget, scatterXTarget);
+      const scatterYAverageRaw = Number(data.scatterGraph?.yAverage ?? NaN);
+      const scatterYAverage = Number.isFinite(scatterYAverageRaw) ? scatterYAverageRaw : null;
+      const scatterYTarget = data.scatterGraph?.yTarget ?? 100;
+      const scatterYDivider = Math.max(scatterYAverage ?? scatterYTarget, scatterYTarget);
 
       const resolveScatterQuadrant = (point: NonNullable<PerformanceReportData["scatterGraph"]>["points"][number]) => {
-        if (scatterXDivider === null) return "";
         const xValue = defaultScatterMetric === "cpd" ? Number(point.cpd ?? NaN) : Number(point.cpaT1 ?? NaN);
         const yValue = Number(point.y ?? NaN);
         if (!Number.isFinite(xValue) || !Number.isFinite(yValue)) return "";
@@ -398,8 +406,12 @@ export function PerformanceReportClient({ initialData }: PerformanceReportClient
         Cobertura_pct: point.y,
         CPD_vs_objetivo_pct: point.cpd,
         CPA_T1_pct: point.cpaT1,
-        Corte_X_promedio_pct: scatterXDivider,
-        Corte_Y_cobertura_promedio_pct: scatterYDivider,
+        Corte_X_promedio_pct: scatterXAverage,
+        Corte_X_100_pct: scatterXTarget,
+        Corte_X_efectivo_pct: scatterXDivider,
+        Corte_Y_cobertura_promedio_pct: scatterYAverage,
+        Corte_Y_100_pct: scatterYTarget,
+        Corte_Y_efectivo_pct: scatterYDivider,
         Metrica_default: defaultScatterMetric === "cpd" ? "CPD_vs_objetivo_pct" : "CPA_T1_pct",
         Cuadrante_default: resolveScatterQuadrant(point),
       }));
@@ -587,6 +599,32 @@ export function PerformanceReportClient({ initialData }: PerformanceReportClient
         </div>
       </div>
 
+      <div className="rounded-xl border border-[#e3ebfa] bg-white p-2">
+        <div role="tablist" aria-label="Secciones del reporte" className="grid gap-2 md:grid-cols-3">
+          {REPORT_SECTIONS.map((section) => {
+            const active = activeSection === section.key;
+            return (
+              <button
+                key={section.key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setActiveSection(section.key)}
+                className={
+                  active
+                    ? "rounded-lg border border-[#bfd3ff] bg-[#eaf2ff] px-3 py-2 text-sm font-semibold text-[#002b7f]"
+                    : "rounded-lg border border-transparent px-3 py-2 text-sm font-medium text-[#475467] hover:border-[#d0d5dd] hover:bg-[#f8fafc]"
+                }
+              >
+                {section.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {activeSection === "payout" ? (
+        <>
       <div className="rounded-xl border border-[#e3ebfa] bg-white p-4 sm:p-5">
         <p className="text-sm font-semibold text-[#1e3a8a]">Payout Distribution</p>
         <p className="mt-1 text-xs text-[#667085]">
@@ -723,7 +761,10 @@ export function PerformanceReportClient({ initialData }: PerformanceReportClient
           </ul>
         </div>
       </div>
+        </>
+      ) : null}
 
+      {activeSection === "product" ? (
       <div className="rounded-xl border border-[#e3ebfa] bg-white p-4 sm:p-5">
         <p className="text-sm font-semibold text-[#1e3a8a]">
           Distribucion Por Producto (Heatmap)
@@ -800,7 +841,9 @@ export function PerformanceReportClient({ initialData }: PerformanceReportClient
           </table>
         </div>
       </div>
+      ) : null}
 
+      {activeSection === "scatter" ? (
       <ResultadosScatterGraph
         title="Attainment vs CPD/CPA - Quadrant Analysis"
         data={data.scatterGraph}
@@ -808,8 +851,10 @@ export function PerformanceReportClient({ initialData }: PerformanceReportClient
         xFormats={PERFORMANCE_SCATTER_X_FORMATS}
         showReferenceText
         showLowerLeftList
-        lowerLeftTitle="Abajo izquierdo: debajo del promedio en ambas metricas"
+        showReferenceModeControl
+        lowerLeftTitle="Abajo izquierdo: debajo del corte activo en ambas metricas"
       />
+      ) : null}
 
       {error ? (
         <div className="rounded-xl border border-[#fecdca] bg-[#fff6f5] p-4 sm:p-5">

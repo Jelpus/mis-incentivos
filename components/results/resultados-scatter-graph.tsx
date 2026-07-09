@@ -30,6 +30,7 @@ export type ResultadosScatterGraphData = {
 };
 
 type XMetricFormat = "number" | "percent";
+export type ScatterReferenceMode = "average" | "target" | "both";
 
 type ResultadosScatterGraphProps = {
   title?: string;
@@ -45,6 +46,8 @@ type ResultadosScatterGraphProps = {
   showReferenceText?: boolean;
   showLowerLeftList?: boolean;
   lowerLeftTitle?: string;
+  showReferenceModeControl?: boolean;
+  xTarget?: number;
 };
 
 function domainWithPadding(values: number[], fallbackMin: number, fallbackMax: number): [number, number] {
@@ -75,6 +78,12 @@ function formatMetricValue(value: number, format: XMetricFormat): string {
   if (!Number.isFinite(value)) return "-";
   if (format === "percent") return `${value.toFixed(1)}%`;
   return Number.isInteger(value) ? `${value}` : value.toFixed(2);
+}
+
+function getReferenceModeLabel(mode: ScatterReferenceMode): string {
+  if (mode === "target") return "vs 100%";
+  if (mode === "both") return "Ambos";
+  return "vs Promedio";
 }
 
 function getXAxisDomain(values: number[], format: XMetricFormat): [number, number] {
@@ -134,6 +143,8 @@ export function ResultadosScatterGraph({
   showReferenceText = false,
   showLowerLeftList = false,
   lowerLeftTitle = "Por debajo de ambos promedios",
+  showReferenceModeControl = false,
+  xTarget = 100,
 }: ResultadosScatterGraphProps) {
   const safeData: ResultadosScatterGraphData = data ?? {
     points: [],
@@ -143,6 +154,9 @@ export function ResultadosScatterGraph({
     message: null,
   };
   const [xMetric, setXMetric] = useState<"cpd" | "cpa_t1">(safeData.defaultXMetric);
+  const [referenceMode, setReferenceMode] = useState<ScatterReferenceMode>(
+    showReferenceModeControl ? "both" : "average",
+  );
 
   const hasCpd = safeData.points.some((point) => Number.isFinite(point.cpd ?? NaN));
   const hasCpaT1 = safeData.points.some((point) => Number.isFinite(point.cpaT1 ?? NaN));
@@ -184,11 +198,32 @@ export function ResultadosScatterGraph({
   const xMean = xValues.length > 0 ? xValues.reduce((sum, value) => sum + value, 0) / xValues.length : 0;
   const yAverage = Number(safeData.yAverage ?? NaN);
   const usesAverageYDivider = Number.isFinite(yAverage);
-  const yDivider = usesAverageYDivider ? clampCoverage(yAverage) : safeData.yTarget;
-  const [xMin, xMax] = getXAxisDomain(xValues, xFormat);
+  const averageYDivider = usesAverageYDivider ? clampCoverage(yAverage) : safeData.yTarget;
+  const targetYDivider = clampCoverage(safeData.yTarget);
+  const effectiveReferenceMode = showReferenceModeControl ? referenceMode : "average";
+  const xDivider =
+    effectiveReferenceMode === "target"
+      ? xTarget
+      : effectiveReferenceMode === "both"
+        ? Math.max(xMean, xTarget)
+        : xMean;
+  const yDivider =
+    effectiveReferenceMode === "target"
+      ? targetYDivider
+      : effectiveReferenceMode === "both"
+        ? Math.max(averageYDivider, targetYDivider)
+        : averageYDivider;
+  const shouldShowAverageReference = effectiveReferenceMode === "average" || effectiveReferenceMode === "both";
+  const shouldShowTargetReference = effectiveReferenceMode === "target" || effectiveReferenceMode === "both";
+  const xDomainValues = [
+    ...xValues,
+    shouldShowAverageReference ? xMean : null,
+    shouldShowTargetReference ? xTarget : null,
+  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const [xMin, xMax] = getXAxisDomain(xDomainValues, xFormat);
   const lowerLeftPoints = showLowerLeftList
     ? plottedPoints
-        .filter((point) => point.x < xMean && point.y < yDivider)
+        .filter((point) => point.x < xDivider && point.y < yDivider)
         .sort((a, b) => (a.y - b.y) || (a.x - b.x) || a.label.localeCompare(b.label, "es"))
     : [];
 
@@ -200,36 +235,56 @@ export function ResultadosScatterGraph({
       </p>
       {showReferenceText ? (
         <p className="mt-1 text-xs text-[#667085]">
-          Cortes: media {xLabel} ({formatMetricValue(xMean, xFormat)}) y{" "}
-          {usesAverageYDivider ? "media cobertura" : "cobertura objetivo"} ({yDivider.toFixed(1)}%).
+          Cortes activos: {getReferenceModeLabel(effectiveReferenceMode)}. Referencia efectiva:{" "}
+          {formatMetricValue(xDivider, xFormat)} en {xLabel} y {yDivider.toFixed(1)}% en cobertura.
         </p>
       ) : null}
       {hasCpd || hasCpaT1 ? (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setXMetric("cpd")}
-            disabled={!hasCpd}
-            className={`inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-              effectiveMetric === "cpd"
-                ? "border-[#93c5fd] bg-[#eff6ff] text-[#1d4ed8]"
-                : "border-[#d0d5dd] bg-white text-[#334155] hover:bg-[#f8fafc]"
-            } disabled:cursor-not-allowed disabled:opacity-50`}
-          >
-            {cpdButtonLabel}
-          </button>
-          <button
-            type="button"
-            onClick={() => setXMetric("cpa_t1")}
-            disabled={!hasCpaT1}
-            className={`inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-              effectiveMetric === "cpa_t1"
-                ? "border-[#93c5fd] bg-[#eff6ff] text-[#1d4ed8]"
-                : "border-[#d0d5dd] bg-white text-[#334155] hover:bg-[#f8fafc]"
-            } disabled:cursor-not-allowed disabled:opacity-50`}
-          >
-            CPA T1
-          </button>
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <div className="inline-flex rounded-lg border border-[#d0d5dd] bg-white p-1">
+            <button
+              type="button"
+              onClick={() => setXMetric("cpd")}
+              disabled={!hasCpd}
+              className={`inline-flex items-center rounded-md px-3 py-1 text-xs font-medium transition ${
+                effectiveMetric === "cpd"
+                  ? "bg-[#eff6ff] text-[#1d4ed8]"
+                  : "text-[#334155] hover:bg-[#f8fafc]"
+              } disabled:cursor-not-allowed disabled:opacity-50`}
+            >
+              {cpdButtonLabel}
+            </button>
+            <button
+              type="button"
+              onClick={() => setXMetric("cpa_t1")}
+              disabled={!hasCpaT1}
+              className={`inline-flex items-center rounded-md px-3 py-1 text-xs font-medium transition ${
+                effectiveMetric === "cpa_t1"
+                  ? "bg-[#eff6ff] text-[#1d4ed8]"
+                  : "text-[#334155] hover:bg-[#f8fafc]"
+              } disabled:cursor-not-allowed disabled:opacity-50`}
+            >
+              CPA T1
+            </button>
+          </div>
+          {showReferenceModeControl ? (
+            <div className="inline-flex rounded-lg border border-[#d0d5dd] bg-white p-1">
+              {(["average", "target", "both"] as ScatterReferenceMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setReferenceMode(mode)}
+                  className={`inline-flex items-center rounded-md px-3 py-1 text-xs font-medium transition ${
+                    referenceMode === mode
+                      ? "bg-[#eef2ff] text-[#3730a3]"
+                      : "text-[#334155] hover:bg-[#f8fafc]"
+                  }`}
+                >
+                  {getReferenceModeLabel(mode)}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
       {data.message ? (
@@ -262,30 +317,50 @@ export function ResultadosScatterGraph({
               stroke="#98a2b3"
             />
             <Tooltip content={<ScatterTooltip xLabel={xLabel} xFormat={xFormat} />} />
-            <ReferenceLine
-              y={yDivider}
-              stroke="#6b7280"
-              strokeDasharray="5 5"
-              label={{
-                value: usesAverageYDivider ? "Media cobertura" : "Cobertura objetivo 100%",
-                position: "insideTopLeft",
-                fill: "#475467",
-                fontSize: 11,
-              }}
-            />
-            <ReferenceLine
-              x={xMean}
-              stroke="#6b7280"
-              strokeDasharray="5 5"
-              label={{ value: `Media ${xLabel}`, position: "insideTopRight", fill: "#475467", fontSize: 11 }}
-            />
+            {shouldShowAverageReference ? (
+              <ReferenceLine
+                y={averageYDivider}
+                stroke="#6b7280"
+                strokeDasharray="5 5"
+                label={{
+                  value: usesAverageYDivider ? "Media cobertura" : "Cobertura objetivo",
+                  position: "insideTopLeft",
+                  fill: "#475467",
+                  fontSize: 11,
+                }}
+              />
+            ) : null}
+            {shouldShowAverageReference ? (
+              <ReferenceLine
+                x={xMean}
+                stroke="#6b7280"
+                strokeDasharray="5 5"
+                label={{ value: `Media ${xLabel}`, position: "insideTopRight", fill: "#475467", fontSize: 11 }}
+              />
+            ) : null}
+            {shouldShowTargetReference ? (
+              <ReferenceLine
+                y={targetYDivider}
+                stroke="#2563eb"
+                strokeDasharray="2 4"
+                label={{ value: "100% cobertura", position: "insideBottomLeft", fill: "#1d4ed8", fontSize: 11 }}
+              />
+            ) : null}
+            {shouldShowTargetReference ? (
+              <ReferenceLine
+                x={xTarget}
+                stroke="#2563eb"
+                strokeDasharray="2 4"
+                label={{ value: `100% ${xLabel}`, position: "insideBottomRight", fill: "#1d4ed8", fontSize: 11 }}
+              />
+            ) : null}
             <Scatter data={plottedPoints} shape={(props: { cx?: number; cy?: number; payload?: ResultadosScatterPoint }) => {
               const { cx = 0, cy = 0, payload } = props;
               const px = Number((payload as (ResultadosScatterPoint & { x?: number }) | undefined)?.x ?? NaN);
               const py = Number(payload?.y ?? NaN);
               const color =
                 Number.isFinite(px) && Number.isFinite(py)
-                  ? getQuadrantColor(px, py, xMean, yDivider)
+                  ? getQuadrantColor(px, py, xDivider, yDivider)
                   : (payload?.color ?? "#2563eb");
               return <circle cx={cx} cy={cy} r={5} fill={color} stroke="#ffffff" strokeWidth={1.5} />;
             }} />
