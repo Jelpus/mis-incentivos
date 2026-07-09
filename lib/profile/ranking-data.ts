@@ -14,6 +14,7 @@ import {
 } from "@/lib/admin/reglas-ranking/get-ranking-contests-data";
 import { getRankingContestData } from "@/lib/ranking-contests/getRankingContestData";
 import type { RankingContestData } from "@/lib/ranking-contests/types";
+import { fetchAllSupabaseRows } from "@/lib/supabase/paginated-query";
 
 type PeriodRow = {
   period_month: string | null;
@@ -376,6 +377,30 @@ async function loadRankingAggRows(params: {
   const adminClient = supabase;
   const performancePeriods = params.performancePeriods.length > 0 ? params.performancePeriods : [params.periodMonth];
 
+  async function fetchAllRowsForPeriods<T>(tableName: string, selectColumns: string, context: string) {
+    return fetchAllSupabaseRows<T>({
+      context,
+      countQuery: async () => {
+        const result = await adminClient
+          .from(tableName)
+          .select("period_month", { count: "exact", head: true })
+          .in("period_month", performancePeriods);
+        return { count: result.count, error: result.error };
+      },
+      pageQuery: async (from, to) => {
+        const result = await adminClient
+          .from(tableName)
+          .select(selectColumns)
+          .in("period_month", performancePeriods)
+          .order("period_month", { ascending: true })
+          .order("territorio_individual", { ascending: true })
+          .order("empleado", { ascending: true, nullsFirst: false })
+          .range(from, to);
+        return { data: (result.data ?? []) as T[], error: result.error };
+      },
+    });
+  }
+
   async function loadCpdObjectives() {
     const result = await adminClient
       .from("ranking_cpd_objectives")
@@ -407,7 +432,33 @@ async function loadRankingAggRows(params: {
         query = query.in("territorio_individual", params.territories);
       }
     } else {
-      query = query.limit(5000);
+      try {
+        statusTeamRows.push(...await fetchAllSupabaseRows<StatusTeamRow>({
+          context: "No se pudo leer sales_force_status para ranking global",
+          countQuery: async () => {
+            const result = await adminClient
+              .from("sales_force_status")
+              .select("period_month", { count: "exact", head: true })
+              .eq("period_month", statusPeriod)
+              .eq("is_deleted", false);
+            return { count: result.count, error: result.error };
+          },
+          pageQuery: async (from, to) => {
+            const result = await adminClient
+              .from("sales_force_status")
+              .select("territorio_individual, no_empleado, team_id")
+              .eq("period_month", statusPeriod)
+              .eq("is_deleted", false)
+              .order("territorio_individual", { ascending: true })
+              .order("no_empleado", { ascending: true, nullsFirst: false })
+              .range(from, to);
+            return { data: (result.data ?? []) as StatusTeamRow[], error: result.error };
+          },
+        }));
+        return;
+      } catch {
+        return;
+      }
     }
 
     const result = await query;
@@ -471,29 +522,49 @@ async function loadRankingAggRows(params: {
   await Promise.all([loadCpdObjectives(), loadStatusTeamRows()]);
 
   if (params.scope === "all") {
-    const [kpiResult, icvaResult, cpdResult] = await Promise.all([
-      adminClient
-        .from("ranking_kpi_local_ytd_agg")
-        .select("period_month, territorio_individual, empleado, nombre, tier, total_visitas_top, total_objetivos, total_visitas, garantia")
-        .in("period_month", performancePeriods)
-        .limit(2000),
-      adminClient
-        .from("ranking_icva_48hrs_agg")
-        .select("period_month, territorio_individual, empleado, nombre, total_calls, icva_calls, on_time_call, on_time_icva")
-        .in("period_month", performancePeriods)
-        .limit(2000),
-      adminClient
-        .from("ranking_cpd_raw")
-        .select("period_month, territorio_individual, empleado, nombre, dias_efectivos, visitas")
-        .in("period_month", performancePeriods)
-        .limit(5000),
+    const [kpiResult, icvaResult, cpdResult] = await Promise.allSettled([
+      fetchAllRowsForPeriods<KpiAggRow>(
+        "ranking_kpi_local_ytd_agg",
+        "period_month, territorio_individual, empleado, nombre, tier, total_visitas_top, total_objetivos, total_visitas, garantia",
+        "No se pudo leer KPI agregado para performance global",
+      ),
+      fetchAllRowsForPeriods<IcvaAggRow>(
+        "ranking_icva_48hrs_agg",
+        "period_month, territorio_individual, empleado, nombre, total_calls, icva_calls, on_time_call, on_time_icva",
+        "No se pudo leer ICVA agregado para performance global",
+      ),
+      fetchAllRowsForPeriods<CpdRawRow>(
+        "ranking_cpd_raw",
+        "period_month, territorio_individual, empleado, nombre, dias_efectivos, visitas",
+        "No se pudo leer CPD raw para performance global",
+      ),
     ]);
-    if (kpiResult.error || icvaResult.error) {
-      return { kpiRows, icvaRows, cpdRows, statusTeamRows, cpdObjectiveByTeamId, error: kpiResult.error?.message ?? icvaResult.error?.message ?? "Error ranking." };
+
+    if (kpiResult.status === "rejected") {
+      return {
+        kpiRows,
+        icvaRows,
+        cpdRows,
+        statusTeamRows,
+        cpdObjectiveByTeamId,
+        error: kpiResult.reason instanceof Error ? kpiResult.reason.message : "Error ranking.",
+      };
     }
-    kpiRows.push(...((kpiResult.data ?? []) as KpiAggRow[]));
-    icvaRows.push(...((icvaResult.data ?? []) as IcvaAggRow[]));
-    if (!cpdResult.error) cpdRows.push(...((cpdResult.data ?? []) as CpdRawRow[]));
+
+    if (icvaResult.status === "rejected") {
+      return {
+        kpiRows,
+        icvaRows,
+        cpdRows,
+        statusTeamRows,
+        cpdObjectiveByTeamId,
+        error: icvaResult.reason instanceof Error ? icvaResult.reason.message : "Error ranking.",
+      };
+    }
+
+    kpiRows.push(...kpiResult.value);
+    icvaRows.push(...icvaResult.value);
+    if (cpdResult.status === "fulfilled") cpdRows.push(...cpdResult.value);
   } else if (params.employeeIds.length > 0) {
     const error = await collectByEmployees(params.employeeIds);
     if (error) return { kpiRows, icvaRows, cpdRows, statusTeamRows, cpdObjectiveByTeamId, error };
