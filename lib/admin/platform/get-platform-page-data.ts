@@ -83,11 +83,14 @@ export type PlatformChangeLogData = {
   rows: PlatformChangeLogRow[];
 };
 
-export type PlatformPageData = {
+export type PlatformUsersPageData = {
   salesForcePeriod: string | null;
   managerPeriod: string | null;
   users: PlatformUserRow[];
   kpi: PlatformKpi;
+};
+
+export type PlatformPageData = PlatformUsersPageData & {
   changeLog: PlatformChangeLogData;
 };
 
@@ -156,7 +159,7 @@ async function loadPlatformChangeLog(
   };
 }
 
-export async function getPlatformPageData(): Promise<PlatformPageData> {
+export async function getPlatformUsersPageData(): Promise<PlatformUsersPageData> {
   const supabase = createAdminClient();
   if (!supabase) {
     throw new Error("Admin client not available");
@@ -323,7 +326,6 @@ export async function getPlatformPageData(): Promise<PlatformPageData> {
     (user) => user.isRegistered && isWithinLast30Days(user.lastLogin),
   ).length;
   const registeredRatio = total > 0 ? registered / total : 0;
-  const changeLog = await loadPlatformChangeLog(supabase);
 
   return {
     salesForcePeriod,
@@ -336,6 +338,26 @@ export async function getPlatformPageData(): Promise<PlatformPageData> {
       registeredRatio,
       activeInLast30Days,
     },
+  };
+}
+
+export async function getPlatformChangeLogPageData(): Promise<PlatformChangeLogData> {
+  const supabase = createAdminClient();
+  if (!supabase) {
+    throw new Error("Admin client not available");
+  }
+
+  return loadPlatformChangeLog(supabase);
+}
+
+export async function getPlatformPageData(): Promise<PlatformPageData> {
+  const [usersData, changeLog] = await Promise.all([
+    getPlatformUsersPageData(),
+    getPlatformChangeLogPageData(),
+  ]);
+
+  return {
+    ...usersData,
     changeLog,
   };
 }

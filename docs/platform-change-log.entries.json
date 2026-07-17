@@ -1,0 +1,78 @@
+[
+  {
+    "sourceKey": "2026-07-17-source-ranking-period-coverage",
+    "date": "2026-07-17",
+    "route": "/admin/source-ranking",
+    "currentState": "La cobertura de periodos se inferia desde una muestra limitada y podia quedar en marzo aunque existiera informacion YTD mayo.",
+    "modifiedState": "La cobertura se valida con conteo exacto por periodo y tablas raw/agg para evitar el limite de 1000 rows.",
+    "commitRef": "backfill-2026-07-17"
+  },
+  {
+    "sourceKey": "2026-07-17-profile-ranking-pagination",
+    "date": "2026-07-17",
+    "route": "/perfil/ranking",
+    "currentState": "Las consultas de performance global usaban limites fijos al leer datos de Supabase.",
+    "modifiedState": "Las lecturas se paginan hasta completar resultados antes de calcular ranking y performance.",
+    "commitRef": "backfill-2026-07-17"
+  },
+  {
+    "sourceKey": "2026-07-17-mi-cuenta-ranking-period",
+    "date": "2026-07-17",
+    "route": "/mi-cuenta",
+    "currentState": "El periodo disponible de ranking dependia de una lectura limitada de filas.",
+    "modifiedState": "El periodo se resuelve con conteo exacto por periodo para no depender de la muestra retornada.",
+    "commitRef": "backfill-2026-07-17"
+  },
+  {
+    "sourceKey": "2026-07-17-performance-report-scatter",
+    "date": "2026-07-17",
+    "route": "/perfil/performance-report",
+    "currentState": "Attainment vs CPD/CPA mostraba CPD crudo y todos los bloques permanecian visibles en una sola pagina.",
+    "modifiedState": "CPD se muestra como porcentaje vs objetivo, los cuadrantes permiten Promedio/100%/Ambos y los bloques se organizan en tabs.",
+    "commitRef": "backfill-2026-07-17"
+  },
+  {
+    "sourceKey": "2026-07-17-ranking-detail-cpd-display",
+    "date": "2026-07-17",
+    "route": "/perfil/ranking/detalle",
+    "currentState": "El detalle de CPD tomaba el valor porcentual usado para calificar el componente.",
+    "modifiedState": "El detalle muestra Meta con objetivo CPD y Valor con CPD real, manteniendo cobertura interna para aprobacion.",
+    "commitRef": "backfill-2026-07-17"
+  },
+  {
+    "sourceKey": "2026-07-17-admin-platform-change-log",
+    "date": "2026-07-17",
+    "route": "/admin/platform",
+    "currentState": "No existia un registro central de cambios funcionales dentro de plataforma.",
+    "modifiedState": "Se agrega bitacora con fecha, ruta, estados y commit, mas backfill inicial idempotente.",
+    "commitRef": "backfill-2026-07-17"
+  },
+  {
+    "sourceKey": "2026-07-17-platform-change-log-pre-push-sync",
+    "date": "2026-07-17",
+    "route": "/admin/platform",
+    "currentState": "El registro de cambios dependia de captura manual en la UI o de ejecutar el backfill desde plataforma.",
+    "modifiedState": "Se agrega archivo versionado de entradas y hook pre-push para sincronizar platform_change_log automaticamente antes de empujar."
+  },
+  {
+    "sourceKey": "2026-07-17-admin-platform-subroutes",
+    "date": "2026-07-17",
+    "route": "/admin/platform",
+    "currentState": "Usuarios y registro de cambios convivian en una sola pantalla administrativa.",
+    "modifiedState": "Se separa plataforma en /admin/platform/usuarios y /admin/platform/changes-control, manteniendo /admin/platform como redirect."
+  },
+  {
+    "sourceKey": "2026-07-17-platform-change-log-git-backfill",
+    "date": "2026-07-17",
+    "route": "/admin/platform/changes-control",
+    "currentState": "La historia adicional del registro de cambios dependia de captura manual o backfill fijo.",
+    "modifiedState": "Se agrega generador asistido desde Git para crear entradas inferidas por commit, ruta y archivos modificados antes de sincronizar."
+  },
+  {
+    "sourceKey": "2026-07-17-platform-change-log-guided-push",
+    "date": "2026-07-17",
+    "route": "/admin/platform/changes-control",
+    "currentState": "El hook pre-push podia bloquear pushes si no se agregaba manualmente una entrada de registro.",
+    "modifiedState": "El hook queda como aviso y sincronizacion automatica; el proceso recomendado es pedir a Codex que prepare el push y registre los cambios."
+  }
+]

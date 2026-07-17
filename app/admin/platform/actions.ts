@@ -89,6 +89,7 @@ function tableMissingMessage(error: { message?: string } | null): string {
 
 function revalidatePlatformPage() {
   revalidatePath("/admin/platform");
+  revalidatePath("/admin/platform/changes-control");
 }
 
 export async function createPlatformChangeLogAction(

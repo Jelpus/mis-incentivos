@@ -6,7 +6,14 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "changelog:add": "node scripts/platform-change-log.mjs add",
+    "changelog:sync": "node scripts/platform-change-log.mjs sync",
+    "changelog:sync:dry-run": "node scripts/platform-change-log.mjs sync --dry-run",
+    "changelog:backfill:git": "node scripts/platform-change-log.mjs backfill-git --max 40",
+    "changelog:backfill:git:dry-run": "node scripts/platform-change-log.mjs backfill-git --max 40 --dry-run",
+    "changelog:pre-push": "node scripts/platform-change-log.mjs sync --pre-push",
+    "changelog:install-hook": "git config core.hooksPath .githooks"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^8.1.1",
