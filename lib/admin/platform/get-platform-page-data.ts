@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { normalizeEmail } from "@/lib/auth/email-domain";
+import { getMissingRelationName, isMissingRelationError } from "@/lib/admin/incentive-rules/shared";
 
 type SalesForceStatusUserRow = {
   correo_electronico: string | null;
@@ -25,6 +26,16 @@ type ProfileRelationRow = {
 type ProfileLastLoginRow = {
   user_id: string;
   last_login: string | null;
+};
+
+type PlatformChangeLogDbRow = {
+  id: string;
+  change_date: string | null;
+  route: string | null;
+  current_state: string | null;
+  modified_state: string | null;
+  commit_ref: string | null;
+  created_at: string | null;
 };
 
 type NormalizedUserAccumulator = {
@@ -56,11 +67,28 @@ export type PlatformKpi = {
   activeInLast30Days: number;
 };
 
+export type PlatformChangeLogRow = {
+  id: string;
+  changeDate: string;
+  route: string;
+  currentState: string;
+  modifiedState: string;
+  commitRef: string | null;
+  createdAt: string | null;
+};
+
+export type PlatformChangeLogData = {
+  storageReady: boolean;
+  storageMessage: string | null;
+  rows: PlatformChangeLogRow[];
+};
+
 export type PlatformPageData = {
   salesForcePeriod: string | null;
   managerPeriod: string | null;
   users: PlatformUserRow[];
   kpi: PlatformKpi;
+  changeLog: PlatformChangeLogData;
 };
 
 function appendDistinctText(current: string | null, incoming: string | null): string | null {
@@ -89,6 +117,43 @@ function isWithinLast30Days(isoDate: string | null): boolean {
   const now = Date.now();
   const msIn30Days = 30 * 24 * 60 * 60 * 1000;
   return timestamp >= now - msIn30Days;
+}
+
+async function loadPlatformChangeLog(
+  supabase: NonNullable<ReturnType<typeof createAdminClient>>,
+): Promise<PlatformChangeLogData> {
+  const result = await supabase
+    .from("platform_change_log")
+    .select("id, change_date, route, current_state, modified_state, commit_ref, created_at")
+    .order("change_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (result.error) {
+    if (isMissingRelationError(result.error)) {
+      const tableName = getMissingRelationName(result.error) ?? "platform_change_log";
+      return {
+        storageReady: false,
+        storageMessage: `Tabla ${tableName} no creada. Ejecuta docs/platform-change-log-schema.sql.`,
+        rows: [],
+      };
+    }
+    throw new Error(`Failed to load platform_change_log: ${result.error.message}`);
+  }
+
+  return {
+    storageReady: true,
+    storageMessage: null,
+    rows: ((result.data ?? []) as PlatformChangeLogDbRow[]).map((row) => ({
+      id: row.id,
+      changeDate: row.change_date ?? "",
+      route: row.route ?? "",
+      currentState: row.current_state ?? "",
+      modifiedState: row.modified_state ?? "",
+      commitRef: row.commit_ref ?? null,
+      createdAt: row.created_at ?? null,
+    })),
+  };
 }
 
 export async function getPlatformPageData(): Promise<PlatformPageData> {
@@ -258,6 +323,7 @@ export async function getPlatformPageData(): Promise<PlatformPageData> {
     (user) => user.isRegistered && isWithinLast30Days(user.lastLogin),
   ).length;
   const registeredRatio = total > 0 ? registered / total : 0;
+  const changeLog = await loadPlatformChangeLog(supabase);
 
   return {
     salesForcePeriod,
@@ -270,5 +336,6 @@ export async function getPlatformPageData(): Promise<PlatformPageData> {
       registeredRatio,
       activeInLast30Days,
     },
+    changeLog,
   };
 }

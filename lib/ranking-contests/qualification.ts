@@ -298,7 +298,7 @@ async function evaluateCpdMetric(params: {
   }
 
   const missingObjectiveTeamIds = new Set<string>();
-  const cpdCoverageValues = Array.from(totalsByMember.entries())
+  const cpdMeasurements = Array.from(totalsByMember.entries())
     .map(([memberKey, item]) => {
       const cpd = safeCoverage(item.visitas, item.diasEfectivos);
       if (cpd === null) return null;
@@ -308,11 +308,13 @@ async function evaluateCpdMetric(params: {
         if (teamId) missingObjectiveTeamIds.add(teamId);
         return null;
       }
-      return safeCoverage(cpd, objective);
+      const coverage = safeCoverage(cpd, objective);
+      if (coverage === null) return null;
+      return { cpd, objective, coverage };
     })
-    .filter((value): value is number => value !== null);
+    .filter((value): value is { cpd: number; objective: number; coverage: number } => value !== null);
 
-  if (cpdCoverageValues.length === 0) {
+  if (cpdMeasurements.length === 0) {
     return {
       ...baseEvaluation(params.component),
       value: null,
@@ -324,7 +326,10 @@ async function evaluateCpdMetric(params: {
     };
   }
 
+  const cpdCoverageValues = cpdMeasurements.map((item) => item.coverage);
   const averageCoverage = cpdCoverageValues.reduce((sum, value) => sum + value, 0) / cpdCoverageValues.length;
+  const averageCpd = cpdMeasurements.reduce((sum, item) => sum + item.cpd, 0) / cpdMeasurements.length;
+  const averageObjective = cpdMeasurements.reduce((sum, item) => sum + item.objective, 0) / cpdMeasurements.length;
   const periodText = periods.join(", ");
   const missingObjectiveText = missingObjectiveTeamIds.size > 0
     ? ` ${missingObjectiveTeamIds.size} team_id sin objetivo CPD fueron omitidos.`
@@ -333,6 +338,8 @@ async function evaluateCpdMetric(params: {
   return {
     ...baseEvaluation(params.component),
     value: Math.round(averageCoverage * 10000) / 100,
+    displayThresholdValue: Math.round(averageObjective * 100) / 100,
+    displayValue: Math.round(averageCpd * 100) / 100,
     passed: averageCoverage >= threshold,
     status: averageCoverage >= threshold ? "passed" : "failed",
     reason: `${params.participant.scope === "manager" ? "Promedio de equipo CPD" : "Cobertura CPD"}: ${cpdCoverageValues.length} participante(s) con datos, periodos ${periodText}.${missingObjectiveText}`,

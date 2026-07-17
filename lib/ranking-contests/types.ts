@@ -68,6 +68,8 @@ export type ContestComponentEvaluation = {
   periodStart: string | null;
   periodEnd: string | null;
   value: number | string | boolean | null;
+  displayThresholdValue?: number | string | boolean | null;
+  displayValue?: number | string | boolean | null;
   passed: boolean;
   status: "passed" | "failed" | "pending" | "not_implemented";
   reason?: string;

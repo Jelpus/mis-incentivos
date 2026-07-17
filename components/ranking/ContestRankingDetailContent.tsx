@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { ContestRankingRow, CoveragePointDetail } from "@/lib/ranking-contests/types";
+import type { ContestComponentEvaluation, ContestRankingRow, CoveragePointDetail } from "@/lib/ranking-contests/types";
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("es-MX", { maximumFractionDigits: 1 }).format(value);
@@ -15,6 +15,16 @@ function formatEvaluationValue(value: number | string | boolean | null) {
   if (typeof value === "number") return formatNumber(value);
   if (value === null || value === "") return "-";
   return String(value);
+}
+
+function formatEvaluationDisplayValue(
+  item: ContestComponentEvaluation,
+  field: "threshold" | "value",
+) {
+  const value = field === "threshold"
+    ? (item.displayThresholdValue ?? item.thresholdValue)
+    : (item.displayValue ?? item.value);
+  return formatEvaluationValue(value);
 }
 
 function formatPeriodLabel(period: string) {
@@ -72,7 +82,9 @@ export function ContestRankingDetailContent({ row }: { row: ContestRankingRow })
                     className={`h-3 w-3 rounded-full ${item.passed ? "bg-emerald-500" : "bg-red-500"}`}
                   />
                 </div>
-                <p className="mt-1 text-xs text-[#667085]">Meta: {formatEvaluationValue(item.thresholdValue)} | Valor: {formatEvaluationValue(item.value)}</p>
+                <p className="mt-1 text-xs text-[#667085]">
+                  Meta: {formatEvaluationDisplayValue(item, "threshold")} | Valor: {formatEvaluationDisplayValue(item, "value")}
+                </p>
                 {item.reason ? <p className="mt-1 text-xs text-amber-700">{item.reason}</p> : null}
               </div>
             ))}

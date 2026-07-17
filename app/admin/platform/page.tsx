@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { getPlatformPageData } from "@/lib/admin/platform/get-platform-page-data";
 import { PlatformOverviewClient } from "@/components/admin/platform-overview-client";
+import { PlatformChangeLogCard } from "@/components/admin/platform-change-log-card";
 
 function formatPeriod(periodMonth: string | null) {
   if (!periodMonth) return "-";
@@ -50,6 +51,7 @@ export default async function AdminPlatformPage() {
         </header>
 
         <PlatformOverviewClient users={data.users} kpi={data.kpi} />
+        <PlatformChangeLogCard changeLog={data.changeLog} />
       </div>
     </main>
   );
