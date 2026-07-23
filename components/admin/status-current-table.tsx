@@ -351,7 +351,6 @@ export function StatusCurrentTable({ rows, periodMonth }: Props) {
                   label="Puesto"
                   options={modalOptionSets.puesto}
                   defaultValue={selectedRow?.puesto ?? ""}
-                  required
                 />
                 <SelectWithCustom
                   name="team_id"

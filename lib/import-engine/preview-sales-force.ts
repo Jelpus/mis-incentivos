@@ -210,6 +210,7 @@ export async function previewSalesForceImportBatch(
       ],
     ),
   ) as Record<string, string | null>;
+  const hasPuestoMapping = Object.values(mappingSnapshot).includes("puesto");
 
   const { data: rows, error: rowsError } = await supabase
     .from("import_rows")
@@ -358,6 +359,12 @@ export async function previewSalesForceImportBatch(
         insertRows += 1;
       } else {
         targetRecordId = existingRecord.id;
+
+        // Si el layout ya no incluye Puesto, una actualización debe conservar
+        // el valor existente en vez de interpretarlo como una solicitud de borrado.
+        if (!hasPuestoMapping) {
+          cleanedData.puesto = existingRecord.puesto;
+        }
 
         const currentComparable = comparableSalesForceData(existingRecord);
         const nextComparable = comparableSalesForceData(cleanedData);

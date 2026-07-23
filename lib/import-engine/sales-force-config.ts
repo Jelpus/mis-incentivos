@@ -14,12 +14,12 @@ export const SALES_FORCE_REQUIRED_FIELDS = [
   "nombre_completo",
   "territorio_padre",
   "territorio_individual",
-  "puesto",
   "team_id",
   "base_incentivos",
 ] as const;
 
 export const SALES_FORCE_OPTIONAL_IMPORT_FIELDS = [
+  "puesto",
   "no_empleado",
   "correo_electronico",
   "is_vacant",

@@ -74,5 +74,12 @@
     "route": "/admin/platform/changes-control",
     "currentState": "El hook pre-push podia bloquear pushes si no se agregaba manualmente una entrada de registro.",
     "modifiedState": "El hook queda como aviso y sincronizacion automatica; el proceso recomendado es pedir a Codex que prepare el push y registre los cambios."
+  },
+  {
+    "sourceKey": "2026-07-23-admin-status-2100b65312",
+    "date": "2026-07-23",
+    "route": "/admin/status",
+    "currentState": "La carga de Sales Force Status exigia mapear Puesto y rechazaba filas sin ese dato.",
+    "modifiedState": "Puesto pasa a ser opcional; las actualizaciones sin esa columna conservan el valor existente y las altas nuevas pueden guardarlo como nulo."
   }
 ]

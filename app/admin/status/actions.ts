@@ -866,7 +866,6 @@ export async function saveSalesForceStatusAction(
     ["nombre_completo", nombreCompleto],
     ["territorio_padre", territorioPadre],
     ["territorio_individual", territorioIndividual],
-    ["puesto", puesto],
     ["team_id", teamId],
   ];
 
@@ -929,7 +928,7 @@ export async function saveSalesForceStatusAction(
     no_empleado: isVacant || noEmpleado === 0 ? null : noEmpleado,
     territorio_padre: territorioPadre,
     territorio_individual: territorioIndividual,
-    puesto,
+    puesto: puesto || null,
     correo_electronico: correo || null,
     ciudad: ciudad || null,
     fecha_ingreso: normalizedFechaIngreso,

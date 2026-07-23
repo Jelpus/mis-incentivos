@@ -10,7 +10,7 @@ export type StatusPageRow = {
   no_empleado: number | null;
   territorio_padre: string;
   correo_electronico: string | null;
-  puesto: string;
+  puesto: string | null;
   ciudad: string | null;
   fecha_ingreso: string | null;
   team_id: string;
