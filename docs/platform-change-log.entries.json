@@ -81,5 +81,12 @@
     "route": "/admin/status",
     "currentState": "La carga de Sales Force Status exigia mapear Puesto y rechazaba filas sin ese dato.",
     "modifiedState": "Puesto pasa a ser opcional; las actualizaciones sin esa columna conservan el valor existente y las altas nuevas pueden guardarlo como nulo."
+  },
+  {
+    "sourceKey": "2026-07-23-admin-data-sources-1d16e299a7",
+    "date": "2026-07-23",
+    "route": "/admin/data-sources",
+    "currentState": "La validacion de archivos fuente permanecia en Validando sin registrar etapas, tiempos ni errores internos en Vercel.",
+    "modifiedState": "La validacion registra un identificador y tiempos por etapa para reglas, lectura, parseo XLSX, normalizacion y cobertura, sin exponer contenido del archivo."
   }
 ]

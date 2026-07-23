@@ -2820,9 +2820,35 @@ export async function previewTeamSourceFileAction(
   _prevState: PreviewTeamSourceFileResult | null,
   formData: FormData,
 ): Promise<PreviewTeamSourceFileResult> {
+  const validationId = crypto.randomUUID();
+  const validationStartedAt = Date.now();
+  let phaseStartedAt = validationStartedAt;
+  let currentPhase = "authorization";
+  const logProgress = (
+    phase: string,
+    details: Record<string, unknown> = {},
+  ) => {
+    const now = Date.now();
+    console.info("[team-source-preview]", {
+      validationId,
+      phase,
+      phaseMs: now - phaseStartedAt,
+      elapsedMs: now - validationStartedAt,
+      ...details,
+    });
+    currentPhase = phase;
+    phaseStartedAt = now;
+  };
+
   const { user, role, isActive } = await getCurrentAuthContext();
 
   if (!user || !isAdminRole(role, isActive)) {
+    console.warn("[team-source-preview]", {
+      validationId,
+      phase: currentPhase,
+      elapsedMs: Date.now() - validationStartedAt,
+      outcome: "unauthorized",
+    });
     return { ok: false, message: "No autorizado." };
   }
 
@@ -2854,13 +2880,28 @@ export async function previewTeamSourceFileAction(
     return { ok: false, message: "El archivo supera el limite de 50MB." };
   }
 
+  logProgress("request_validated", {
+    periodMonth,
+    fileCode,
+    fileSizeBytes: uploadedFile.size,
+    contentType: uploadedFile.type || null,
+    requestedSheet: sheetNameInput || null,
+  });
+
   const supabase = createAdminClient();
   if (!supabase) {
     return { ok: false, message: "Admin client no disponible." };
   }
 
+  currentPhase = "load_rule_snapshot";
   const snapshotResult = await getSourceValidationSnapshotForPeriod(supabase, periodMonth);
   if (!snapshotResult.ok) {
+    console.error("[team-source-preview]", {
+      validationId,
+      phase: currentPhase,
+      elapsedMs: Date.now() - validationStartedAt,
+      error: snapshotResult.message,
+    });
     return {
       ok: false,
       message: `No se pudieron leer reglas para validar: ${snapshotResult.message}`,
@@ -2880,8 +2921,22 @@ export async function previewTeamSourceFileAction(
     };
   }
 
+  logProgress("rule_snapshot_loaded", {
+    teamsWithRequirements: requirementsByTeam.size,
+    requirementCount: Array.from(requirementsByTeam.values()).reduce(
+      (total, requirements) => total + requirements.length,
+      0,
+    ),
+  });
+
   try {
+    currentPhase = "read_uploaded_file";
     const fileBuffer = Buffer.from(await uploadedFile.arrayBuffer());
+    logProgress("uploaded_file_read", {
+      fileSizeBytes: fileBuffer.byteLength,
+    });
+
+    currentPhase = "parse_workbook";
     const { read, utils } = await import("xlsx");
     const workbook = read(fileBuffer, { type: "buffer" });
     const sheetName = sheetNameInput || workbook.SheetNames[0] || "";
@@ -2896,7 +2951,13 @@ export async function previewTeamSourceFileAction(
     const sheetRows = utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName], {
       defval: "",
     });
+    logProgress("workbook_parsed", {
+      sheetName,
+      sheetCount: workbook.SheetNames.length,
+      sourceRows: sheetRows.length,
+    });
 
+    currentPhase = "normalize_rows";
     const normalizedRows = normalizeRowsForBigQuery({
       rows: sheetRows,
       periodMonth,
@@ -2906,7 +2967,13 @@ export async function previewTeamSourceFileAction(
       allowedFuentes,
     });
     const normalizedForBigQuery = mapNormalizedRowsToBigQuerySchema(normalizedRows);
+    logProgress("rows_normalized", {
+      normalizedRows: normalizedRows.length,
+      rowsEligibleForBigQuery: normalizedForBigQuery.rows.length,
+      droppedRowsBySchema: normalizedForBigQuery.droppedRows,
+    });
 
+    currentPhase = "validate_team_coverage";
     const teamAlerts: Array<{ teamId: string; missingCount: number; missingExamples: string[] }> = [];
     let teamsFullyCovered = 0;
 
@@ -2930,6 +2997,10 @@ export async function previewTeamSourceFileAction(
         });
       }
     }
+    logProgress("team_coverage_validated", {
+      teamsFullyCovered,
+      teamsWithAlerts: teamAlerts.length,
+    });
 
     const distinctMetrics = Array.from(
       new Set(
@@ -2955,6 +3026,13 @@ export async function previewTeamSourceFileAction(
       ),
     ).sort();
 
+    logProgress("completed", {
+      outcome: "success",
+      distinctMetrics: distinctMetrics.length,
+      distinctFuentes: distinctFuentes.length,
+      distinctMoleculas: distinctMoleculas.length,
+    });
+
     return {
       ok: true,
       message:
@@ -2974,6 +3052,13 @@ export async function previewTeamSourceFileAction(
       },
     };
   } catch (error) {
+    console.error("[team-source-preview]", {
+      validationId,
+      phase: currentPhase,
+      elapsedMs: Date.now() - validationStartedAt,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return {
       ok: false,
       message:
