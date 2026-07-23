@@ -88,5 +88,12 @@
     "route": "/admin/data-sources",
     "currentState": "La validacion de archivos fuente permanecia en Validando sin registrar etapas, tiempos ni errores internos en Vercel.",
     "modifiedState": "La validacion registra un identificador y tiempos por etapa para reglas, lectura, parseo XLSX, normalizacion y cobertura, sin exponer contenido del archivo."
+  },
+  {
+    "sourceKey": "2026-07-23-admin-objetivos-2e0d8340a2",
+    "date": "2026-07-23",
+    "route": "/admin/objetivos",
+    "currentState": "El matching manual aparecia sin conservar las columnas que el servidor ya reconocia y no interpretaba la columna del mes como cuota.",
+    "modifiedState": "El formulario y el servidor comparten sugerencias seguras; autoseleccionan aliases reconocidos y la columna del mes activo como cuota, manteniendo prioridad para ajustes manuales."
   }
 ]
