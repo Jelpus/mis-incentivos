@@ -448,7 +448,7 @@ function getRequiredHeaderGroupsForSourceFile(fileLogicKey: string): RequiredHea
   if (fileLogicKey.includes("diario")) {
     return [
       { label: "material", candidates: ["material"] },
-      { label: "billed_quantity", candidates: ["billed_quantity"] },
+      { label: "billed_quantity", candidates: ["billed_quantity", "ytd"] },
     ];
   }
 
