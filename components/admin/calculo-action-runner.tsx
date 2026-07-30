@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { updateCalculoStatusAction, type CalculoActionResult } from "@/app/admin/calculo/actions";
 
 type Props = {
   periodMonth: string;
-  actionKey: "calcular" | "ajustar" | "aprobar" | "publicar" | "despublicar";
+  actionKey: "calcular" | "ajustar" | "reabrir" | "aprobar" | "publicar" | "despublicar";
   submitLabel: string;
   backHref?: string;
 };
@@ -36,10 +37,12 @@ type PublishPreviewResponse = {
 };
 
 export function CalculoActionRunner({ periodMonth, actionKey, submitLabel, backHref = "/admin/calculo" }: Props) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<CalculoActionResult | null>(null);
 
   const [showPublishConfirmModal, setShowPublishConfirmModal] = useState(false);
+  const [showReopenConfirmModal, setShowReopenConfirmModal] = useState(false);
   const [showEmailPreview, setShowEmailPreview] = useState(false);
   const [previewType, setPreviewType] = useState<"svm" | "sva">("svm");
   const [previewRecipientKey, setPreviewRecipientKey] = useState("");
@@ -110,6 +113,9 @@ export function CalculoActionRunner({ periodMonth, actionKey, submitLabel, backH
       formData.append("action", actionKey);
       const response = await updateCalculoStatusAction(null, formData);
       setResult(response);
+      if (response.ok && actionKey === "reabrir") {
+        router.push(`/admin/calculo/adjustments?periodo=${encodeURIComponent(periodMonth.slice(0, 7))}`);
+      }
     });
   }
 
@@ -126,12 +132,21 @@ export function CalculoActionRunner({ periodMonth, actionKey, submitLabel, backH
       setPreviewError(null);
       return;
     }
+    if (actionKey === "reabrir") {
+      setShowReopenConfirmModal(true);
+      return;
+    }
     runAction();
   }
 
   function confirmPublishAction() {
     setShowPublishConfirmModal(false);
     setShowEmailPreview(false);
+    runAction();
+  }
+
+  function confirmReopenAction() {
+    setShowReopenConfirmModal(false);
     runAction();
   }
 
@@ -260,6 +275,36 @@ export function CalculoActionRunner({ periodMonth, actionKey, submitLabel, backH
                   setShowPublishConfirmModal(false);
                   setShowEmailPreview(false);
                 }}
+                disabled={isPending}
+                className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showReopenConfirmModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-neutral-200 bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-semibold text-neutral-900">Regresar a precalculo</h3>
+            <p className="mt-2 text-sm text-neutral-700">
+              El periodo dejara de estar finalizado y se limpiaran sus fechas de aprobacion. Podras aplicar ajustes y
+              aprobarlo nuevamente.
+            </p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={confirmReopenAction}
+                disabled={isPending}
+                className="rounded-lg bg-neutral-900 px-3 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
+              >
+                Confirmar regreso
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowReopenConfirmModal(false)}
                 disabled={isPending}
                 className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
               >

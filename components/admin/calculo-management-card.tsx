@@ -68,9 +68,7 @@ function actionsForStatus(status: Row["status"], periodMonth: string): ActionOpt
   }
   if (status === "final") {
     return [
-      { key: "calcular", label: "Calcular (Process)", href: `/admin/calculo/process?${periodQuery}` },
-      { key: "ajustar", label: "Ajustar", href: `/admin/calculo/adjustments?${periodQuery}` },
-      { key: "aprobar", label: "Aprobar", href: `/admin/calculo/aprobar?${periodQuery}` },
+      { key: "reabrir", label: "Regresar a precalculo", href: `/admin/calculo/reopen?${periodQuery}` },
       { key: "publicar", label: "Publicar", href: `/admin/calculo/publish?${periodQuery}` },
     ];
   }

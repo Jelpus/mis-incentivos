@@ -2,7 +2,7 @@ import Link from "next/link";
 import { CalculoActionRunner } from "@/components/admin/calculo-action-runner";
 import { normalizeCalculoPeriodParam } from "@/lib/admin/calculo/period";
 
-type ActionKey = "calcular" | "ajustar" | "aprobar" | "publicar" | "despublicar";
+type ActionKey = "calcular" | "ajustar" | "reabrir" | "aprobar" | "publicar" | "despublicar";
 
 type Props = {
   breadcrumb: string;
@@ -57,4 +57,3 @@ export function CalculoActionPage({
     </main>
   );
 }
-
