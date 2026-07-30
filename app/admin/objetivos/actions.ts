@@ -11,11 +11,11 @@ import {
 } from "@/lib/admin/incentive-rules/shared";
 import {
   computeObjectivesPreview,
-  type DrillDownColumnMapping,
   mergeObjectivesSources,
   parseDrillDownObjectivesFile,
   parseObjectivesFile,
 } from "@/lib/admin/objetivos/import-objectives";
+import type { DrillDownColumnMapping } from "@/lib/admin/objetivos/drill-down-column-mapping";
 
 const MAX_OBJECTIVES_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
 const MAX_OBJECTIVES_COMBINED_SIZE_BYTES = 75 * 1024 * 1024; // keep below Next Server Actions 80MB
@@ -103,6 +103,7 @@ export type PreviewObjetivosResult =
       headers: string[];
       requiredFields: Array<"ruta" | "productName" | "cuota">;
       missingFields: Array<"ruta" | "productName" | "cuota">;
+      suggestedMapping: DrillDownColumnMapping;
     };
   };
 

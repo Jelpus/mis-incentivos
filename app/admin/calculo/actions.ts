@@ -187,6 +187,7 @@ function isAdminRole(role: string | null, isActive: boolean | null): boolean {
 function resolveNextStatus(action: string): "borrador" | "precalculo" | "final" | "publicado" | null {
   if (action === "calcular") return "precalculo";
   if (action === "confirmar_precalculo") return "precalculo";
+  if (action === "reabrir") return "precalculo";
   if (action === "aprobar") return "final";
   if (action === "publicar") return "publicado";
   if (action === "despublicar") return "final";
@@ -200,7 +201,7 @@ function canTransition(currentStatus: string, action: string): boolean {
     return currentStatus === "borrador" || currentStatus === "precalculo" || currentStatus === "final";
   }
   if (currentStatus === "precalculo" && (action === "ajustar" || action === "aprobar")) return true;
-  if (currentStatus === "final" && (action === "ajustar" || action === "publicar")) return true;
+  if (currentStatus === "final" && (action === "ajustar" || action === "reabrir" || action === "publicar")) return true;
   if (currentStatus === "publicado" && action === "despublicar") return true;
   return false;
 }
@@ -345,6 +346,10 @@ export async function updateCalculoStatusAction(
     updatePayload.approved_at = now;
     updatePayload.finalized_at = now;
   }
+  if (actionInput === "reabrir") {
+    updatePayload.approved_at = null;
+    updatePayload.finalized_at = null;
+  }
   if (actionInput === "confirmar_precalculo") {
     try {
       let processPersistResult: CalculoProcessRunResult;
@@ -441,6 +446,8 @@ export async function updateCalculoStatusAction(
             : `Confirmado (${periodMonth.slice(0, 7)}): asignacionUnidades y resultados_v2 subidos (${resultadosPersistedSummary?.rowsCount ?? 0} filas resultados_v2, pago_resultado=${(resultadosPersistedSummary?.totalPagoResultado ?? 0).toFixed(6)}). Estatus=${effectiveNextStatus}.`
           : actionInput === "publicar"
             ? `Periodo ${periodMonth.slice(0, 7)} publicado. Correos managers: ${publishEmailsSummary?.managers.sent ?? 0}/${publishEmailsSummary?.managers.attempted ?? 0}. Correos fuerza de ventas: ${publishEmailsSummary?.salesForce.sent ?? 0}/${publishEmailsSummary?.salesForce.attempted ?? 0}.${(publishEmailsSummary?.failures.length ?? 0) > 0 ? ` Fallidos: ${publishEmailsSummary?.failures.slice(0, 3).join(" | ")}` : ""}`
+          : actionInput === "reabrir"
+            ? `Periodo ${periodMonth.slice(0, 7)} regresado a precalculo. Ya puedes realizar ajustes y aprobarlo nuevamente.`
           : `Periodo ${periodMonth.slice(0, 7)} actualizado a ${effectiveNextStatus}.`,
     periodMonth,
     nextStatus: effectiveNextStatus,

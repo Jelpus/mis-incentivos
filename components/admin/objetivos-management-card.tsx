@@ -10,6 +10,16 @@ import {
 } from "@/app/admin/objetivos/actions";
 import { formatDateTimeNoTimezoneShift } from "@/lib/date-time";
 import { formatPeriodMonthForInput, formatPeriodMonthLabel } from "@/lib/admin/incentive-rules/shared";
+import { detectHeaderRow } from "@/lib/import-engine/header-detector";
+import type { ExcelCellValue } from "@/lib/import-engine/types";
+import {
+  DRILL_DOWN_OPTIONAL_FIELDS,
+  DRILL_DOWN_REQUIRED_FIELDS,
+  suggestDrillDownColumnMapping,
+  type DrillDownColumnMapping,
+  type DrillDownMappingField,
+  type DrillDownRequiredField,
+} from "@/lib/admin/objetivos/drill-down-column-mapping";
 
 type VersionRow = {
   id: string;
@@ -42,12 +52,25 @@ type Props = {
 };
 
 const MAX_COMBINED_FILES_SIZE_BYTES = 75 * 1024 * 1024;
-type DrillDownRequiredField = "ruta" | "productName" | "cuota";
-type DrillDownOptionalField = "mes" | "canal" | "producto" | "metodo" | "brick" | "cuenta" | "salesCredity";
-type DrillDownMappingField = DrillDownRequiredField | DrillDownOptionalField;
 
-const DRILLDOWN_REQUIRED_FIELDS: DrillDownRequiredField[] = ["ruta", "productName", "cuota"];
-const DRILLDOWN_OPTIONAL_FIELDS: DrillDownOptionalField[] = ["mes", "canal", "producto", "metodo", "brick", "cuenta", "salesCredity"];
+const EMPTY_DRILL_DOWN_COLUMN_MAPPING: Record<DrillDownMappingField, string> = {
+  ruta: "",
+  productName: "",
+  cuota: "",
+  mes: "",
+  canal: "",
+  producto: "",
+  metodo: "",
+  brick: "",
+  cuenta: "",
+  salesCredity: "",
+};
+
+function completeDrillDownColumnMapping(
+  mapping: DrillDownColumnMapping,
+): Record<DrillDownMappingField, string> {
+  return { ...EMPTY_DRILL_DOWN_COLUMN_MAPPING, ...mapping };
+}
 
 function formatDateTime(value: string | null) {
   return formatDateTimeNoTimezoneShift(value, "es-MX", "-");
@@ -116,18 +139,9 @@ export function ObjetivosManagementCard({
   const [selectedDrillDownSheetName, setSelectedDrillDownSheetName] = useState("");
   const [drillDownSheetError, setDrillDownSheetError] = useState<string | null>(null);
   const [drillDownHeaders, setDrillDownHeaders] = useState<string[]>([]);
-  const [drillDownColumnMapping, setDrillDownColumnMapping] = useState<Record<DrillDownMappingField, string>>({
-    ruta: "",
-    productName: "",
-    cuota: "",
-    mes: "",
-    canal: "",
-    producto: "",
-    metodo: "",
-    brick: "",
-    cuenta: "",
-    salesCredity: "",
-  });
+  const [drillDownColumnMapping, setDrillDownColumnMapping] = useState<
+    Record<DrillDownMappingField, string>
+  >({ ...EMPTY_DRILL_DOWN_COLUMN_MAPPING });
   const [changeNote, setChangeNote] = useState("");
   const [previewState, setPreviewState] = useState<PreviewObjetivosResult | null>(null);
   const [uploadState, setUploadState] = useState<UploadObjetivosResult | null>(null);
@@ -242,12 +256,15 @@ export function ObjetivosManagementCard({
       const workbook = read(fileBuffer, { type: "array" });
       const sheet = workbook.Sheets[sheetName];
       if (!sheet) return { headers: [] as string[] };
-      const rows = utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
-      const headerRow = rows
-        .slice(0, 10)
-        .map((row) => row.map((cell) => String(cell ?? "").trim()))
-        .sort((a, b) => b.filter(Boolean).length - a.filter(Boolean).length)[0] ?? [];
-      return { headers: headerRow.filter(Boolean) };
+      const rows = utils.sheet_to_json<ExcelCellValue[]>(sheet, {
+        header: 1,
+        defval: "",
+      });
+      const detectedHeader = detectHeaderRow(rows);
+      return {
+        headers:
+          detectedHeader?.headers.filter((header) => String(header ?? "").trim()) ?? [],
+      };
     } catch {
       return { headers: [] as string[] };
     }
@@ -277,6 +294,7 @@ export function ObjetivosManagementCard({
     setDrillDownSheetNames([]);
     setSelectedDrillDownSheetName("");
     setDrillDownHeaders([]);
+    setDrillDownColumnMapping({ ...EMPTY_DRILL_DOWN_COLUMN_MAPPING });
 
     const parsed = await readSheetNamesFromFile(file);
     setDrillDownSheetNames(parsed.names);
@@ -284,12 +302,22 @@ export function ObjetivosManagementCard({
     setDrillDownSheetError(parsed.error);
     const headers = await readHeadersFromFile(file, parsed.names[0] ?? "");
     setDrillDownHeaders(headers.headers);
+    setDrillDownColumnMapping(
+      completeDrillDownColumnMapping(
+        suggestDrillDownColumnMapping(headers.headers, periodInput),
+      ),
+    );
   }
 
   async function handleDrillDownSheetChange(sheetName: string) {
     setSelectedDrillDownSheetName(sheetName);
     const headers = await readHeadersFromFile(selectedDrillDownFile, sheetName);
     setDrillDownHeaders(headers.headers);
+    setDrillDownColumnMapping(
+      completeDrillDownColumnMapping(
+        suggestDrillDownColumnMapping(headers.headers, periodInput),
+      ),
+    );
   }
 
   function buildFormData(allowWithAlerts: boolean): FormData | null {
@@ -332,6 +360,19 @@ export function ObjetivosManagementCard({
         const result = await previewObjetivosImportAction(null, formData);
         if (!result.ok && result.mappingRequired) {
           setDrillDownHeaders(result.mappingRequired.headers);
+          setDrillDownColumnMapping((current) => {
+            const suggested = completeDrillDownColumnMapping(
+              result.mappingRequired?.suggestedMapping ?? {},
+            );
+            return Object.fromEntries(
+              Object.entries(current).map(([field, selectedHeader]) => [
+                field,
+                selectedHeader ||
+                  suggested[field as DrillDownMappingField] ||
+                  "",
+              ]),
+            ) as Record<DrillDownMappingField, string>;
+          });
         }
         setPreviewState(result);
       } catch (error) {
@@ -531,10 +572,10 @@ export function ObjetivosManagementCard({
               Asigna las columnas del archivo a los campos esperados y vuelve a validar.
             </p>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
-              {[...DRILLDOWN_REQUIRED_FIELDS, ...DRILLDOWN_OPTIONAL_FIELDS].map((field) => (
+              {[...DRILL_DOWN_REQUIRED_FIELDS, ...DRILL_DOWN_OPTIONAL_FIELDS].map((field) => (
                 <label key={field} className="text-xs font-medium uppercase tracking-wide text-neutral-600">
                   {formatDrillDownFieldLabel(field)}
-                  {DRILLDOWN_REQUIRED_FIELDS.includes(field as DrillDownRequiredField) ? " *" : ""}
+                  {DRILL_DOWN_REQUIRED_FIELDS.includes(field as DrillDownRequiredField) ? " *" : ""}
                   <select
                     value={drillDownColumnMapping[field]}
                     onChange={(event) =>

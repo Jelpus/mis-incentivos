@@ -1,6 +1,13 @@
 import { cleanNumber, cleanText } from "@/lib/import-engine/cleaners";
 import { detectHeaderRow } from "@/lib/import-engine/header-detector";
 import { parseExcelBuffer } from "@/lib/import-engine/excel-parser";
+import {
+  DRILL_DOWN_REQUIRED_FIELDS,
+  resolveDrillDownColumn,
+  suggestDrillDownColumnMapping,
+  type DrillDownColumnMapping,
+  type DrillDownMappingField,
+} from "@/lib/admin/objetivos/drill-down-column-mapping";
 
 type ParsedInputRow = {
   rowNumber: number;
@@ -35,11 +42,6 @@ type ParsedInputIssue = {
   reason: string;
 };
 
-export type DrillDownColumnMapping = Partial<Record<
-  "ruta" | "productName" | "cuota" | "mes" | "canal" | "producto" | "metodo" | "brick" | "cuenta" | "salesCredity",
-  string
->>;
-
 export type ParsedObjectivesInput = {
   sheetName: string;
   totalRowsRead: number;
@@ -59,6 +61,7 @@ export type ParsedObjectivesInput = {
     headers: string[];
     requiredFields: Array<"ruta" | "productName" | "cuota">;
     missingFields: Array<"ruta" | "productName" | "cuota">;
+    suggestedMapping: DrillDownColumnMapping;
   };
 };
 
@@ -456,28 +459,6 @@ export function parseObjectivesFile(params: {
   };
 }
 
-function resolveDrillDownColumn(headerKey: string): "ruta" | "productName" | "cuota" | "mes" | "canal" | "producto" | "metodo" | "brick" | "cuenta" | "salesCredity" | null {
-  if (headerKey === "RUTA" || headerKey === "TERRITORIO_INDIVIDUAL") return "ruta";
-  if (headerKey === "PRODUCT_NAME" || headerKey === "PRODUCTNAME" || headerKey === "PRODUCTO_NOMBRE") return "productName";
-  if (headerKey === "CUOTA" || headerKey === "CUOTA_YTD" || headerKey === "TARGET" || headerKey === "OBJETIVO") return "cuota";
-  if (headerKey === "MES" || headerKey === "MONTH" || headerKey === "PERIODO") return "mes";
-  if (headerKey === "CHANNEL" || headerKey === "CANAL") return "canal";
-  if (headerKey === "PRODUCT" || headerKey === "PRODUCTO") return "producto";
-  if (
-    headerKey === "METODO" ||
-    headerKey === "METODOLOGIA" ||
-    headerKey === "METHOD" ||
-    headerKey === "METODO_" ||
-    headerKey === "TIPO" ||
-    headerKey === "TYPE" ||
-    headerKey === "TYPO"
-  ) return "metodo";
-  if (headerKey === "BRICK" || headerKey === "CLUE_BRICK" || headerKey === "CLUE__BRICK") return "brick";
-  if (headerKey === "CUENTA" || headerKey === "ACCOUNT" || headerKey === "STATE" || headerKey === "ESTADO") return "cuenta";
-  if (headerKey === "SALES_CRED" || headerKey === "SALES_CREDIT" || headerKey === "SALES_CREDITY") return "salesCredity";
-  return null;
-}
-
 export function parseDrillDownObjectivesFile(params: {
   fileBuffer: Buffer;
   selectedPeriodMonth: string;
@@ -543,26 +524,29 @@ export function parseDrillDownObjectivesFile(params: {
 
   const headerIndex = detectedHeader.headerRowIndex;
   const headers = detectedHeader.headers;
-  const columnMap = new Map<number, "ruta" | "productName" | "cuota" | "mes" | "canal" | "producto" | "metodo" | "brick" | "cuenta" | "salesCredity">();
+  const columnMap = new Map<number, DrillDownMappingField>();
   const normalizedHeaderByName = new Map<string, number>();
   headers.forEach((headerValue, columnIndex) => {
     normalizedHeaderByName.set(normalizeHeader(headerValue), columnIndex);
-    const parsed = resolveDrillDownColumn(normalizeHeader(headerValue));
+    const parsed = resolveDrillDownColumn(headerValue, params.selectedPeriodMonth);
     if (parsed) columnMap.set(columnIndex, parsed);
   });
 
   for (const [field, headerName] of Object.entries(params.columnMapping ?? {}) as Array<[
-    "ruta" | "productName" | "cuota" | "mes" | "canal" | "producto" | "metodo" | "brick" | "cuenta" | "salesCredity",
+    DrillDownMappingField,
     string | undefined,
   ]>) {
     const normalizedHeaderName = normalizeHeader(String(headerName ?? ""));
     if (!normalizedHeaderName) continue;
     const columnIndex = normalizedHeaderByName.get(normalizedHeaderName);
     if (columnIndex === undefined) continue;
+    for (const [mappedColumnIndex, mappedField] of columnMap.entries()) {
+      if (mappedField === field) columnMap.delete(mappedColumnIndex);
+    }
     columnMap.set(columnIndex, field);
   }
 
-  const mandatoryColumns: Array<"ruta" | "productName" | "cuota"> = ["ruta", "productName", "cuota"];
+  const mandatoryColumns = DRILL_DOWN_REQUIRED_FIELDS;
   const mappedFields = Array.from(columnMap.values());
   const missingFields = mandatoryColumns.filter((column) => !mappedFields.includes(column));
   if (missingFields.length > 0) {
@@ -592,6 +576,10 @@ export function parseDrillDownObjectivesFile(params: {
         headers: headers.filter((header) => String(header ?? "").trim().length > 0),
         requiredFields: mandatoryColumns,
         missingFields,
+        suggestedMapping: suggestDrillDownColumnMapping(
+          headers,
+          params.selectedPeriodMonth,
+        ),
       },
     };
   }
