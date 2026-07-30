@@ -95,5 +95,13 @@
     "route": "/admin/objetivos",
     "currentState": "El matching manual aparecia sin conservar las columnas que el servidor ya reconocia y no interpretaba la columna del mes como cuota.",
     "modifiedState": "El formulario y el servidor comparten sugerencias seguras; autoseleccionan aliases reconocidos y la columna del mes activo como cuota, manteniendo prioridad para ajustes manuales."
+  },
+  {
+    "sourceKey": "2026-07-30-admin-calculo-5884ac5701",
+    "date": "2026-07-30",
+    "route": "/admin/calculo",
+    "currentState": "Los periodos en estado final podian recibir ajustes sin regresar formalmente a precalculo, por lo que no existia un flujo consistente de reapertura y nueva aprobacion.",
+    "modifiedState": "Se agrega una accion confirmada para regresar de final a precalculo, limpiar las fechas de aprobacion y finalizacion, y abrir la pantalla de ajustes para aprobar nuevamente.",
+    "commitRef": "997370d"
   }
 ]
