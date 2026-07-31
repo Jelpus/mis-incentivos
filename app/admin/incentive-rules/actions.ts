@@ -16,8 +16,8 @@ import {
 } from "@/lib/admin/incentive-rules/rule-definition-normalized";
 import { TEAM_RULE_REFERENCE_VALUES } from "@/lib/admin/incentive-rules/rule-catalog";
 import {
-  insertBigQueryRows,
   isBigQueryConfigured,
+  loadBigQueryJsonRows,
   runBigQueryQuery,
   validateBigQueryTableConnection,
 } from "@/lib/integrations/bigquery";
@@ -980,6 +980,150 @@ function isBigQueryStreamingBufferMutationError(error: unknown): boolean {
     normalized.includes("streaming buffer") &&
     (normalized.includes("update or delete") || normalized.includes("would affect rows"))
   );
+}
+
+function quoteBigQueryIdentifier(value: string): string {
+  return `\`${value.replace(/`/g, "")}\``;
+}
+
+function prepareSourceRowsForBatchLoad(rows: BigQuerySourceRow[]): Record<string, unknown>[] {
+  return rows.map((row) => {
+    let meses: Record<string, number> | null = null;
+    if (row.meses) {
+      try {
+        const parsed = JSON.parse(row.meses) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          meses = parsed as Record<string, number>;
+        }
+      } catch {
+        meses = null;
+      }
+    }
+
+    return {
+      ...row,
+      meses,
+    };
+  });
+}
+
+async function replaceBigQuerySourceRows(params: {
+  projectId: string;
+  datasetId: string;
+  tableId: string;
+  periodMonth: string;
+  archivo: string;
+  fileCode: string;
+  operation: "upload" | "reprocess";
+  rows: BigQuerySourceRow[];
+}): Promise<void> {
+  const persistenceId = crypto.randomUUID();
+  const stageSuffix = `${Date.now()}_${persistenceId.slice(0, 8)}`.replace(/[^A-Za-z0-9_]/g, "_");
+  const stageTableId = `${params.tableId}__source_replace_${stageSuffix}`;
+  const targetTableRef = quoteBigQueryIdentifier(
+    `${params.projectId}.${params.datasetId}.${params.tableId}`,
+  );
+  const stageTableRef = quoteBigQueryIdentifier(
+    `${params.projectId}.${params.datasetId}.${stageTableId}`,
+  );
+  const loadRows = prepareSourceRowsForBatchLoad(params.rows);
+  const startedAt = Date.now();
+
+  console.info("[team-source-persist]", {
+    persistenceId,
+    operation: params.operation,
+    phase: "started",
+    periodMonth: params.periodMonth,
+    fileCode: params.fileCode,
+    archivo: params.archivo,
+    rows: loadRows.length,
+    strategy: "batch_stage_transaction",
+  });
+
+  try {
+    await runBigQueryQuery({
+      query: `
+        CREATE TABLE ${stageTableRef}
+        LIKE ${targetTableRef}
+        OPTIONS (
+          expiration_timestamp = TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 1 DAY)
+        )
+      `,
+    });
+    console.info("[team-source-persist]", {
+      persistenceId,
+      operation: params.operation,
+      phase: "stage_created",
+      elapsedMs: Date.now() - startedAt,
+    });
+
+    await loadBigQueryJsonRows({
+      datasetId: params.datasetId,
+      tableId: stageTableId,
+      rows: loadRows,
+      writeDisposition: "WRITE_APPEND",
+    });
+    console.info("[team-source-persist]", {
+      persistenceId,
+      operation: params.operation,
+      phase: "stage_loaded",
+      rows: loadRows.length,
+      elapsedMs: Date.now() - startedAt,
+    });
+
+    await runBigQueryQuery({
+      query: `
+        BEGIN TRANSACTION;
+        DELETE FROM ${targetTableRef}
+        WHERE periodo = @periodo
+          AND archivo = @archivo;
+        INSERT INTO ${targetTableRef}
+        SELECT * FROM ${stageTableRef};
+        COMMIT TRANSACTION;
+      `,
+      parameters: [
+        { name: "periodo", type: "STRING", value: params.periodMonth.slice(0, 7) },
+        { name: "archivo", type: "STRING", value: params.archivo },
+      ],
+    });
+    console.info("[team-source-persist]", {
+      persistenceId,
+      operation: params.operation,
+      phase: "completed",
+      rows: loadRows.length,
+      elapsedMs: Date.now() - startedAt,
+    });
+  } catch (error) {
+    console.error("[team-source-persist]", {
+      persistenceId,
+      operation: params.operation,
+      phase: "failed",
+      periodMonth: params.periodMonth,
+      fileCode: params.fileCode,
+      archivo: params.archivo,
+      rows: loadRows.length,
+      elapsedMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error ?? ""),
+    });
+    throw error;
+  } finally {
+    try {
+      await runBigQueryQuery({
+        query: `DROP TABLE IF EXISTS ${stageTableRef}`,
+      });
+    } catch (cleanupError) {
+      console.warn("[team-source-persist]", {
+        persistenceId,
+        operation: params.operation,
+        phase: "stage_cleanup_failed",
+        stageTableId,
+        error:
+          cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError ?? ""),
+      });
+    }
+  }
 }
 
 function sanitizeNumericStringOrNull(value: unknown): string | null {
@@ -2533,25 +2677,15 @@ export async function uploadTeamSourceFileAction(
       } else {
         await ensureBigQueryTableHealthCached(datasetId, tableId);
 
-        await runBigQueryQuery({
-          query: `DELETE FROM \`${projectId}.${datasetId}.${tableId}\` WHERE periodo = @periodo AND archivo = @archivo`,
-          parameters: [
-            { name: "periodo", type: "STRING", value: periodMonth.slice(0, 7) },
-            {
-              name: "archivo",
-              type: "STRING",
-              value: displayNameInput || fileCodeInput || fileCode,
-            },
-          ],
-        });
-
-        await insertBigQueryRows({
+        await replaceBigQuerySourceRows({
+          projectId,
           datasetId,
           tableId,
-          rows: normalizedForBigQuery.rows.map((row, index) => ({
-            rowId: `${fileCode}-${periodMonth}-${index + 1}`,
-            json: row,
-          })),
+          periodMonth,
+          archivo: displayNameInput || fileCodeInput || fileCode,
+          fileCode,
+          operation: "upload",
+          rows: normalizedForBigQuery.rows,
         });
 
         bigQueryStatus = "uploaded";
@@ -2756,21 +2890,15 @@ export async function reprocessTeamSourceFileFromStorageAction(
       } else {
         await ensureBigQueryTableHealthCached(datasetId, tableId);
 
-        await runBigQueryQuery({
-          query: `DELETE FROM \`${projectId}.${datasetId}.${tableId}\` WHERE periodo = @periodo AND archivo = @archivo`,
-          parameters: [
-            { name: "periodo", type: "STRING", value: periodMonth.slice(0, 7) },
-            { name: "archivo", type: "STRING", value: displayName },
-          ],
-        });
-
-        await insertBigQueryRows({
+        await replaceBigQuerySourceRows({
+          projectId,
           datasetId,
           tableId,
-          rows: normalizedForBigQuery.rows.map((row, index) => ({
-            rowId: `${fileCode}-${periodMonth}-reprocess-${index + 1}`,
-            json: row,
-          })),
+          periodMonth,
+          archivo: displayName,
+          fileCode,
+          operation: "reprocess",
+          rows: normalizedForBigQuery.rows,
         });
 
         bigQueryStatus = "uploaded";

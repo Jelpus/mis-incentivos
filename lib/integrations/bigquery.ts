@@ -183,7 +183,7 @@ export async function loadBigQueryJsonRows(params: {
   datasetId: string;
   tableId: string;
   rows: Record<string, unknown>[];
-  schema: BigQuerySchemaField[];
+  schema?: BigQuerySchemaField[];
   writeDisposition?: "WRITE_APPEND" | "WRITE_TRUNCATE" | "WRITE_EMPTY";
 }): Promise<void> {
   getBigQueryProjectId();
@@ -198,7 +198,7 @@ export async function loadBigQueryJsonRows(params: {
     await writeFile(filePath, payload.length > 0 ? `${payload}\n` : "", "utf8");
     await table.load(filePath, {
       sourceFormat: "NEWLINE_DELIMITED_JSON",
-      schema: { fields: params.schema },
+      ...(params.schema ? { schema: { fields: params.schema } } : {}),
       writeDisposition: params.writeDisposition ?? "WRITE_TRUNCATE",
       createDisposition: "CREATE_IF_NEEDED",
       ignoreUnknownValues: true,

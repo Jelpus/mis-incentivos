@@ -5,9 +5,18 @@ Flujo implementado en `admin/data-sources` al subir un archivo por `archivo logi
 1. Seleccionar archivo y sheet.
 2. Convertir sheet a JSON.
 3. Normalizar filas a la estructura estandar.
-4. Upsert en BigQuery:
-   - `DELETE` por combinacion `periodo + archivo`.
-   - `INSERT` de filas normalizadas en `incentivos.filesNormalizados`.
+4. Reemplazo atomico en BigQuery:
+   - Crear una tabla temporal con el mismo schema de `incentivos.filesNormalizados`.
+   - Cargar las filas normalizadas mediante un load job batch.
+   - En una transaccion, ejecutar el `DELETE` por `periodo + archivo` y copiar las
+     filas nuevas desde la tabla temporal.
+   - Eliminar la tabla temporal. Ademas, expira automaticamente en un dia como
+     proteccion si el proceso se interrumpe antes del cleanup.
+
+El flujo no usa `tabledata.insertAll` para estas cargas. Esto evita dejar las filas
+en el streaming buffer de BigQuery, que impide ejecutar un `DELETE` durante un
+periodo variable. Los datos anteriores permanecen intactos hasta que la carga batch
+de la nueva version haya terminado correctamente.
 
 ## Variables de entorno requeridas
 
@@ -39,7 +48,9 @@ Nuevo para historial mensual:
 - `meses` (JSON `{ "YYYY-MM": number }`, recomendado)
 - `month01` ... `month12` (`FLOAT64`, opcional)
 
-Nota de carga: la app envia `meses` serializado como string JSON en `insertAll`; BigQuery lo parsea al campo `JSON`.
+Nota de carga: la normalizacion interna produce `meses` serializado, pero antes del
+load job la app lo convierte de nuevo a un objeto JSON para guardarlo en el campo
+`JSON` de BigQuery.
 
 Convencion de columnas calendario:
 - `month01` = enero del anio del periodo de carga.

@@ -103,5 +103,12 @@
     "currentState": "Los periodos en estado final podian recibir ajustes sin regresar formalmente a precalculo, por lo que no existia un flujo consistente de reapertura y nueva aprobacion.",
     "modifiedState": "Se agrega una accion confirmada para regresar de final a precalculo, limpiar las fechas de aprobacion y finalizacion, y abrir la pantalla de ajustes para aprobar nuevamente.",
     "commitRef": "997370d"
+  },
+  {
+    "sourceKey": "2026-07-30-admin-data-sources-6c588f195a",
+    "date": "2026-07-30",
+    "route": "/admin/data-sources",
+    "currentState": "Las actualizaciones y reprocesos escribian con insertAll; las filas quedaban en el streaming buffer de BigQuery y el DELETE por periodo y archivo podia seguir bloqueado aun despues de refrescar.",
+    "modifiedState": "Las actualizaciones cargan primero por job batch a una tabla temporal y reemplazan los datos en una transaccion; la version anterior se conserva si falla la carga y las tablas temporales se limpian o expiran automaticamente."
   }
 ]
