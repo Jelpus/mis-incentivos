@@ -183,6 +183,8 @@ export type CalculoProcessRunResult = {
   sourceRowsInPeriod: number;
   assignmentsCount: number;
   productsEvaluated: number;
+  missingObjectivesCount: number;
+  missingObjectiveExamples: string[];
   exactMatches: number;
   fuzzyMatches: number;
   totalObjetivo: number;
@@ -267,8 +269,12 @@ function normalizeObjectiveMetodo(value: unknown): "PRIVATE" | "CUENTAS" | "ESTA
   return "";
 }
 
-function isNationalObjectiveRow(row: Pick<ObjectiveTargetRow, "metodo" | "plan_type_name">): boolean {
-  return normalizeObjectiveMetodo(row.metodo || row.plan_type_name) === "NACIONAL";
+function isNationalObjectiveRow(
+  row: Pick<ObjectiveTargetRow, "metodo" | "plan_type_name" | "brick" | "cuenta">,
+): boolean {
+  return [row.metodo, row.plan_type_name, row.brick, row.cuenta].some(
+    (value) => normalizeObjectiveMetodo(value) === "NACIONAL",
+  );
 }
 
 function isFlexibleBrickMatch(expectedBrick: string, rowBrick: string): boolean {
@@ -923,6 +929,10 @@ export async function runCalculoProcess(
 
   const assignments: AssignmentRow[] = [];
   let productsEvaluated = 0;
+  const missingObjectivesByKey = new Map<
+    string,
+    { route: string; teamId: string; productName: string }
+  >();
   let exactMatches = 0;
   let fuzzyMatches = 0;
   let totalObjetivo = 0;
@@ -943,12 +953,19 @@ export async function runCalculoProcess(
       if (!productName) continue;
       const routeProductKey = `${route}::${productName}`;
       const targetRows = targetsByRouteProduct.get(routeProductKey) ?? [];
-      if (targetRows.length === 0) continue;
 
       const itemId = Number(item.id ?? 0);
       const rawSources = Number.isFinite(itemId) && itemId > 0 ? (sourcesByItemId.get(itemId) ?? []) : [];
       const sources = dedupeSources(rawSources);
       if (sources.length === 0) continue;
+      if (targetRows.length === 0) {
+        missingObjectivesByKey.set(routeProductKey, {
+          route,
+          teamId,
+          productName,
+        });
+        continue;
+      }
       productsEvaluated += 1;
 
       const planTypeName = String(item.plan_type_name ?? targetRows[0]?.plan_type_name ?? "").trim() || null;
@@ -1035,10 +1052,7 @@ export async function runCalculoProcess(
         const targetPlanType = toUpperTrim(
           normalizedMetodo || targetRow.plan_type_name || planTypeName,
         );
-        const targetIsNational =
-          normalizedMetodo === "NACIONAL" ||
-          targetPlanType.includes("NACIONAL") ||
-          targetPlanType.includes("GLOBAL");
+        const targetIsNational = isNationalObjectiveRow(targetRow);
         const targetIsCuentas = targetPlanType.includes("CUENTA");
         const targetIsEstado = targetPlanType.includes("ESTADO");
         const inferredIsEstado =
@@ -1363,6 +1377,16 @@ export async function runCalculoProcess(
     }
   }
 
+  const missingObjectiveExamples = Array.from(missingObjectivesByKey.values())
+    .slice(0, 20)
+    .map((item) => `${item.route} | ${item.teamId} | ${item.productName}`);
+
+  if (shouldPersist && missingObjectivesByKey.size > 0) {
+    throw new Error(
+      `No se puede confirmar el precalculo: faltan objetivos para ${missingObjectivesByKey.size} combinaciones ruta + producto. Ejemplos: ${missingObjectiveExamples.slice(0, 5).join("; ")}. Corrige la version de objetivos y vuelve a calcular.`,
+    );
+  }
+
   if (shouldPersist) {
     const asignacionTableRef = `\`${projectId}.${asignacionDataset}.${asignacionTable}\``;
     const periodCode = periodMonth.slice(0, 7);
@@ -1456,6 +1480,8 @@ export async function runCalculoProcess(
     sourceRowsInPeriod: filesDataPeriodo.length,
     assignmentsCount: assignments.length,
     productsEvaluated,
+    missingObjectivesCount: missingObjectivesByKey.size,
+    missingObjectiveExamples,
     exactMatches,
     fuzzyMatches,
     totalObjetivo,

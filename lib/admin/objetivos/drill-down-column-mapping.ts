@@ -131,6 +131,31 @@ export function resolveDrillDownColumn(
   return null;
 }
 
+function drillDownColumnPriority(
+  field: DrillDownMappingField,
+  headerValue: string,
+  selectedPeriodMonth?: string | null,
+): number {
+  const headerKey = normalizeDrillDownHeader(headerValue);
+
+  if (field === "metodo") {
+    if (["METODO", "METODOLOGIA", "METHOD", "METODO_"].includes(headerKey)) return 100;
+    if (["TIPO", "TYPE", "TYPO"].includes(headerKey)) return 10;
+  }
+
+  if (field === "cuenta") {
+    if (["CUENTA", "ACCOUNT"].includes(headerKey)) return 100;
+    if (["STATE", "ESTADO"].includes(headerKey)) return 10;
+  }
+
+  if (field === "cuota") {
+    if (["CUOTA", "CUOTA_YTD", "TARGET", "OBJETIVO"].includes(headerKey)) return 100;
+    if (selectedMonthHeader(selectedPeriodMonth ?? "") === headerKey) return 50;
+  }
+
+  return 50;
+}
+
 export function suggestDrillDownColumnMapping(
   headers: string[],
   selectedPeriodMonth?: string | null,
@@ -139,7 +164,16 @@ export function suggestDrillDownColumnMapping(
 
   for (const header of headers) {
     const field = resolveDrillDownColumn(header, selectedPeriodMonth);
-    if (field && !suggestions[field]) suggestions[field] = header;
+    if (!field) continue;
+
+    const currentHeader = suggestions[field];
+    if (
+      !currentHeader ||
+      drillDownColumnPriority(field, header, selectedPeriodMonth) >
+        drillDownColumnPriority(field, currentHeader, selectedPeriodMonth)
+    ) {
+      suggestions[field] = header;
+    }
   }
 
   return suggestions;

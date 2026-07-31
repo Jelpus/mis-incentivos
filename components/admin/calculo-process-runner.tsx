@@ -789,6 +789,19 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
           </div>
           {previewState.ok ? (
             <div className="mt-3">
+              {previewState.summary.missingObjectivesCount > 0 ? (
+                <div className="mb-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-900">
+                  <p className="font-semibold">
+                    Faltan objetivos para {previewState.summary.missingObjectivesCount} combinaciones ruta + producto.
+                  </p>
+                  <p className="mt-1">
+                    El precálculo puede revisarse, pero no podrá confirmarse hasta corregir la versión de objetivos.
+                  </p>
+                  {previewState.summary.missingObjectiveExamples.slice(0, 8).map((example) => (
+                    <p key={example}>- {example}</p>
+                  ))}
+                </div>
+              ) : null}
               <details className="rounded-lg border border-emerald-200 bg-white" open>
                 <summary className="cursor-pointer select-none border-b border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900">
                   Tabla resumen por producto ({productSummaryRows.length})

@@ -192,9 +192,20 @@ function resolveColumn(headerKey: string): keyof ParsedInputRow | null {
   return null;
 }
 
-function normalizeMetodoValue(value: string | null | undefined): "PRIVATE" | "CUENTAS" | "ESTADOS" | "NACIONAL" {
+function normalizeMetodoValue(
+  value: string | null | undefined,
+  brick?: string | null,
+  cuenta?: string | null,
+): "PRIVATE" | "CUENTAS" | "ESTADOS" | "NACIONAL" {
   const normalized = normalizeKey(value);
-  if (normalized.includes("NACIONAL") || normalized.includes("GLOBAL")) return "NACIONAL";
+  const nationalSignals = [normalized, normalizeKey(brick), normalizeKey(cuenta)];
+  if (
+    nationalSignals.some(
+      (signal) => signal.includes("NACIONAL") || signal.includes("GLOBAL"),
+    )
+  ) {
+    return "NACIONAL";
+  }
   if (normalized.includes("ESTADO")) return "ESTADOS";
   if (normalized.includes("CUENTA")) return "CUENTAS";
   return "CUENTAS";
@@ -675,6 +686,12 @@ export function parseDrillDownObjectivesFile(params: {
       continue;
     }
 
+    const normalizedMetodo = normalizeMetodoValue(
+      mapped.metodo,
+      mapped.brick,
+      mapped.cuenta,
+    );
+
     preAggregatedRows.push({
       rowNumber,
       sourceType: "drilldown",
@@ -683,8 +700,11 @@ export function parseDrillDownObjectivesFile(params: {
       periodMonth: rowPeriodMonth ?? params.selectedPeriodMonth,
       territorioIndividual: mapped.ruta,
       productName: mapped.productName,
-      metodo: normalizeMetodoValue(mapped.metodo),
-      planTypeName: mapped.metodo?.trim() || "DRILL DOWN CUOTAS",
+      metodo: normalizedMetodo,
+      planTypeName:
+        normalizedMetodo === "NACIONAL"
+          ? "NACIONAL"
+          : mapped.metodo?.trim() || "DRILL DOWN CUOTAS",
       target: mapped.cuota,
       brick: mapped.brick ?? null,
       cuenta: mapped.cuenta ?? null,

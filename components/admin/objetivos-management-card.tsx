@@ -400,10 +400,8 @@ export function ObjetivosManagementCard({
   }
 
   function handleUpload() {
-    const hasAlerts =
-      previewState?.ok &&
-      (previewState.summary.warningCount > 0 || previewState.summary.criticalCount > 0);
-    const formData = buildFormData(Boolean(hasAlerts));
+    const hasWarnings = previewState?.ok && previewState.summary.warningCount > 0;
+    const formData = buildFormData(Boolean(hasWarnings));
     if (!formData) return;
 
     startUpload(async () => {
@@ -633,12 +631,18 @@ export function ObjetivosManagementCard({
               previewPending ||
               uploadPending ||
               !previewState?.ok ||
-              previewState.summary.validRows <= 0
+              previewState.summary.validRows <= 0 ||
+              previewState.summary.criticalCount > 0
             }
             className="rounded-xl bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
           >
             {uploadPending ? "Guardando version..." : "Guardar nueva version"}
           </button>
+          {previewState?.ok && previewState.summary.criticalCount > 0 ? (
+            <p className="text-xs font-medium text-red-700">
+              No se puede guardar mientras existan objetivos críticos faltantes.
+            </p>
+          ) : null}
         </div>
 
         {previewState ? (

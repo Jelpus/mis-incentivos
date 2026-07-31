@@ -59,6 +59,8 @@ export type CalculoActionResult =
     calculationSummary?: {
       assignmentsCount: number;
       productsEvaluated: number;
+      missingObjectivesCount: number;
+      missingObjectiveExamples: string[];
       exactMatches: number;
       fuzzyMatches: number;
       totalObjetivo: number;
@@ -76,6 +78,8 @@ export type CalculoPreviewResult =
     summary: {
       assignmentsCount: number;
       productsEvaluated: number;
+      missingObjectivesCount: number;
+      missingObjectiveExamples: string[];
       exactMatches: number;
       fuzzyMatches: number;
       totalObjetivo: number;
@@ -284,6 +288,8 @@ export async function updateCalculoStatusAction(
     | {
       assignmentsCount: number;
       productsEvaluated: number;
+      missingObjectivesCount: number;
+      missingObjectiveExamples: string[];
       exactMatches: number;
       fuzzyMatches: number;
       totalObjetivo: number;
@@ -311,6 +317,8 @@ export async function updateCalculoStatusAction(
       calculationSummary = {
         assignmentsCount: processResult.assignmentsCount,
         productsEvaluated: processResult.productsEvaluated,
+        missingObjectivesCount: processResult.missingObjectivesCount,
+        missingObjectiveExamples: processResult.missingObjectiveExamples,
         exactMatches: processResult.exactMatches,
         fuzzyMatches: processResult.fuzzyMatches,
         totalObjetivo: processResult.totalObjetivo,
@@ -439,7 +447,9 @@ export async function updateCalculoStatusAction(
     ok: true,
     message:
       actionInput === "calcular" && calculationSummary
-        ? `Calculo listo para revision (${periodMonth.slice(0, 7)}).`
+        ? calculationSummary.missingObjectivesCount > 0
+          ? `Calculo listo con ${calculationSummary.missingObjectivesCount} objetivos faltantes. Revisa los ejemplos; no se podra confirmar el precalculo hasta corregirlos.`
+          : `Calculo listo para revision (${periodMonth.slice(0, 7)}).`
         : actionInput === "confirmar_precalculo"
           ? skippedAsignacionByStreamingBuffer
             ? `Confirmado (${periodMonth.slice(0, 7)}): resultados_v2 subidos (${resultadosPersistedSummary?.rowsCount ?? 0} filas, pago_resultado=${(resultadosPersistedSummary?.totalPagoResultado ?? 0).toFixed(6)}). Nota: asignacionUnidades no se refresco por streaming buffer de BigQuery; reintenta confirmar en unos minutos para refrescar esa tabla. Estatus=${effectiveNextStatus}.`
@@ -482,6 +492,8 @@ export async function previewCalculoProcessAction(
       summary: {
         assignmentsCount: preview.assignmentsCount,
         productsEvaluated: preview.productsEvaluated,
+        missingObjectivesCount: preview.missingObjectivesCount,
+        missingObjectiveExamples: preview.missingObjectiveExamples,
         exactMatches: preview.exactMatches,
         fuzzyMatches: preview.fuzzyMatches,
         totalObjetivo: preview.totalObjetivo,

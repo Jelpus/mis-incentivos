@@ -110,5 +110,19 @@
     "route": "/admin/data-sources",
     "currentState": "Las actualizaciones y reprocesos escribian con insertAll; las filas quedaban en el streaming buffer de BigQuery y el DELETE por periodo y archivo podia seguir bloqueado aun despues de refrescar.",
     "modifiedState": "Las actualizaciones cargan primero por job batch a una tabla temporal y reemplazan los datos en una transaccion; la version anterior se conserva si falla la carga y las tablas temporales se limpian o expiran automaticamente."
+  },
+  {
+    "sourceKey": "2026-07-31-admin-objetivos-afinitorgob-63bb503a96",
+    "date": "2026-07-31",
+    "route": "/admin/objetivos",
+    "currentState": "El mapeo automatico podia priorizar TYPE sobre Metodo y STATE sobre CUENTA; ademas, una version podia guardarse aun con objetivos criticos faltantes.",
+    "modifiedState": "Se priorizan las columnas explicitas Metodo y CUENTA, se infiere NACIONAL desde metodo, brick o cuenta, y se bloquea guardar versiones con objetivos criticos faltantes."
+  },
+  {
+    "sourceKey": "2026-07-31-admin-calculo-afinitorgob-30a716fed1",
+    "date": "2026-07-31",
+    "route": "/admin/calculo",
+    "currentState": "Un objetivo nacional almacenado como CUENTAS podia buscar el brick NACIONAL y producir cero piezas; los objetivos faltantes podian avanzar sin una alerta bloqueante.",
+    "modifiedState": "La deteccion nacional considera metodo, tipo de plan, brick y cuenta; se muestran los objetivos faltantes y se impide confirmar un precalculo incompleto."
   }
 ]
