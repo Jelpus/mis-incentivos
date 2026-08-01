@@ -124,5 +124,19 @@
     "route": "/admin/calculo",
     "currentState": "Un objetivo nacional almacenado como CUENTAS podia buscar el brick NACIONAL y producir cero piezas; los objetivos faltantes podian avanzar sin una alerta bloqueante.",
     "modifiedState": "La deteccion nacional considera metodo, tipo de plan, brick y cuenta; se muestran los objetivos faltantes y se impide confirmar un precalculo incompleto."
+  },
+  {
+    "sourceKey": "2026-07-31-admin-objetivos-1f73267678",
+    "date": "2026-07-31",
+    "route": "/admin/objetivos",
+    "currentState": "Las versiones con objetivos criticos faltantes quedaban bloqueadas aunque fueran pruebas o cargas parciales.",
+    "modifiedState": "Los faltantes permanecen visibles como alertas, pero el usuario puede guardar versiones parciales bajo confirmacion."
+  },
+  {
+    "sourceKey": "2026-07-31-admin-calculo-75049bc2c1",
+    "date": "2026-07-31",
+    "route": "/admin/calculo",
+    "currentState": "Los objetivos faltantes impedían confirmar el precalculo, bloqueando pruebas y corridas parciales.",
+    "modifiedState": "Los faltantes se muestran como advertencia informativa y ya no impiden confirmar el precalculo; la correccion nacional de AFINITOR_GOB se conserva."
   }
 ]

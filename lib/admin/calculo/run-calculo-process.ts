@@ -1381,12 +1381,6 @@ export async function runCalculoProcess(
     .slice(0, 20)
     .map((item) => `${item.route} | ${item.teamId} | ${item.productName}`);
 
-  if (shouldPersist && missingObjectivesByKey.size > 0) {
-    throw new Error(
-      `No se puede confirmar el precalculo: faltan objetivos para ${missingObjectivesByKey.size} combinaciones ruta + producto. Ejemplos: ${missingObjectiveExamples.slice(0, 5).join("; ")}. Corrige la version de objetivos y vuelve a calcular.`,
-    );
-  }
-
   if (shouldPersist) {
     const asignacionTableRef = `\`${projectId}.${asignacionDataset}.${asignacionTable}\``;
     const periodCode = periodMonth.slice(0, 7);

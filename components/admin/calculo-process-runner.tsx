@@ -790,12 +790,12 @@ export function CalculoProcessRunner({ periodMonth }: Props) {
           {previewState.ok ? (
             <div className="mt-3">
               {previewState.summary.missingObjectivesCount > 0 ? (
-                <div className="mb-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-900">
+                <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                   <p className="font-semibold">
                     Faltan objetivos para {previewState.summary.missingObjectivesCount} combinaciones ruta + producto.
                   </p>
                   <p className="mt-1">
-                    El precálculo puede revisarse, pero no podrá confirmarse hasta corregir la versión de objetivos.
+                    Esta es una advertencia informativa; puedes confirmar el precálculo si se trata de una prueba o corrida parcial.
                   </p>
                   {previewState.summary.missingObjectiveExamples.slice(0, 8).map((example) => (
                     <p key={example}>- {example}</p>

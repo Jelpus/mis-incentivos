@@ -448,7 +448,7 @@ export async function updateCalculoStatusAction(
     message:
       actionInput === "calcular" && calculationSummary
         ? calculationSummary.missingObjectivesCount > 0
-          ? `Calculo listo con ${calculationSummary.missingObjectivesCount} objetivos faltantes. Revisa los ejemplos; no se podra confirmar el precalculo hasta corregirlos.`
+          ? `Calculo listo con ${calculationSummary.missingObjectivesCount} objetivos faltantes. Puedes revisarlo y confirmarlo como corrida parcial.`
           : `Calculo listo para revision (${periodMonth.slice(0, 7)}).`
         : actionInput === "confirmar_precalculo"
           ? skippedAsignacionByStreamingBuffer

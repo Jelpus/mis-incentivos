@@ -538,20 +538,12 @@ export async function uploadObjetivosImportAction(
     };
   }
 
-  if (preview.summary.criticalCount > 0) {
+  const hasAlerts = preview.summary.warningCount > 0 || preview.summary.criticalCount > 0;
+  if (hasAlerts && !allowWithAlerts) {
     return {
       ok: false,
       message:
-        `No se puede guardar la versión: faltan ${preview.summary.criticalCount} objetivos requeridos por las reglas vigentes. Corrige los críticos y vuelve a validar.`,
-    };
-  }
-
-  const hasWarnings = preview.summary.warningCount > 0;
-  if (hasWarnings && !allowWithAlerts) {
-    return {
-      ok: false,
-      message:
-        "El preview tiene advertencias. Confirma guardar con allow_with_alerts=true.",
+        "El preview tiene alertas (criticos o advertencias). Confirma guardar con allow_with_alerts=true.",
     };
   }
 
