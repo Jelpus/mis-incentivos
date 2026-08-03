@@ -16,9 +16,6 @@ type TraceInput = {
   representativeName: string;
   product: string;
   metric?: string | null;
-  expectedValue: number;
-  actualValue: number;
-  description: string;
 };
 
 type StatusRow = {
@@ -352,104 +349,6 @@ function resolveValueBasisLabel(params: {
     return `MESES desde ${params.effectivePeriodCut.slice(0, 7)}`;
   }
   return "YTD completo";
-}
-
-function nearlyEqual(a: number, b: number, tolerance = 0.01): boolean {
-  return Math.abs(a - b) <= tolerance;
-}
-
-function explainClosestValue(params: {
-  actualValue: number;
-  expectedValue: number;
-  calculatedValue: number;
-  assignmentValorTotal: number;
-  assignmentResultadoTotal: number;
-  objectiveTotal: number;
-  finalActualTotal: number;
-  finalPagoResultado: number;
-  finalPagoVariable: number;
-  activeOverrideDelta: number;
-}): { suspectedCause: string; recommendedFix: string; confidenceScore: number; evidence: string } | null {
-  const comparisons = [
-    {
-      label: "valor antes de Sales Credity",
-      value: params.assignmentValorTotal,
-      cause:
-        "La diferencia parece venir de comparar el Valor bruto contra el Resultado calculado. El Resultado se obtiene aplicando Sales Credity/peso al Valor.",
-      fix:
-        "Validar si el numero reportado corresponde a Valor o Resultado. Si esperaban Resultado, revisar sales_credity en cuotas/drill down.",
-      confidence: 0.86,
-    },
-    {
-      label: "resultado despues de Sales Credity",
-      value: params.assignmentResultadoTotal,
-      cause:
-        "El valor reconstruido de Resultado coincide con la asignacion. La diferencia parece venir de una expectativa o metrica distinta.",
-      fix:
-        "Confirmar que estan comparando contra Resultado y no contra Valor, Objetivo, Actual o Pago.",
-      confidence: 0.76,
-    },
-    {
-      label: "objetivo",
-      value: params.objectiveTotal,
-      cause:
-        "El valor reportado se parece mas al Objetivo que al Resultado. Puede haber confusion entre cuota/objetivo y resultado calculado.",
-      fix:
-        "Confirmar la metrica solicitada. Si el objetivo esta mal, corregir el archivo de cuotas.",
-      confidence: 0.74,
-    },
-    {
-      label: "actual final",
-      value: params.finalActualTotal,
-      cause:
-        "El valor reportado se parece al Actual final, no al Resultado. La diferencia puede ser por comparar columnas distintas.",
-      fix:
-        "Validar si el usuario esta leyendo Actual en lugar de Resultado.",
-      confidence: 0.72,
-    },
-    {
-      label: "pago resultado",
-      value: params.finalPagoResultado,
-      cause:
-        "El valor reportado se parece al Pago Resultado, no al Resultado operativo. La diferencia puede ser por comparar pago contra resultado.",
-      fix:
-        "Confirmar si el caso debe investigarse como resultado, cobertura o pago.",
-      confidence: 0.72,
-    },
-    {
-      label: "pago variable",
-      value: params.finalPagoVariable,
-      cause:
-        "El valor reportado se parece al Pago Variable antes de cobertura pago.",
-      fix:
-        "Revisar si estan comparando pago variable contra pago resultado.",
-      confidence: 0.68,
-    },
-  ];
-
-  for (const comparison of comparisons) {
-    if (nearlyEqual(params.actualValue, comparison.value) || nearlyEqual(params.expectedValue, comparison.value)) {
-      return {
-        suspectedCause: comparison.cause,
-        recommendedFix: comparison.fix,
-        confidenceScore: comparison.confidence,
-        evidence: `${comparison.label}: ${comparison.value.toFixed(2)}.`,
-      };
-    }
-  }
-
-  if (params.activeOverrideDelta !== 0 && nearlyEqual(params.calculatedValue + params.activeOverrideDelta, params.actualValue)) {
-    return {
-      suspectedCause:
-        "La diferencia se explica por un override activo: el valor base mas el ajuste coincide con el valor reportado.",
-      recommendedFix:
-        "Revisar resultados_v2_ajustes. Si el override no corresponde, corregirlo o desactivarlo.",
-      confidenceScore: 0.9,
-      evidence: `calculado ${params.calculatedValue.toFixed(2)} + override ${params.activeOverrideDelta.toFixed(2)} = ${(params.calculatedValue + params.activeOverrideDelta).toFixed(2)}.`,
-    };
-  }
-
-  return null;
 }
 
 function describeObjectiveBlock(value: unknown): string {
@@ -1070,9 +969,6 @@ export async function traceCalculation(input: TraceInput): Promise<CalculationDi
 
   const representativeInput = String(input.representativeName ?? "").trim();
   const productInput = String(input.product ?? "").trim();
-  const expectedValue = toNumber(input.expectedValue);
-  const actualValue = toNumber(input.actualValue);
-  const difference = round6(actualValue - expectedValue);
 
   if (!representativeInput) throw new Error("Falta representante o territorio.");
   if (!productInput) throw new Error("Falta producto.");
@@ -1498,12 +1394,23 @@ export async function traceCalculation(input: TraceInput): Promise<CalculationDi
   const finalPagoResultado = round6(finalRows.reduce((sum, row) => sum + toNumber(row.pagoresultado), 0));
   const finalResultado = round6(finalRows.reduce((sum, row) => sum + toNumber(row.resultado), 0));
   const finalActualTotal = round6(finalRows.reduce((sum, row) => sum + toNumber(row.actual), 0));
-  const finalPagoVariable = round6(finalRows.reduce((sum, row) => sum + toNumber(row.pagovariable), 0));
+  const finalObjetivoTotal = round6(finalRows.reduce((sum, row) => sum + toNumber(row.objetivo), 0));
   const metricKey = normalizeKey(input.metric);
-  const calculatedValue = metricKey.includes("PAGO") ? finalPagoResultado : finalResultado;
-  const calculatedDelta = round6(calculatedValue - actualValue);
+  const calculatedMetric = metricKey.includes("PAGO")
+    ? "pagoresultado"
+    : metricKey.includes("ACTUAL")
+      ? "actual"
+      : metricKey.includes("OBJETIVO")
+        ? "objetivo"
+        : "resultado";
+  const calculatedValue = calculatedMetric === "pagoresultado"
+    ? finalPagoResultado
+    : calculatedMetric === "actual"
+      ? finalActualTotal
+      : calculatedMetric === "objetivo"
+        ? finalObjetivoTotal
+        : finalResultado;
   const activeOverrides = overrides.rows.filter((row) => row.is_active !== false);
-  const activeOverrideDelta = round6(activeOverrides.reduce((sum, row) => sum + toNumber(row.delta_pagoresultado), 0));
   const objectiveDuplicateEvidence = buildObjectiveDuplicateEvidence(objectives);
   const cuentaEstadoConflict = hasCuentaEstadoConflict(objectives);
   const objectiveTotal = round6(objectives.reduce((sum, row) => sum + toNumber(row.target), 0));
@@ -1536,19 +1443,6 @@ export async function traceCalculation(input: TraceInput): Promise<CalculationDi
   let suspectedCause = "El problema parece venir de una carga incompleta o inconsistente antes del resultado final.";
   let recommendedFix = "Corregir la data de entrada que alimenta el calculo y volver a ejecutar el flujo del periodo.";
   let confidenceScore = 0.45;
-  let specificEvidence: string | null = null;
-  const numericExplanation = explainClosestValue({
-    actualValue,
-    expectedValue,
-    calculatedValue,
-    assignmentValorTotal,
-    assignmentResultadoTotal,
-    objectiveTotal,
-    finalActualTotal,
-    finalPagoResultado,
-    finalPagoVariable,
-    activeOverrideDelta,
-  });
 
   if (!representative) {
     suspectedCause = "El problema parece venir de sales_force_status: el representante o territorio no existe activo para el periodo.";
@@ -1586,23 +1480,14 @@ export async function traceCalculation(input: TraceInput): Promise<CalculationDi
     suspectedCause = "La asignacion no cuadra contra las filas normalizadas consultadas. Esto puede ser un problema nuestro: normalizacion/BigQuery desactualizado, duplicado o filtro distinto al archivo descargado.";
     recommendedFix = "Comparar filas normalizadas contra el Excel descargado. Si el Excel correcto suma distinto, reprocesar el archivo fuente y revisar la logica de filtro por estado/brick.";
     confidenceScore = 0.82;
-  } else if (numericExplanation && Math.abs(calculatedDelta) > 0.000001) {
-    suspectedCause = numericExplanation.suspectedCause;
-    recommendedFix = numericExplanation.recommendedFix;
-    confidenceScore = numericExplanation.confidenceScore;
-    specificEvidence = numericExplanation.evidence;
-  } else if (activeOverrides.length > 0) {
-    suspectedCause = "La diferencia puede venir de un override activo aplicado despues del calculo base.";
+  } else if (activeOverrides.length > 0 && calculatedMetric === "pagoresultado") {
+    suspectedCause = "El pago reconstruido incluye uno o mas overrides activos aplicados despues del calculo base.";
     recommendedFix = "Validar resultados_v2_ajustes: si el ajuste no corresponde, desactivarlo o corregir su delta.";
     confidenceScore = 0.72;
-  } else if (Math.abs(calculatedDelta) > 0.000001) {
-    suspectedCause = "El preview deterministico no coincide con el valor publicado/reportado; probablemente falta seguir un paso del flujo.";
-    recommendedFix = "Recalcular, confirmar precalculo y publicar nuevamente el periodo; despues comparar resultados_v2 contra el preview.";
-    confidenceScore = 0.68;
   } else {
-    suspectedCause = "El calculo reconstruido coincide con el valor actual; la diferencia parece venir de una expectativa mal definida o de una lectura incorrecta de la metrica.";
-    recommendedFix = "Validar con el equipo el valor esperado, la metrica seleccionada y la fuente usada para reportar la diferencia.";
-    confidenceScore = 0.58;
+    suspectedCause = "No se detecto una inconsistencia estructural en la reconstruccion automatica del calculo.";
+    recommendedFix = "Revisar el valor reconstruido y la evidencia detallada; si el valor no es el esperado, validar la fuente y la metrica seleccionada.";
+    confidenceScore = 0.62;
   }
 
   const evidence = [
@@ -1616,14 +1501,12 @@ export async function traceCalculation(input: TraceInput): Promise<CalculationDi
       ? "Esto no apunta a un error del Drill Down: no hay filas drill down sin match en la evidencia actual."
       : "El Drill Down/cuotas requiere revision: hay filas sin match o datos territoriales inconsistentes.",
     territorialLooksSuspicious
-      ? "La diferencia se observa antes del resultado final, en cuotas/asignacion territorial."
+      ? "La anomalia se observa antes del resultado final, en cuotas/asignacion territorial."
       : "No hay senal fuerte de falla territorial en las filas reconstruidas.",
-    `Diferencia reportada actual - esperado: ${difference.toFixed(6)}.`,
-    `Preview calculado para ${metricKey.includes("PAGO") ? "pagoresultado" : "resultado"}: ${calculatedValue.toFixed(6)}.`,
+    `Valor reconstruido para ${calculatedMetric}: ${calculatedValue.toFixed(6)}.`,
     `Valor bruto asignado: ${assignmentValorTotal.toFixed(6)}; Resultado despues de Sales Credity: ${assignmentResultadoTotal.toFixed(6)}.`,
     `Base de resultado por Period Settings: ${valueBasisLabel}; fecha ingreso=${String(representative?.fecha_ingreso ?? "sin fecha")}; effective_period_cut=${effectivePeriodCut ?? "no aplica"}.`,
     normalizedEvidence.length > 0 ? `Filas normalizadas revisadas: ${normalizedEvidence.join(" || ")}.` : "",
-    specificEvidence ? `Coincidencia relevante: ${specificEvidence}` : "",
     `Filas de asignacion ruta/producto: ${matchingAssignments.length} (exact=${exactAssignments.length}, fuzzy=${fuzzyAssignments.length}, none=${noneAssignments.length}).`,
     `Filas finales resultados_v2 ruta/producto: ${finalRows.length}.`,
     `Bloques evaluados: ${assignmentBlocks.map(describeObjectiveBlock).join(", ") || "sin filas"}.`,
@@ -1657,10 +1540,6 @@ export async function traceCalculation(input: TraceInput): Promise<CalculationDi
       representativeName: representativeInput,
       product: productInput,
       metric: input.metric ?? null,
-      expectedValue,
-      actualValue,
-      difference,
-      description: input.description,
     },
     representative: representative ? publicRecord(representative as unknown as Record<string, unknown>) : null,
     ruleVersion: ruleVersion ? publicRecord(ruleVersion as unknown as Record<string, unknown>) : null,
@@ -1729,7 +1608,7 @@ export async function traceCalculation(input: TraceInput): Promise<CalculationDi
     payComponentLooksOk ? "Esto no es un error del Pay Component." : "El Pay Component esta incompleto o no corresponde al team_id.",
     sourceFilesLookOk ? "El archivo fuente no muestra alertas basicas." : "La evidencia apunta al archivo fuente cargado.",
     drillDownLooksOk ? "Esto no es un error directo del Drill Down." : "El Drill Down/cuotas tiene evidencia que requiere correccion.",
-    `Valor calculado de referencia: ${calculatedValue.toFixed(6)}; valor actual reportado: ${actualValue.toFixed(6)}.`,
+    `Valor reconstruido para ${calculatedMetric}: ${calculatedValue.toFixed(6)}.`,
     `La correccion sugerida es: ${recommendedFix}`,
   ].join(" ");
 
@@ -1738,7 +1617,6 @@ export async function traceCalculation(input: TraceInput): Promise<CalculationDi
     suspectedCause,
     recommendedFix,
     confidenceScore,
-    difference,
     evidence,
     traceData,
   };

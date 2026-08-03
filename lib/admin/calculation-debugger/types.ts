@@ -32,10 +32,6 @@ export type CalculationDebuggerTraceData = {
     representativeName: string;
     product: string;
     metric: string | null;
-    expectedValue: number;
-    actualValue: number;
-    difference: number;
-    description: string;
   };
   representative: Record<string, unknown> | null;
   ruleVersion: Record<string, unknown> | null;
@@ -71,7 +67,6 @@ export type CalculationDiagnosis = {
   suspectedCause: string;
   recommendedFix: string;
   confidenceScore: number;
-  difference: number;
   evidence: string[];
   traceData: CalculationDebuggerTraceData;
 };

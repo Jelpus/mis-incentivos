@@ -8,15 +8,7 @@ type Payload = {
   representativeName?: string;
   product?: string;
   metric?: string;
-  expectedValue?: number | string;
-  actualValue?: number | string;
-  description?: string;
 };
-
-function toNumber(value: unknown): number {
-  const parsed = Number(String(value ?? "").trim().replace(",", "."));
-  return Number.isFinite(parsed) ? parsed : 0;
-}
 
 function buildTitle(payload: Required<Pick<Payload, "period" | "representativeName" | "product">>): string {
   return [
@@ -52,14 +44,10 @@ export async function POST(request: Request) {
   const representativeName = String(payload.representativeName ?? "").trim();
   const product = String(payload.product ?? "").trim();
   const metric = String(payload.metric ?? "").trim() || "resultado";
-  const description = String(payload.description ?? "").trim();
-  const expectedValue = toNumber(payload.expectedValue);
-  const actualValue = toNumber(payload.actualValue);
-  const difference = actualValue - expectedValue;
 
-  if (!period || !representativeName || !product || !description) {
+  if (!period || !representativeName || !product) {
     return NextResponse.json(
-      { error: "Faltan campos requeridos: period, representativeName, product y description." },
+      { error: "Faltan campos requeridos: period, representativeName y product." },
       { status: 400 },
     );
   }
@@ -73,6 +61,7 @@ export async function POST(request: Request) {
   }
 
   const title = buildTitle({ period, representativeName, product });
+  const description = `Diagnostico automatico de ${metric} para ${representativeName} / ${product}.`;
 
   const reportResult = await adminClient
     .from("admin_bug_reports")
@@ -83,11 +72,11 @@ export async function POST(request: Request) {
       representative_name: representativeName,
       product,
       metric,
-      expected_value: expectedValue,
-      actual_value: actualValue,
-      difference,
+      expected_value: null,
+      actual_value: null,
+      difference: null,
       status: "open",
-      priority: Math.abs(difference) > 0 ? "normal" : "low",
+      priority: "normal",
       created_by: user.id,
       created_by_email: effectiveEmail ?? user.email ?? null,
     })
@@ -111,9 +100,6 @@ export async function POST(request: Request) {
       representativeName,
       product,
       metric,
-      expectedValue,
-      actualValue,
-      description,
     });
 
     const diagnosisResult = await adminClient

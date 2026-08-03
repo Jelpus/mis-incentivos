@@ -11,7 +11,6 @@ type DiagnosisResponse = {
     suspectedCause: string;
     recommendedFix: string;
     confidenceScore: number;
-    difference: number;
     evidence: string[];
     traceData: Record<string, unknown>;
   };
@@ -617,9 +616,6 @@ export function CalculationDebuggerCard({ data }: Props) {
   const [representativeSearchOpen, setRepresentativeSearchOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState("");
   const [metric, setMetric] = useState("resultado");
-  const [expectedValue, setExpectedValue] = useState("");
-  const [actualValue, setActualValue] = useState("");
-  const [description, setDescription] = useState("");
   const [result, setResult] = useState<DiagnosisResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -647,13 +643,6 @@ export function CalculationDebuggerCard({ data }: Props) {
       (item) => item.period === selectedPeriod && item.representativeValue === selectedRepresentative,
     );
   }, [data.products, selectedPeriod, selectedRepresentative]);
-
-  const difference = useMemo(() => {
-    const expected = Number(String(expectedValue).replace(",", "."));
-    const actual = Number(String(actualValue).replace(",", "."));
-    if (!Number.isFinite(expected) || !Number.isFinite(actual)) return 0;
-    return actual - expected;
-  }, [actualValue, expectedValue]);
 
   function onPeriodChange(value: string) {
     setSelectedPeriod(value);
@@ -702,9 +691,6 @@ export function CalculationDebuggerCard({ data }: Props) {
             representativeName: selectedRepresentative,
             product: selectedProduct,
             metric,
-            expectedValue,
-            actualValue,
-            description,
           }),
         });
         const payload = (await response.json()) as DiagnosisResponse & { error?: string };
@@ -828,59 +814,17 @@ export function CalculationDebuggerCard({ data }: Props) {
             </select>
           </label>
 
-          <label className="grid gap-1 text-xs font-semibold text-neutral-700">
-            Expected value
-            <input
-              value={expectedValue}
-              onChange={(event) => setExpectedValue(event.target.value)}
-              required
-              inputMode="decimal"
-              className="h-10 rounded-lg border border-neutral-300 px-3 text-sm font-normal text-neutral-900 outline-none focus:border-blue-500"
-            />
-          </label>
-
-          <label className="grid gap-1 text-xs font-semibold text-neutral-700">
-            Actual value
-            <input
-              value={actualValue}
-              onChange={(event) => setActualValue(event.target.value)}
-              required
-              inputMode="decimal"
-              className="h-10 rounded-lg border border-neutral-300 px-3 text-sm font-normal text-neutral-900 outline-none focus:border-blue-500"
-            />
-          </label>
-
-          <label className="grid gap-1 text-xs font-semibold text-neutral-700 sm:col-span-2">
-            Description
-            <textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              required
-              rows={5}
-              className="resize-y rounded-lg border border-neutral-300 px-3 py-2 text-sm font-normal text-neutral-900 outline-none focus:border-blue-500"
-            />
-          </label>
         </div>
 
         <aside className="rounded-xl border border-neutral-200 bg-neutral-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Diferencia</p>
-          <p className={`mt-2 text-3xl font-semibold ${Math.abs(difference) > 0 ? "text-red-700" : "text-emerald-700"}`}>
-            {formatNumber(difference)}
+          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Investigación automática</p>
+          <p className="mt-2 text-sm leading-6 text-neutral-600">
+            El debugger reconstruirá el cálculo y revisará objetivos, asignaciones, fuentes, reglas y overrides.
           </p>
-          <div className="mt-4 grid gap-2 text-xs text-neutral-600">
-            <div className="flex justify-between gap-3">
-              <span>Expected</span>
-              <span className="font-semibold text-neutral-900">{formatNumber(expectedValue)}</span>
-            </div>
-            <div className="flex justify-between gap-3">
-              <span>Actual</span>
-              <span className="font-semibold text-neutral-900">{formatNumber(actualValue)}</span>
-            </div>
-          </div>
           <button
             type="submit"
             disabled={isPending}
-            className="mt-5 inline-flex h-10 w-full items-center justify-center rounded-lg bg-neutral-900 px-4 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
+            className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-lg bg-neutral-900 px-4 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
           >
             {isPending ? "Investigando..." : "Investigar"}
           </button>
