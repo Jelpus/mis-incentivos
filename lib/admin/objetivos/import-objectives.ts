@@ -8,6 +8,7 @@ import {
   type DrillDownColumnMapping,
   type DrillDownMappingField,
 } from "@/lib/admin/objetivos/drill-down-column-mapping";
+import { isStandaloneNationalScopeMarker } from "@/lib/admin/objetivos/objective-method";
 
 type ParsedInputRow = {
   rowNumber: number;
@@ -198,11 +199,11 @@ function normalizeMetodoValue(
   cuenta?: string | null,
 ): "PRIVATE" | "CUENTAS" | "ESTADOS" | "NACIONAL" {
   const normalized = normalizeKey(value);
-  const nationalSignals = [normalized, normalizeKey(brick), normalizeKey(cuenta)];
   if (
-    nationalSignals.some(
-      (signal) => signal.includes("NACIONAL") || signal.includes("GLOBAL"),
-    )
+    normalized.includes("NACIONAL") ||
+    normalized.includes("GLOBAL") ||
+    isStandaloneNationalScopeMarker(brick) ||
+    isStandaloneNationalScopeMarker(cuenta)
   ) {
     return "NACIONAL";
   }

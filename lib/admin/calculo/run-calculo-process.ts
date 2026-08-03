@@ -3,6 +3,7 @@ import { copyBigQueryTable, fetchBigQueryRows, isBigQueryConfigured, loadBigQuer
 import { getMissingRelationName, isMissingRelationError } from "@/lib/admin/incentive-rules/shared";
 import { computeEffectivePeriodCut, isBeforeEffectivePeriodCut, normalizeProductNameKey } from "@/lib/admin/period-settings/effective-period";
 import { loadPeriodSettingsForCalculation } from "@/lib/admin/period-settings/load-period-settings";
+import { isStandaloneNationalScopeMarker } from "@/lib/admin/objetivos/objective-method";
 
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 220;
@@ -272,8 +273,11 @@ function normalizeObjectiveMetodo(value: unknown): "PRIVATE" | "CUENTAS" | "ESTA
 function isNationalObjectiveRow(
   row: Pick<ObjectiveTargetRow, "metodo" | "plan_type_name" | "brick" | "cuenta">,
 ): boolean {
-  return [row.metodo, row.plan_type_name, row.brick, row.cuenta].some(
-    (value) => normalizeObjectiveMetodo(value) === "NACIONAL",
+  return (
+    normalizeObjectiveMetodo(row.metodo) === "NACIONAL" ||
+    normalizeObjectiveMetodo(row.plan_type_name) === "NACIONAL" ||
+    isStandaloneNationalScopeMarker(row.brick) ||
+    isStandaloneNationalScopeMarker(row.cuenta)
   );
 }
 
