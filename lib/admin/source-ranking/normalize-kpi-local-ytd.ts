@@ -8,6 +8,11 @@ type SalesForceStatusRow = {
 
 type FlatRow = Record<string, unknown>;
 
+type PreparedName = {
+  compact: string;
+  tokens: Set<string>;
+};
+
 export type DiasCicloRow = {
   period: string | null;
   period_month: string | null;
@@ -89,6 +94,17 @@ function normalizeText(value: unknown): string {
 
 function normalizeHeader(value: unknown): string {
   return normalizeText(value).replace(/\s+/g, "_");
+}
+
+const normalizedHeaderCache = new Map<string, string>();
+const normalizedRowCache = new WeakMap<FlatRow, Map<string, unknown>>();
+
+function getNormalizedHeader(value: string): string {
+  const cached = normalizedHeaderCache.get(value);
+  if (cached !== undefined) return cached;
+  const normalized = normalizeHeader(value);
+  normalizedHeaderCache.set(value, normalized);
+  return normalized;
 }
 
 function parseNumber(value: unknown): number {
@@ -175,13 +191,17 @@ function yyMmToPeriodMonth(value: string): string | null {
   return `${year}-${String(month).padStart(2, "0")}-01`;
 }
 
-function tokenSet(value: string): Set<string> {
-  return new Set(
-    normalizeText(value)
-      .split(" ")
-      .map((token) => token.trim())
-      .filter((token) => token.length > 1),
-  );
+function prepareName(value: string): PreparedName {
+  const normalized = normalizeText(value);
+  return {
+    compact: normalized.replace(/\s+/g, ""),
+    tokens: new Set(
+      normalized
+        .split(" ")
+        .map((token) => token.trim())
+        .filter((token) => token.length > 1),
+    ),
+  };
 }
 
 function diceCoefficient(tokensA: Set<string>, tokensB: Set<string>): number {
@@ -193,15 +213,10 @@ function diceCoefficient(tokensA: Set<string>, tokensB: Set<string>): number {
   return (2 * intersection) / (tokensA.size + tokensB.size);
 }
 
-function nameSimilarityScore(a: string, b: string): number {
-  const tokensA = tokenSet(a);
-  const tokensB = tokenSet(b);
-  const tokenScore = diceCoefficient(tokensA, tokensB);
-
-  const normA = normalizeText(a).replace(/\s+/g, "");
-  const normB = normalizeText(b).replace(/\s+/g, "");
-  const short = Math.min(normA.length, normB.length);
-  const long = Math.max(normA.length, normB.length);
+function nameSimilarityScore(a: PreparedName, b: PreparedName): number {
+  const tokenScore = diceCoefficient(a.tokens, b.tokens);
+  const short = Math.min(a.compact.length, b.compact.length);
+  const long = Math.max(a.compact.length, b.compact.length);
   const lenScore = long > 0 ? short / long : 0;
 
   return Math.round((tokenScore * 0.85 + lenScore * 0.15) * 100);
@@ -217,14 +232,17 @@ function findSheetName(sheetNames: string[], expectedName: string): string | nul
 }
 
 function getValueByKeys(row: FlatRow, possibleKeys: string[]): unknown {
-  const entries = Object.entries(row);
-  const normalizedMap = new Map<string, unknown>();
-  for (const [key, value] of entries) {
-    normalizedMap.set(normalizeHeader(key), value);
+  let normalizedMap = normalizedRowCache.get(row);
+  if (!normalizedMap) {
+    normalizedMap = new Map<string, unknown>();
+    for (const [key, value] of Object.entries(row)) {
+      normalizedMap.set(getNormalizedHeader(key), value);
+    }
+    normalizedRowCache.set(row, normalizedMap);
   }
 
   for (const key of possibleKeys) {
-    const found = normalizedMap.get(normalizeHeader(key));
+    const found = normalizedMap.get(getNormalizedHeader(key));
     if (found !== undefined) return found;
   }
 
@@ -323,15 +341,30 @@ export function normalizeKpiLocalYtdRaw(params: {
     .map((row) => ({
       territorio: String(row.territorio_individual ?? "").trim().toUpperCase(),
       nombre: String(row.nombre_completo ?? "").trim(),
+      preparedName: prepareName(String(row.nombre_completo ?? "").trim()),
       raw: row,
     }))
     .filter((row) => row.territorio.length > 0 || row.nombre.length > 0);
+
+  const statusCandidatesByTerritory = new Map<string, typeof normalizedStatus>();
 
   for (const row of normalizedStatus) {
     if (row.territorio && !statusByTerritory.has(row.territorio)) {
       statusByTerritory.set(row.territorio, row.raw);
     }
+    if (row.territorio) {
+      const candidates = statusCandidatesByTerritory.get(row.territorio) ?? [];
+      candidates.push(row);
+      statusCandidatesByTerritory.set(row.territorio, candidates);
+    }
   }
+
+  type CachedNameMatch = {
+    selected: SalesForceStatusRow | null;
+    bestScore: number | null;
+    matched: boolean;
+  };
+  const nameMatchCache = new Map<string, CachedNameMatch>();
 
   let ytdRows = 0;
   let nameMatchedRows = 0;
@@ -362,25 +395,40 @@ export function normalizeKpiLocalYtdRaw(params: {
     let bestScore: number | null = null;
 
     if (statusNombre) {
-      const nameCandidates =
-        territorio.length > 0
-          ? normalizedStatus.filter((candidate) => candidate.territorio === territorio)
-          : normalizedStatus;
+      const preparedSourceName = prepareName(statusNombre);
+      const cacheKey = `${territorio}|${preparedSourceName.compact}`;
+      let cachedMatch = nameMatchCache.get(cacheKey);
 
-      for (const candidate of nameCandidates) {
-        if (!candidate.nombre) continue;
-        const score = nameSimilarityScore(statusNombre, candidate.nombre);
-        if (bestScore === null || score > bestScore) {
-          bestScore = score;
-          selected = candidate.raw;
+      if (!cachedMatch) {
+        const nameCandidates = territorio.length > 0
+          ? (statusCandidatesByTerritory.get(territorio) ?? [])
+          : normalizedStatus;
+        let cachedSelected: SalesForceStatusRow | null = null;
+        let cachedBestScore: number | null = null;
+
+        for (const candidate of nameCandidates) {
+          if (!candidate.nombre) continue;
+          const score = nameSimilarityScore(preparedSourceName, candidate.preparedName);
+          if (cachedBestScore === null || score > cachedBestScore) {
+            cachedBestScore = score;
+            cachedSelected = candidate.raw;
+          }
         }
+
+        const matched = (cachedBestScore ?? 0) >= minimumNameMatchScore;
+        cachedMatch = {
+          selected: matched ? cachedSelected : null,
+          bestScore: cachedBestScore,
+          matched,
+        };
+        nameMatchCache.set(cacheKey, cachedMatch);
       }
 
-      if ((bestScore ?? 0) >= minimumNameMatchScore) {
+      selected = cachedMatch.selected;
+      bestScore = cachedMatch.bestScore;
+      if (cachedMatch.matched) {
         matchedBy = "name";
         nameMatchedRows += 1;
-      } else {
-        selected = null;
       }
     }
 
