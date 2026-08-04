@@ -28,6 +28,15 @@ import {
 } from "@/lib/admin/source-ranking/normalize-icva-48hrs";
 
 const MAX_SOURCE_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+const DEFAULT_INSERT_BATCH_SIZE = 1_000;
+const DEFAULT_INSERT_CONCURRENCY = 4;
+
+type BatchInsertError = {
+  message: string;
+  code?: string;
+  details?: string;
+  hint?: string;
+};
 
 type IcvaAggUpsertSummary = {
   inserted: number;
@@ -76,6 +85,96 @@ export type PrepareSourceRankingDirectUploadResult =
 
 function isAdminRole(role: string | null, isActive: boolean | null): boolean {
   return isActive !== false && (role === "admin" || role === "super_admin");
+}
+
+function getBoundedIntegerEnv(
+  name: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const parsed = Number(process.env[name]);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(maximum, Math.max(minimum, Math.floor(parsed)));
+}
+
+async function insertRowsInBatches<T extends object>(params: {
+  supabase: NonNullable<ReturnType<typeof createAdminClient>>;
+  tableName: string;
+  rows: T[];
+}): Promise<
+  | { ok: true; inserted: number; batches: number }
+  | { ok: false; inserted: number; batches: number; error: BatchInsertError }
+> {
+  if (params.rows.length === 0) {
+    return { ok: true, inserted: 0, batches: 0 };
+  }
+
+  const batchSize = getBoundedIntegerEnv(
+    "SOURCE_RANKING_INSERT_BATCH_SIZE",
+    DEFAULT_INSERT_BATCH_SIZE,
+    100,
+    5_000,
+  );
+  const concurrency = getBoundedIntegerEnv(
+    "SOURCE_RANKING_INSERT_CONCURRENCY",
+    DEFAULT_INSERT_CONCURRENCY,
+    1,
+    6,
+  );
+  const chunks: T[][] = [];
+  for (let index = 0; index < params.rows.length; index += batchSize) {
+    chunks.push(params.rows.slice(index, index + batchSize));
+  }
+
+  let nextChunkIndex = 0;
+  let inserted = 0;
+  let completedBatches = 0;
+  let firstError: BatchInsertError | null = null;
+
+  async function worker() {
+    while (!firstError) {
+      const chunkIndex = nextChunkIndex;
+      nextChunkIndex += 1;
+      if (chunkIndex >= chunks.length) return;
+
+      const chunk = chunks[chunkIndex];
+      const result = await params.supabase.from(params.tableName).insert(chunk);
+      if (result.error) {
+        firstError = result.error;
+        return;
+      }
+      inserted += chunk.length;
+      completedBatches += 1;
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, chunks.length) }, () => worker()),
+  );
+
+  if (firstError) {
+    return {
+      ok: false,
+      inserted,
+      batches: completedBatches,
+      error: firstError,
+    };
+  }
+
+  return { ok: true, inserted, batches: completedBatches };
+}
+
+function logSourceRankingStage(
+  startedAt: number,
+  stage: string,
+  details?: Record<string, string | number | boolean | null>,
+) {
+  console.info("[source-ranking]", {
+    stage,
+    elapsedMs: Date.now() - startedAt,
+    ...details,
+  });
 }
 
 function getSourceRankingBucketName() {
@@ -404,6 +503,7 @@ export async function completeSourceRankingDirectUploadAction(params: {
   fileSize: number;
   contentType?: string | null;
 }): Promise<UploadSourceRankingFileResult> {
+  const startedAt = Date.now();
   const { user, role, isActive } = await getCurrentAuthContext();
   if (!user || !isAdminRole(role, isActive)) {
     return { ok: false, message: "No autorizado." };
@@ -439,6 +539,10 @@ export async function completeSourceRankingDirectUploadAction(params: {
       message: `No se pudo descargar el archivo temporal de storage: ${downloadResult.error?.message ?? "archivo no disponible"}`,
     };
   }
+  logSourceRankingStage(startedAt, "temporary-file-downloaded", {
+    fileCode: String(params.fileCode ?? ""),
+    fileSize,
+  });
 
   try {
     const file = new File(
@@ -452,6 +556,7 @@ export async function completeSourceRankingDirectUploadAction(params: {
     }
     formData.append("file_code", String(params.fileCode ?? ""));
     formData.append("display_name", String(params.displayName ?? ""));
+    formData.append("incoming_storage_path", path);
     formData.append("file", file);
     return await uploadSourceRankingFileAction(null, formData);
   } finally {
@@ -463,6 +568,7 @@ export async function uploadSourceRankingFileAction(
   _prevState: UploadSourceRankingFileResult | null,
   formData: FormData,
 ): Promise<UploadSourceRankingFileResult> {
+  const startedAt = Date.now();
   const { user, role, isActive } = await getCurrentAuthContext();
   if (!user || !isAdminRole(role, isActive)) {
     return { ok: false, message: "No autorizado." };
@@ -471,6 +577,9 @@ export async function uploadSourceRankingFileAction(
   const periodInput = String(formData.get("period_month") ?? "").trim();
   const fileCodeInput = String(formData.get("file_code") ?? "").trim().toLowerCase();
   const displayNameInput = String(formData.get("display_name") ?? "").trim();
+  const incomingStoragePathInput = String(
+    formData.get("incoming_storage_path") ?? "",
+  ).trim();
   const uploadedFile = formData.get("file");
 
   const requestedPeriodResult = parseOptionalSourceRankingPeriod(periodInput);
@@ -479,6 +588,10 @@ export async function uploadSourceRankingFileAction(
 
   if (!(uploadedFile instanceof File)) {
     return { ok: false, message: "Debes seleccionar un archivo." };
+  }
+
+  if (incomingStoragePathInput && !incomingStoragePathInput.startsWith("_incoming/")) {
+    return { ok: false, message: "Ruta temporal invalida para procesar el archivo." };
   }
 
   if (uploadedFile.size <= 0) {
@@ -624,6 +737,11 @@ export async function uploadSourceRankingFileAction(
           salesForceRows,
           diasCicloRows,
         });
+        logSourceRankingStage(startedAt, "kpi-normalized", {
+          rawRows: kpiNormalization.rows.length,
+          cpdRows: kpiNormalization.cpdRows.length,
+          processedRows: kpiNormalization.summary.processedRows,
+        });
       } else {
         const kpiReferenceResult = await supabase
           .from("ranking_kpi_local_ytd_raw")
@@ -649,6 +767,10 @@ export async function uploadSourceRankingFileAction(
           periodMonth,
           salesForceRows,
           kpiReferenceRows,
+        });
+        logSourceRankingStage(startedAt, "icva-normalized", {
+          rawRows: icvaNormalization.rows.length,
+          sourceRows: icvaNormalization.summary.sourceRows,
         });
       }
     } catch (error) {
@@ -689,18 +811,43 @@ export async function uploadSourceRankingFileAction(
   const safeCodeChunk = sanitizeStoragePathChunk(fileCodeInput) || "source-ranking";
   const targetPath = `${metadataPeriodMonth.slice(0, 7)}/${safeCodeChunk}/${Date.now()}-${safeFileName}`;
 
-  const uploadResult = await supabase.storage.from(bucketName).upload(targetPath, fileBuffer, {
-    cacheControl: "3600",
-    upsert: true,
-    contentType: uploadedFile.type || undefined,
-  });
+  let uploadError: { message: string } | null = null;
+  let movedWithinStorage = false;
+  if (incomingStoragePathInput) {
+    const moveResult = await supabase.storage
+      .from(bucketName)
+      .move(incomingStoragePathInput, targetPath);
+    if (!moveResult.error) {
+      movedWithinStorage = true;
+    } else {
+      console.warn("[source-ranking] storage move failed; falling back to upload", {
+        message: moveResult.error.message,
+      });
+      const fallbackUploadResult = await supabase.storage
+        .from(bucketName)
+        .upload(targetPath, fileBuffer, {
+          cacheControl: "3600",
+          upsert: true,
+          contentType: uploadedFile.type || undefined,
+        });
+      uploadError = fallbackUploadResult.error;
+    }
+  } else {
+    const uploadResult = await supabase.storage.from(bucketName).upload(targetPath, fileBuffer, {
+      cacheControl: "3600",
+      upsert: true,
+      contentType: uploadedFile.type || undefined,
+    });
+    uploadError = uploadResult.error;
+  }
 
-  if (uploadResult.error) {
+  if (uploadError) {
     return {
       ok: false,
-      message: `No se pudo subir el archivo a storage: ${uploadResult.error.message}`,
+      message: `No se pudo subir el archivo a storage: ${uploadError.message}`,
     };
   }
+  logSourceRankingStage(startedAt, "file-persisted", { movedWithinStorage });
 
   const metadataResult = await supabase.from("ranking_source_files").upsert(
     {
@@ -734,6 +881,7 @@ export async function uploadSourceRankingFileAction(
       message: `No se pudo guardar metadata del archivo: ${metadataResult.error.message}`,
     };
   }
+  logSourceRankingStage(startedAt, "metadata-saved");
 
   let normalizationSummary: string | undefined;
   let aggregatedRowsCount: number | undefined;
@@ -760,11 +908,13 @@ export async function uploadSourceRankingFileAction(
     }
 
     if (kpiNormalization.rows.length > 0) {
-      const insertResult = await supabase.from("ranking_kpi_local_ytd_raw").insert(
-        kpiNormalization.rows,
-      );
+      const insertResult = await insertRowsInBatches({
+        supabase,
+        tableName: "ranking_kpi_local_ytd_raw",
+        rows: kpiNormalization.rows,
+      });
 
-      if (insertResult.error) {
+      if (!insertResult.ok) {
         if (isMissingRelationError(insertResult.error)) {
           const tableName = getMissingRelationName(insertResult.error) ?? "ranking_kpi_local_ytd_raw";
           return {
@@ -774,9 +924,13 @@ export async function uploadSourceRankingFileAction(
         }
         return {
           ok: false,
-          message: `Archivo cargado, pero no se pudo guardar KPI normalizado: ${insertResult.error.message}`,
+          message: `Archivo cargado, pero no se pudo guardar KPI normalizado (${insertResult.inserted}/${kpiNormalization.rows.length} filas): ${insertResult.error.message}`,
         };
       }
+      logSourceRankingStage(startedAt, "kpi-raw-inserted", {
+        rows: insertResult.inserted,
+        batches: insertResult.batches,
+      });
     }
 
     const aggregatedRows = aggregateKpiLocalYtdRawRows(kpiNormalization.rows);
@@ -802,11 +956,13 @@ export async function uploadSourceRankingFileAction(
     }
 
     if (aggregatedRows.length > 0) {
-      const insertAggResult = await supabase.from("ranking_kpi_local_ytd_agg").insert(
-        aggregatedRows,
-      );
+      const insertAggResult = await insertRowsInBatches({
+        supabase,
+        tableName: "ranking_kpi_local_ytd_agg",
+        rows: aggregatedRows,
+      });
 
-      if (insertAggResult.error) {
+      if (!insertAggResult.ok) {
         if (isMissingRelationError(insertAggResult.error)) {
           const tableName = getMissingRelationName(insertAggResult.error) ?? "ranking_kpi_local_ytd_agg";
           return {
@@ -816,9 +972,13 @@ export async function uploadSourceRankingFileAction(
         }
         return {
           ok: false,
-          message: `Archivo cargado, pero no se pudo guardar KPI agregado: ${insertAggResult.error.message}`,
+          message: `Archivo cargado, pero no se pudo guardar KPI agregado (${insertAggResult.inserted}/${aggregatedRows.length} filas): ${insertAggResult.error.message}`,
         };
       }
+      logSourceRankingStage(startedAt, "kpi-aggregate-inserted", {
+        rows: insertAggResult.inserted,
+        batches: insertAggResult.batches,
+      });
     }
 
     const cpdPeriods = Array.from(
@@ -850,11 +1010,13 @@ export async function uploadSourceRankingFileAction(
       }
 
       if (kpiNormalization.cpdRows.length > 0) {
-        const insertCpdResult = await supabase.from("ranking_cpd_raw").insert(
-          kpiNormalization.cpdRows,
-        );
+        const insertCpdResult = await insertRowsInBatches({
+          supabase,
+          tableName: "ranking_cpd_raw",
+          rows: kpiNormalization.cpdRows,
+        });
 
-        if (insertCpdResult.error) {
+        if (!insertCpdResult.ok) {
           if (isMissingRelationError(insertCpdResult.error)) {
             const tableName = getMissingRelationName(insertCpdResult.error) ?? "ranking_cpd_raw";
             return {
@@ -864,9 +1026,13 @@ export async function uploadSourceRankingFileAction(
           }
           return {
             ok: false,
-            message: `Archivo cargado, pero no se pudo guardar CPD raw: ${insertCpdResult.error.message}`,
+            message: `Archivo cargado, pero no se pudo guardar CPD raw (${insertCpdResult.inserted}/${kpiNormalization.cpdRows.length} filas): ${insertCpdResult.error.message}`,
           };
         }
+        logSourceRankingStage(startedAt, "cpd-raw-inserted", {
+          rows: insertCpdResult.inserted,
+          batches: insertCpdResult.batches,
+        });
       }
     }
 
@@ -902,11 +1068,13 @@ export async function uploadSourceRankingFileAction(
     }
 
     if (icvaNormalization.rows.length > 0) {
-      const insertRawResult = await supabase.from("ranking_icva_48hrs_raw").insert(
-        icvaNormalization.rows,
-      );
+      const insertRawResult = await insertRowsInBatches({
+        supabase,
+        tableName: "ranking_icva_48hrs_raw",
+        rows: icvaNormalization.rows,
+      });
 
-      if (insertRawResult.error) {
+      if (!insertRawResult.ok) {
         if (isMissingRelationError(insertRawResult.error)) {
           const tableName = getMissingRelationName(insertRawResult.error) ?? "ranking_icva_48hrs_raw";
           return {
@@ -916,9 +1084,13 @@ export async function uploadSourceRankingFileAction(
         }
         return {
           ok: false,
-          message: `Archivo cargado, pero no se pudo guardar ICVA raw: ${insertRawResult.error.message}`,
+          message: `Archivo cargado, pero no se pudo guardar ICVA raw (${insertRawResult.inserted}/${icvaNormalization.rows.length} filas): ${insertRawResult.error.message}`,
         };
       }
+      logSourceRankingStage(startedAt, "icva-raw-inserted", {
+        rows: insertRawResult.inserted,
+        batches: insertRawResult.batches,
+      });
     }
 
     const aggregatedRows = aggregateIcva48hrsRawRows(icvaNormalization.rows);
@@ -954,6 +1126,7 @@ export async function uploadSourceRankingFileAction(
   }
 
   revalidatePath("/admin/source-ranking");
+  logSourceRankingStage(startedAt, "completed", { fileCode: fileCodeInput });
 
   return {
     ok: true,
