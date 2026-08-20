@@ -171,6 +171,57 @@ export function RankingConcurso({
     return output;
   }
 
+  function buildQualifierRows(rows: typeof data.rows) {
+    const usedPrefixes = new Set<string>();
+    const qualifierPrefixes = new Map<string, string>();
+
+    for (const row of rows) {
+      for (const evaluation of row.componentEvaluations) {
+        if (qualifierPrefixes.has(evaluation.componentId)) continue;
+        const basePrefix = (evaluation.componentName || "Calificador")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/[^a-zA-Z0-9]+/g, "_")
+          .replace(/^_+|_+$/g, "") || "Calificador";
+        let prefix = basePrefix;
+        let suffix = 2;
+        while (usedPrefixes.has(prefix)) {
+          prefix = `${basePrefix}_${suffix}`;
+          suffix += 1;
+        }
+        usedPrefixes.add(prefix);
+        qualifierPrefixes.set(evaluation.componentId, prefix);
+      }
+    }
+
+    return rows.map((row) => {
+      const output: Record<string, unknown> = {
+        Concurso: row.contestName,
+        Participante: row.participantName,
+        Empleado: row.employeeNumber ?? "",
+        Email: row.email ?? "",
+        Territorio: row.territory ?? "",
+        Team: row.teamId ?? "",
+        "Ranking Group": row.rankingGroup ?? "",
+        Rank: row.rank ?? "",
+        Estado: row.qualificationLabel,
+      };
+
+      for (const evaluation of row.componentEvaluations) {
+        const prefix = qualifierPrefixes.get(evaluation.componentId) ?? "Calificador";
+        output[`${prefix}_Meta`] = evaluation.displayThresholdValue ?? evaluation.thresholdValue ?? "";
+        output[`${prefix}_Valor`] = evaluation.displayValue ?? evaluation.value ?? "";
+        output[`${prefix}_Nota`] = evaluation.reason ?? "";
+        output[`${prefix}_Estado`] = evaluation.status;
+        output[`${prefix}_Aprobado`] = evaluation.passed ? "Si" : "No";
+        output[`${prefix}_Periodo_inicio`] = evaluation.periodStart ?? "";
+        output[`${prefix}_Periodo_fin`] = evaluation.periodEnd ?? "";
+      }
+
+      return output;
+    });
+  }
+
   async function exportRankingExcel() {
     try {
       setIsExporting(true);
@@ -187,6 +238,8 @@ export function RankingConcurso({
 
       const detailRows = buildDetailRows(data.rows);
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detailRows), cleanSheetName("Detalles", "Detalles", usedNames));
+      const qualifierRows = buildQualifierRows(data.rows);
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(qualifierRows), cleanSheetName("Calificadores", "Calificadores", usedNames));
       const safePeriod = (periodMonth || data.maxCoveragePeriodMonth || "ranking").slice(0, 10).replace(/[^0-9-]/g, "");
       XLSX.writeFile(workbook, `ranking_concursos_${safePeriod}.xlsx`);
     } finally {

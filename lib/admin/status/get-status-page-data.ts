@@ -190,8 +190,7 @@ export async function getStatusPageData(
       )
       .eq("period_month", periodMonth)
       .eq("is_deleted", false)
-      .order("nombre_completo", { ascending: true })
-      .limit(100),
+      .order("nombre_completo", { ascending: true }),
     supabase
       .from("sales_force_status")
       .select("id", { count: "exact", head: true })
