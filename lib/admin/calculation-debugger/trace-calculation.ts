@@ -10,6 +10,11 @@ import {
 import { loadPeriodSettingsForCalculation } from "@/lib/admin/period-settings/load-period-settings";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { CalculationDebuggerTraceData, CalculationDiagnosis } from "@/lib/admin/calculation-debugger/types";
+import {
+  getRollingMonthColumnName,
+  ROLLING_MONTH_COLUMN_NAMES,
+  type RollingMonthColumnName,
+} from "@/lib/admin/data-sources/rolling-month-columns";
 
 type TraceInput = {
   period: string;
@@ -121,41 +126,12 @@ type NormalizedSourceBQRow = {
   valor: number | string | null;
   periodo: string | null;
   meses?: string | Record<string, unknown> | null;
-} & Partial<Record<MonthColumnName, number | string | null>>;
+} & Partial<Record<RollingMonthColumnName, number | string | null>>;
 
 type BigQueryColumnRow = {
   column_name: string | null;
   data_type: string | null;
 };
-
-type MonthColumnName =
-  | "month01"
-  | "month02"
-  | "month03"
-  | "month04"
-  | "month05"
-  | "month06"
-  | "month07"
-  | "month08"
-  | "month09"
-  | "month10"
-  | "month11"
-  | "month12";
-
-const MONTH_COLUMN_NAMES: MonthColumnName[] = [
-  "month01",
-  "month02",
-  "month03",
-  "month04",
-  "month05",
-  "month06",
-  "month07",
-  "month08",
-  "month09",
-  "month10",
-  "month11",
-  "month12",
-];
 
 type PayCurveRow = {
   id: string | null;
@@ -285,12 +261,7 @@ function getRowMonthValue(row: NormalizedSourceBQRow, periodMonth: string, targe
   const jsonValue = meses[normalizedTargetMonth];
   if (typeof jsonValue === "number" && Number.isFinite(jsonValue)) return jsonValue;
 
-  const periodYear = Number(periodMonth.slice(0, 4));
-  const targetYear = Number(normalizedTargetMonth.slice(0, 4));
-  const targetMonth = Number(normalizedTargetMonth.slice(5, 7));
-  if (!Number.isInteger(periodYear) || targetYear !== periodYear) return null;
-
-  const columnName = MONTH_COLUMN_NAMES[targetMonth - 1];
+  const columnName = getRollingMonthColumnName(periodMonth, normalizedTargetMonth);
   if (!columnName) return null;
   const columnValue = row[columnName];
   if (columnValue === null || columnValue === undefined) return null;
@@ -799,7 +770,7 @@ async function fetchIncludedSourceRows(params: {
       ? "CAST(meses AS STRING) AS meses"
       : "TO_JSON_STRING(meses) AS meses"
     : "CAST(NULL AS STRING) AS meses";
-  const monthSelectExpressions = MONTH_COLUMN_NAMES.map((columnName) =>
+  const monthSelectExpressions = ROLLING_MONTH_COLUMN_NAMES.map((columnName) =>
     fileColumns.has(columnName)
       ? `SAFE_CAST(\`${columnName}\` AS FLOAT64) AS \`${columnName}\``
       : `CAST(NULL AS FLOAT64) AS \`${columnName}\``,

@@ -52,13 +52,26 @@ Nota de carga: la normalizacion interna produce `meses` serializado, pero antes 
 load job la app lo convierte de nuevo a un objeto JSON para guardarlo en el campo
 `JSON` de BigQuery.
 
-Convencion de columnas calendario:
-- `month01` = enero del anio del periodo de carga.
-- `month02` = febrero del anio del periodo de carga.
-- `month03` = marzo del anio del periodo de carga.
-- Asi sucesivamente hasta `month12` = diciembre del anio del periodo de carga.
+Convencion de ventana movil (del mes mas reciente hacia atras):
+- `month01` = mes del periodo de carga.
+- `month02` = un mes antes del periodo de carga.
+- `month03` = dos meses antes del periodo de carga.
+- Asi sucesivamente hasta `month12` = once meses antes del periodo de carga.
 
-Si el archivo trae headers absolutos (`2026-04`, `abr-2026`, etc.), tambien se guardan en `meses`. Si trae `month01`, `month02`, etc., se interpretan usando el anio del `periodo` cargado.
+Ejemplo para una carga del periodo `2026-06`:
+- `month01` = `2026-06`.
+- `month02` = `2026-05`.
+- `month03` = `2026-04`.
+- `month12` = `2025-07`.
+
+La ventana puede cruzar de anio. Si el archivo trae headers absolutos (`2026-04`, `abr-2026`, etc.), se conserva la fecha indicada por el header. Tanto los headers absolutos como `month01` ... `month12` se normalizan y guardan en `meses` con claves `YYYY-MM`.
+
+### Migracion de cargas anteriores
+
+Este cambio de convencion no reescribe automaticamente las filas que ya existen en
+`filesNormalizados`. Despues de desplegarlo, se deben reprocesar desde Storage (o
+volver a subir) los archivos cargados con la convencion anterior para que `meses` y
+las columnas `month01` ... `month12` queden normalizados como ventana movil.
 
 ## Recomendacion de schema en BigQuery
 

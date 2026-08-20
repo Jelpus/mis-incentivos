@@ -138,5 +138,12 @@
     "route": "/admin/calculo",
     "currentState": "Los objetivos faltantes impedían confirmar el precalculo, bloqueando pruebas y corridas parciales.",
     "modifiedState": "Los faltantes se muestran como advertencia informativa y ya no impiden confirmar el precalculo; la correccion nacional de AFINITOR_GOB se conserva."
+  },
+  {
+    "sourceKey": "2026-08-20-admin-data-sources-rolling-months",
+    "date": "2026-08-20",
+    "route": "/admin/data-sources",
+    "currentState": "Las columnas month01 a month12 se interpretaban como enero a diciembre del año del periodo cargado.",
+    "modifiedState": "Las columnas usan una ventana movil: month01 es el periodo cargado, month02 el mes anterior y month12 once meses atras; carga, calculo y debugger comparten la misma convencion."
   }
 ]

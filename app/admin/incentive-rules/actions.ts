@@ -16,6 +16,11 @@ import {
 } from "@/lib/admin/incentive-rules/rule-definition-normalized";
 import { TEAM_RULE_REFERENCE_VALUES } from "@/lib/admin/incentive-rules/rule-catalog";
 import {
+  getRollingMonthKey,
+  ROLLING_MONTH_COLUMN_NAMES,
+  type RollingMonthColumnName,
+} from "@/lib/admin/data-sources/rolling-month-columns";
+import {
   isBigQueryConfigured,
   loadBigQueryJsonRows,
   runBigQueryQuery,
@@ -242,35 +247,6 @@ type NormalizedSourceRow = {
   meses: Record<string, number>;
 };
 
-type MonthColumnName =
-  | "month01"
-  | "month02"
-  | "month03"
-  | "month04"
-  | "month05"
-  | "month06"
-  | "month07"
-  | "month08"
-  | "month09"
-  | "month10"
-  | "month11"
-  | "month12";
-
-const MONTH_COLUMN_NAMES: MonthColumnName[] = [
-  "month01",
-  "month02",
-  "month03",
-  "month04",
-  "month05",
-  "month06",
-  "month07",
-  "month08",
-  "month09",
-  "month10",
-  "month11",
-  "month12",
-];
-
 type BigQuerySourceRow = {
   archivo: string | null;
   institucion: string | null;
@@ -290,7 +266,7 @@ type BigQuerySourceRow = {
   fuente: string | null;
   periodo: string | null;
   meses: string | null;
-} & Partial<Record<MonthColumnName, number | null>>;
+} & Partial<Record<RollingMonthColumnName, number | null>>;
 
 const MONTH_BY_TOKEN: Record<string, number> = {
   ene: 1,
@@ -378,7 +354,7 @@ function detectHeaderMonthKey(header: string): string | null {
   return null;
 }
 
-function detectCalendarMonthIndex(header: string): number | null {
+function detectRollingMonthIndex(header: string): number | null {
   const normalized = normalizeHeader(header);
   const match = normalized.match(/^(?:month|mes)(\d{1,2})$/);
   if (!match) return null;
@@ -514,14 +490,11 @@ function sumMonths(months: Record<string, number>, periodMonthInput: string, sta
 
 function extractMonthValues(row: Record<string, unknown>, periodMonthInput: string): Record<string, number> {
   const monthValues: Record<string, number> = {};
-  const periodYear = Number(periodMonthInput.slice(0, 4));
   for (const header of Object.keys(row)) {
-    const calendarMonthIndex = detectCalendarMonthIndex(header);
+    const rollingMonthIndex = detectRollingMonthIndex(header);
     const monthKey =
       detectHeaderMonthKey(header) ??
-      (calendarMonthIndex && Number.isInteger(periodYear)
-        ? toMonthKey(periodYear, calendarMonthIndex)
-        : null);
+      (rollingMonthIndex ? getRollingMonthKey(periodMonthInput, rollingMonthIndex) : null);
     if (!monthKey) continue;
     const value = parseOptionalNumber(row[header]);
     if (value === null) continue;
@@ -953,16 +926,15 @@ function sanitizeMonthsOrNull(value: Record<string, number>): string | null {
   return Object.keys(output).length > 0 ? JSON.stringify(output) : null;
 }
 
-function mapCalendarMonthColumns(
+function mapRollingMonthColumns(
   months: Record<string, number>,
   periodMonth: string,
-): Partial<Record<MonthColumnName, number | null>> {
-  const output: Partial<Record<MonthColumnName, number | null>> = {};
-  const periodYear = Number(periodMonth.slice(0, 4));
-  if (!Number.isInteger(periodYear)) return output;
+): Partial<Record<RollingMonthColumnName, number | null>> {
+  const output: Partial<Record<RollingMonthColumnName, number | null>> = {};
 
-  MONTH_COLUMN_NAMES.forEach((columnName, index) => {
-    const monthKey = toMonthKey(periodYear, index + 1);
+  ROLLING_MONTH_COLUMN_NAMES.forEach((columnName, index) => {
+    const monthKey = getRollingMonthKey(periodMonth, index + 1);
+    if (!monthKey) return;
     const value = months[monthKey];
     if (typeof value === "number" && Number.isFinite(value)) {
       output[columnName] = Number(value.toFixed(6));
@@ -1163,7 +1135,7 @@ function mapNormalizedRowsToBigQuerySchema(
       fuente: sanitizeStringOrNull(row.fuente),
       periodo: sanitizeStringOrNull(row.periodo),
       meses: sanitizeMonthsOrNull(row.meses),
-      ...mapCalendarMonthColumns(row.meses, row.periodo),
+      ...mapRollingMonthColumns(row.meses, row.periodo),
     };
 
     // Aunque la tabla los permite null, sin archivo/periodo la fila no es util para trazabilidad.

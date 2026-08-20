@@ -7,6 +7,7 @@ import {
   reprocessTeamSourceFileFromStorageAction,
   uploadTeamSourceFileAction,
 } from "@/app/admin/incentive-rules/actions";
+import { getRollingMonthKey } from "@/lib/admin/data-sources/rolling-month-columns";
 import { formatDateTimeNoTimezoneShift } from "@/lib/date-time";
 
 type SourceFileRow = {
@@ -410,6 +411,10 @@ function TeamSourceFileUploadRowItem({
 }
 
 export function TeamSourceFilesCard({ periodMonthInput, sourceFiles }: Props) {
+  const month01 = getRollingMonthKey(periodMonthInput, 1) ?? periodMonthInput;
+  const month02 = getRollingMonthKey(periodMonthInput, 2) ?? "mes anterior";
+  const month12 = getRollingMonthKey(periodMonthInput, 12) ?? "once meses atras";
+
   return (
     <section className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
       <div>
@@ -417,6 +422,9 @@ export function TeamSourceFilesCard({ periodMonthInput, sourceFiles }: Props) {
           <h2 className="text-xl font-semibold text-neutral-950">Archivos fuente del periodo</h2>
           <p className="mt-2 max-w-4xl text-sm leading-6 text-neutral-600">
             Con base en los Pay Components definidos para el periodo, se listan los archivos fuente requeridos para alimentar las reglas de incentivos. Sube los archivos con la informacion correspondiente para que las reglas puedan procesarla correctamente.
+          </p>
+          <p className="mt-2 max-w-4xl text-xs leading-5 text-neutral-500">
+            Convencion mensual para este periodo: <code>month01 = {month01}</code>, <code>month02 = {month02}</code> y asi sucesivamente hasta <code>month12 = {month12}</code>.
           </p>
         </div>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
