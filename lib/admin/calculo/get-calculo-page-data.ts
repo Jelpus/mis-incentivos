@@ -6,6 +6,7 @@ import {
   isMissingRelationError,
   normalizePeriodMonthInput,
 } from "@/lib/admin/incentive-rules/shared";
+import { ADMIN_STATUS_PERIODS_CACHE_TAG } from "@/lib/admin/status/cache";
 
 type SalesForcePeriodRow = {
   period_month: string | null;
@@ -223,7 +224,7 @@ async function loadCalculoPageData(): Promise<CalculoPageData> {
 const getCachedCalculoPageData = unstable_cache(
   async () => loadCalculoPageData(),
   ["admin-calculo-page"],
-  { revalidate: 120, tags: ["admin-calculo"] },
+  { revalidate: 120, tags: ["admin-calculo", ADMIN_STATUS_PERIODS_CACHE_TAG] },
 );
 
 export async function getCalculoPageData(): Promise<CalculoPageData> {

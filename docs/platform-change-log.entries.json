@@ -1,5 +1,12 @@
 [
   {
+    "sourceKey": "2026-08-20-admin-status-period-cache-invalidation",
+    "date": "2026-08-20",
+    "route": "/admin/calculo",
+    "currentState": "Los nuevos periodos de Sales Force Status podian permanecer ocultos temporalmente en Calculo, Objetivos y Reglas por caches independientes no invalidados al aplicar Status.",
+    "modifiedState": "Al aplicar, clonar o editar Sales Force Status se invalidan inmediatamente el catalogo compartido de periodos y todas las vistas administrativas dependientes."
+  },
+  {
     "sourceKey": "2026-07-17-source-ranking-period-coverage",
     "date": "2026-07-17",
     "route": "/admin/source-ranking",

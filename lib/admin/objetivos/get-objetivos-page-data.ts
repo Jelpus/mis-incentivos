@@ -6,6 +6,7 @@ import {
   isMissingRelationError,
   normalizePeriodMonthInput,
 } from "@/lib/admin/incentive-rules/shared";
+import { ADMIN_STATUS_PERIODS_CACHE_TAG } from "@/lib/admin/status/cache";
 
 type ObjectiveVersionRow = {
   id: string;
@@ -184,7 +185,7 @@ async function loadObjetivosPageData(
 const getCachedObjetivosPageData = unstable_cache(
   async (periodMonthInput?: string | null) => loadObjetivosPageData(periodMonthInput),
   ["admin-objetivos-page"],
-  { revalidate: 120, tags: ["admin-objetivos"] },
+  { revalidate: 120, tags: ["admin-objetivos", ADMIN_STATUS_PERIODS_CACHE_TAG] },
 );
 
 export async function getObjetivosPageData(

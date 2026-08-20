@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -9,6 +9,10 @@ import { createImportBatchFromExcel } from "@/lib/import-engine/supabase-import-
 import { previewSalesForceImportBatch } from "@/lib/import-engine/preview-sales-force";
 import { previewManagerImportBatch } from "@/lib/import-engine/preview-manager";
 import { tryParseFlexibleDate } from "@/lib/import-engine/cleaners";
+import {
+  ADMIN_STATUS_DEPENDENT_CACHE_TAGS,
+  ADMIN_STATUS_DEPENDENT_PATHS,
+} from "@/lib/admin/status/cache";
 
 type UploadStatusImportResult =
   | {
@@ -59,6 +63,15 @@ const DEFAULT_VALID_SINCE_PERIOD = "2026-01-01";
 
 function isAdminRole(role: string | null, isActive: boolean | null): boolean {
   return isActive !== false && (role === "admin" || role === "super_admin");
+}
+
+function revalidateStatusDependentAdminData(): void {
+  for (const tag of ADMIN_STATUS_DEPENDENT_CACHE_TAGS) {
+    updateTag(tag);
+  }
+  for (const path of ADMIN_STATUS_DEPENDENT_PATHS) {
+    revalidatePath(path);
+  }
 }
 
 async function uploadImportByType(
@@ -401,6 +414,9 @@ export async function cloneSalesForcePeriodAction(
     };
   }
 
+  // Sales Force ya fue persistido aunque el paso posterior de managers falle.
+  revalidateStatusDependentAdminData();
+
   const { count: targetManagersCount, error: targetManagersCountError } =
     await adminSupabase
       .from("manager_status")
@@ -478,8 +494,6 @@ export async function cloneSalesForcePeriodAction(
       };
     }
   }
-
-  revalidatePath("/admin/status");
 
   const salesForceMessage =
     (salesForceCloneData as { message?: string } | null)?.message ??
@@ -748,7 +762,11 @@ export async function applyImportBatchAction(
     };
   }
 
-  revalidatePath("/admin/status");
+  if (importTypeCode === "sales_force_status") {
+    revalidateStatusDependentAdminData();
+  } else {
+    revalidatePath("/admin/status");
+  }
   revalidatePath(`/admin/status/imports/${batchId}`);
 
   const appliedCount =
@@ -969,7 +987,7 @@ export async function saveSalesForceStatusAction(
     }
   }
 
-  revalidatePath("/admin/status");
+  revalidateStatusDependentAdminData();
 
   return {
     ok: true,

@@ -6,6 +6,7 @@ import {
   isMissingRelationError,
   normalizePeriodMonthInput,
 } from "@/lib/admin/incentive-rules/shared";
+import { ADMIN_STATUS_PERIODS_CACHE_TAG } from "@/lib/admin/status/cache";
 import { loadRuleDefinitionsByIds } from "@/lib/admin/incentive-rules/rule-definition-normalized";
 
 const RETRY_ATTEMPTS = 3;
@@ -291,7 +292,7 @@ const getCachedTeamRuleDetailData = unstable_cache(
   async (teamId: string, periodMonthInput?: string | null) =>
     loadTeamRuleDetailData({ teamId, periodMonthInput }),
   ["admin-incentive-rule-detail"],
-  { revalidate: 120, tags: ["admin-incentive-rules"] },
+  { revalidate: 120, tags: ["admin-incentive-rules", ADMIN_STATUS_PERIODS_CACHE_TAG] },
 );
 
 export async function getTeamRuleDetailData(params: {

@@ -6,6 +6,7 @@ import {
   isMissingRelationError,
   normalizePeriodMonthInput,
 } from "@/lib/admin/incentive-rules/shared";
+import { ADMIN_STATUS_PERIODS_CACHE_TAG } from "@/lib/admin/status/cache";
 
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 180;
@@ -422,7 +423,7 @@ async function loadTeamRulesPageFastData(periodMonthInput?: string | null): Prom
 const getCachedTeamRulesPageFastData = unstable_cache(
   async (periodMonthInput?: string | null) => loadTeamRulesPageFastData(periodMonthInput),
   ["admin-incentive-rules-page-fast"],
-  { revalidate: 120, tags: ["admin-incentive-rules"] },
+  { revalidate: 120, tags: ["admin-incentive-rules", ADMIN_STATUS_PERIODS_CACHE_TAG] },
 );
 
 export async function getTeamRulesPageFastData(periodMonthInput?: string | null): Promise<TeamRulesPageFastData> {
