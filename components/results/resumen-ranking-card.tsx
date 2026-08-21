@@ -165,9 +165,9 @@ export function ResumenRankingCard({
 
         <MetricTile
           title="Porcentaje de utilización de ayudas visuales"
-          topLabel="Visitas con ayuda visual"
+          topLabel="iCVA realizadas"
           topValue={data.ayudasVisuales.onTime}
-          bottomLabel="Total de visitas"
+          bottomLabel="Llamadas iCVA"
           bottomValue={data.ayudasVisuales.total}
           coverage={data.ayudasVisuales.coverage}
           threshold={data.ayudasVisuales.threshold}

@@ -19,6 +19,7 @@ import {
   aggregateKpiLocalYtdRawRows,
   type DiasCicloRow,
   normalizeKpiLocalYtdRaw,
+  type RankingMetricExclusionRow,
 } from "@/lib/admin/source-ranking/normalize-kpi-local-ytd";
 import {
   aggregateIcva48hrsRawRows,
@@ -53,6 +54,8 @@ export type UploadSourceRankingFileResult =
     uploadedPath: string;
     normalizedRows?: number;
     aggregatedRows?: number;
+    exclusionVersion?: number;
+    exclusionRows?: number;
     normalizationSummary?: string;
   }
   | {
@@ -183,6 +186,49 @@ function getSourceRankingBucketName() {
     process.env.NEXT_PUBLIC_SUPABASE_SOURCE_RANKING_BUCKET ??
     "source-ranking-files"
   );
+}
+
+async function saveRankingMetricExclusionsVersion(params: {
+  supabase: NonNullable<ReturnType<typeof createAdminClient>>;
+  sourcePeriodMonth: string;
+  rows: RankingMetricExclusionRow[];
+  createdBy: string;
+}): Promise<
+  | { ok: true; versionNo: number; insertedCount: number }
+  | { ok: false; message: string }
+> {
+  const result = await params.supabase.rpc("save_exclusiones_ranking_metrics_version", {
+    p_source_period_month: params.sourcePeriodMonth,
+    p_rows: params.rows,
+    p_created_by: params.createdBy,
+  });
+
+  if (result.error) {
+    const normalizedMessage = String(result.error.message ?? "").toLowerCase();
+    const schemaMissing =
+      result.error.code === "PGRST202" ||
+      isMissingRelationError(result.error) ||
+      normalizedMessage.includes("save_exclusiones_ranking_metrics_version") ||
+      normalizedMessage.includes("exclusiones_ranking_metric");
+    return {
+      ok: false,
+      message: schemaMissing
+        ? "Falta el esquema de exclusiones de ranking. Ejecuta docs/exclusiones-ranking-metrics-schema.sql y vuelve a cargar KPI Local YTD."
+        : `No se pudo guardar la version de exclusiones de ranking: ${result.error.message}`,
+    };
+  }
+
+  const responseRow = Array.isArray(result.data) ? result.data[0] : result.data;
+  const versionNo = Number((responseRow as { version_no?: unknown } | null)?.version_no);
+  const insertedCount = Number((responseRow as { inserted_count?: unknown } | null)?.inserted_count ?? 0);
+  if (!Number.isInteger(versionNo) || versionNo <= 0 || !Number.isInteger(insertedCount) || insertedCount < 0) {
+    return {
+      ok: false,
+      message: "La version de exclusiones se guardo sin una respuesta valida de version/conteo.",
+    };
+  }
+
+  return { ok: true, versionNo, insertedCount };
 }
 
 function sanitizeUploadedFileName(fileName: string): string {
@@ -740,6 +786,7 @@ export async function uploadSourceRankingFileAction(
         logSourceRankingStage(startedAt, "kpi-normalized", {
           rawRows: kpiNormalization.rows.length,
           cpdRows: kpiNormalization.cpdRows.length,
+          exclusionRows: kpiNormalization.exclusionRows.length,
           processedRows: kpiNormalization.summary.processedRows,
         });
       } else {
@@ -885,6 +932,8 @@ export async function uploadSourceRankingFileAction(
 
   let normalizationSummary: string | undefined;
   let aggregatedRowsCount: number | undefined;
+  let exclusionVersionNo: number | undefined;
+  let exclusionRowsCount: number | undefined;
   if (kpiNormalization) {
     const kpiPeriods = getUniquePeriodMonths(kpiNormalization.rows.map((row) => row.period_month));
     const periodsToReplace = kpiPeriods.length > 0 ? kpiPeriods : [periodMonth];
@@ -1036,8 +1085,28 @@ export async function uploadSourceRankingFileAction(
       }
     }
 
+    const exclusionVersionResult = await saveRankingMetricExclusionsVersion({
+      supabase,
+      sourcePeriodMonth: metadataPeriodMonth,
+      rows: kpiNormalization.exclusionRows,
+      createdBy: user.id,
+    });
+    if (!exclusionVersionResult.ok) {
+      return {
+        ok: false,
+        message: `Archivo cargado, pero ${exclusionVersionResult.message}`,
+      };
+    }
+    exclusionVersionNo = exclusionVersionResult.versionNo;
+    exclusionRowsCount = exclusionVersionResult.insertedCount;
+    logSourceRankingStage(startedAt, "ranking-exclusions-version-saved", {
+      versionNo: exclusionVersionNo,
+      rows: exclusionRowsCount,
+      year: Number(metadataPeriodMonth.slice(0, 4)),
+    });
+
     normalizationSummary =
-      `KPI raw: ${kpiNormalization.rows.length} filas | periodos: ${periodsToReplace.length} | corte: ${metadataPeriodMonth.slice(0, 7)} | agregado: ${aggregatedRows.length} reps | CPD raw: ${kpiNormalization.cpdRows.length} filas | filas YTD: ${kpiNormalization.summary.ytdRows} | ` +
+      `KPI raw: ${kpiNormalization.rows.length} filas | periodos: ${periodsToReplace.length} | corte: ${metadataPeriodMonth.slice(0, 7)} | agregado: ${aggregatedRows.length} reps | CPD raw: ${kpiNormalization.cpdRows.length} filas | exclusiones ranking: ${exclusionRowsCount} (v_${exclusionVersionNo}) | filas YTD: ${kpiNormalization.summary.ytdRows} | ` +
       `match nombre: ${kpiNormalization.summary.nameMatchedRows} | fallback territorio: ${kpiNormalization.summary.territoryFallbackRows} | ` +
       `sin match: ${kpiNormalization.summary.unmatchedRows}` +
       (kpiNormalization.summary.cpdRowsWithoutDiasCiclo > 0
@@ -1136,6 +1205,8 @@ export async function uploadSourceRankingFileAction(
     uploadedPath: targetPath,
     normalizedRows: kpiNormalization?.rows.length ?? icvaNormalization?.rows.length,
     aggregatedRows: aggregatedRowsCount,
+    exclusionVersion: exclusionVersionNo,
+    exclusionRows: exclusionRowsCount,
     normalizationSummary,
   };
 }

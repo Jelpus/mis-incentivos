@@ -689,9 +689,9 @@ async function getRankingSummaryCardData(params: {
   const callPlanCoverage = safeCoverage(visitas, objetivo);
   const hasGarantia = kpiRows.some((row) => row.garantia === true);
 
-  const icvaTotal = icvaRows.reduce((acc, row) => acc + toPositiveNumber(row.total_calls), 0);
-  const icvaWithVisualAid = icvaRows.reduce((acc, row) => acc + toPositiveNumber(row.icva_calls), 0);
-  const icvaCoverage = safeCoverage(icvaWithVisualAid, icvaTotal);
+  const icvaCalls = icvaRows.reduce((acc, row) => acc + toPositiveNumber(row.icva_calls), 0);
+  const onTimeIcva = icvaRows.reduce((acc, row) => acc + toPositiveNumber(row.on_time_icva), 0);
+  const icvaCoverage = safeCoverage(onTimeIcva, icvaCalls);
 
   const docTotal = icvaRows.reduce((acc, row) => acc + toPositiveNumber(row.total_calls), 0);
   const docOnTime = icvaRows.reduce((acc, row) => acc + toPositiveNumber(row.on_time_call), 0);
@@ -718,8 +718,8 @@ async function getRankingSummaryCardData(params: {
       threshold: null,
     },
     ayudasVisuales: {
-      total: icvaTotal,
-      onTime: icvaWithVisualAid,
+      total: icvaCalls,
+      onTime: onTimeIcva,
       coverage: icvaCoverage,
       threshold: 0.65,
     },

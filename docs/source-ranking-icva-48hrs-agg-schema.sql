@@ -1,4 +1,6 @@
 -- Aggregated ICVA + 48 hrs rows (stage 2) for /admin/source-ranking.
+-- Business formula: pct_icva = on_time_icva / icva_calls.
+-- total_calls is only the denominator for pct_48h = on_time_call / total_calls.
 
 create table if not exists public.ranking_icva_48hrs_agg (
   id uuid primary key default gen_random_uuid(),

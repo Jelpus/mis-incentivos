@@ -8,6 +8,7 @@ import {
 } from "@/lib/ranking-contests/pointAdjustments";
 import { getContestParticipants } from "@/lib/ranking-contests/participants";
 import { evaluateContestComponent, resolveQualification } from "@/lib/ranking-contests/qualification";
+import { loadLatestRankingMetricExclusions } from "@/lib/ranking-contests/exclusions";
 import { attachRankingGroupsToParticipants, getLatestRankingComplementsByTeamIds, normalizeTeamKey } from "@/lib/ranking-contests/rankingGroups";
 import type {
   BigQueryCoverageRow,
@@ -459,15 +460,17 @@ async function loadRankingContestData(params?: GetRankingContestDataParams): Pro
     return { ok: false, maxCoveragePeriodMonth: null, contests: [], rows: [], messages: ["Admin client de Supabase no disponible."] };
   }
 
-  const [resolvedMaxCoveragePeriodMonth, contestDefinitions] = await Promise.all([
+  const [resolvedMaxCoveragePeriodMonth, contestDefinitions, exclusionSnapshot] = await Promise.all([
     params?.maxCoveragePeriodMonth
       ? Promise.resolve(normalizeMonth(params.maxCoveragePeriodMonth))
       : getMaxCoveragePeriodMonth(),
     getContestDefinitions({ contestId: params?.contestId ?? null }),
+    loadLatestRankingMetricExclusions(supabase),
   ]);
   const maxCoveragePeriodMonth = resolvedMaxCoveragePeriodMonth;
 
   if (contestDefinitions.message) messages.push(contestDefinitions.message);
+  if (exclusionSnapshot.error) messages.push(exclusionSnapshot.error);
   const contests = contestDefinitions.contests;
   const allowedGroupsByContest = await getAllowedRankingGroupsByContest({
     contestIds: contests.map((contest) => contest.id),
@@ -565,6 +568,7 @@ async function loadRankingContestData(params?: GetRankingContestDataParams): Pro
           participant,
           contest,
           maxCoveragePeriodMonth,
+          exclusionSnapshot,
         }),
       );
       const qualification = resolveQualification(componentEvaluations);

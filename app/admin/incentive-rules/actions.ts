@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import {
   getMissingRelationName,
+  isIqviaSourceFile,
   isMissingRelationError,
   normalizePeriodMonthInput,
   normalizeSourceFileCode,
@@ -428,7 +429,7 @@ function getRequiredHeaderGroupsForSourceFile(fileLogicKey: string): RequiredHea
     ];
   }
 
-  if (fileLogicKey.includes("iqvia")) {
+  if (isIqviaSourceFile(fileLogicKey)) {
     return [
       { label: "clue_id", candidates: ["clue_id"] },
       { label: "molecula_h", candidates: ["molecula_h"] },
@@ -769,7 +770,7 @@ function normalizeRowsForBigQuery(params: {
       continue;
     }
 
-    if (fileLogicKey.includes("iqvia")) {
+    if (isIqviaSourceFile(fileLogicKey)) {
       const clueId = readStringFromRow(row, normalizedHeaderMap, ["clue_id"]);
       const molecula = readStringFromRow(row, normalizedHeaderMap, ["molecula_h"]);
       const metric = readStringFromRow(row, normalizedHeaderMap, ["metric"]);

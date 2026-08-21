@@ -87,6 +87,11 @@ export function normalizeSourceFileCode(value: unknown): string {
     .replace(/^_+|_+$/g, "");
 }
 
+export function isIqviaSourceFile(value: unknown): boolean {
+  const fileCode = normalizeSourceFileCode(value);
+  return fileCode.includes("iqvia") || /(?:^|_)gov_360(?:_|$)/.test(fileCode);
+}
+
 export function sanitizeStoragePathChunk(value: string): string {
   return value
     .normalize("NFD")

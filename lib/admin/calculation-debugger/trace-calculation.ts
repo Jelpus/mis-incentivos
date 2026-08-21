@@ -1,7 +1,11 @@
 import { buildResultadosV2Preview } from "@/lib/admin/calculo/build-resultados-v2-preview";
 import { runCalculoProcess } from "@/lib/admin/calculo/run-calculo-process";
 import { fetchBigQueryRows, isBigQueryConfigured } from "@/lib/integrations/bigquery";
-import { normalizePeriodMonthInput, normalizeSourceFileCode } from "@/lib/admin/incentive-rules/shared";
+import {
+  isIqviaSourceFile,
+  normalizePeriodMonthInput,
+  normalizeSourceFileCode,
+} from "@/lib/admin/incentive-rules/shared";
 import {
   computeEffectivePeriodCut,
   isBeforeEffectivePeriodCut,
@@ -414,7 +418,7 @@ function getRequiredHeaderGroupsForSourceFile(fileLogicKey: string): RequiredHea
     ];
   }
 
-  if (fileLogicKey.includes("iqvia")) {
+  if (isIqviaSourceFile(fileLogicKey)) {
     return [
       { label: "clue_id", candidates: ["clue_id"] },
       { label: "molecula_h", candidates: ["molecula_h"] },
@@ -600,10 +604,10 @@ async function auditSourceFiles(params: {
       const expectedFuentes = uniqueNonEmpty(expectedSources.map((source) => source.fuente));
       const expectedMolecules = uniqueNonEmpty(expectedSources.map((source) => source.molecula_producto));
 
-      if (expectedMetrics.length > 0 && !resolvedColumns.metric && fileLogicKey.includes("iqvia")) {
+      if (expectedMetrics.length > 0 && !resolvedColumns.metric && isIqviaSourceFile(fileLogicKey)) {
         issues.push(`El Pay Component espera metric (${expectedMetrics.join(", ")}), pero el archivo no trae columna metric.`);
       }
-      if (expectedFuentes.length > 0 && !resolvedColumns.fuente && fileLogicKey.includes("iqvia")) {
+      if (expectedFuentes.length > 0 && !resolvedColumns.fuente && isIqviaSourceFile(fileLogicKey)) {
         issues.push(`El Pay Component espera fuente (${expectedFuentes.join(", ")}), pero el archivo no trae fuente/fuente_db.`);
       }
       if (expectedMolecules.length > 0 && !resolvedColumns.moleculaProducto) {

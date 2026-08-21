@@ -1,5 +1,33 @@
 [
   {
+    "sourceKey": "2026-08-21-ranking-qualifier-guarantee-exclusions",
+    "date": "2026-08-21",
+    "route": "/perfil/ranking",
+    "currentState": "Los calificadores acumulaban todos los meses aun cuando CAT_GARANTIA marcaba una ruta y periodo para excluir.",
+    "modifiedState": "CPA T1, CPD, iCVA y Documentacion 48 horas consultan la version mas reciente de exclusiones, omiten cada territory_id y period_month del acumulado y marcan el periodo excluido con asterisco en el detalle."
+  },
+  {
+    "sourceKey": "2026-08-20-admin-source-ranking-cat-garantia-versions",
+    "date": "2026-08-20",
+    "route": "/admin/source-ranking",
+    "currentState": "CAT_GARANTIA se usaba dentro de KPI Local YTD para marcar garantias, pero sus territorios y periodos no se persistian como catalogo versionado de exclusiones.",
+    "modifiedState": "Cada carga de KPI Local YTD crea una version v_n de exclusiones_ranking_metrics, guarda TERRITORIO como territory_id y convierte FECHA YYMM a period_month, conservando solo el ano del periodo cargado; una vista expone v_max."
+  },
+  {
+    "sourceKey": "2026-08-20-ranking-icva-coverage-formula",
+    "date": "2026-08-20",
+    "route": "/perfil/ranking",
+    "currentState": "Los calificadores iCVA, el tab Performance y el resumen de ranking mostraban Ayudas Visuales con icva_calls dividido entre total_calls, distinto al pct_icva normalizado.",
+    "modifiedState": "iCVA y Cobertura Ayudas Visuales comparten la formula on_time_icva / icva_calls en calificadores, Performance y resumen; el detalle identifica claramente numerador y denominador."
+  },
+  {
+    "sourceKey": "2026-08-20-admin-data-sources-gov-360-iqvia-alias",
+    "date": "2026-08-20",
+    "route": "/admin/data-sources",
+    "currentState": "Los archivos GOV_360, como GOV_360 ASMA BX, no activaban el normalizador IQVIA porque su clave logica no contenia IQVIA.",
+    "modifiedState": "GOV_360 se reconoce como alias de IQVIA en validacion, normalizacion a BigQuery y debugger; las fuentes no relacionadas conservan su clasificacion."
+  },
+  {
     "sourceKey": "2026-08-20-admin-status-period-cache-invalidation",
     "date": "2026-08-20",
     "route": "/admin/calculo",

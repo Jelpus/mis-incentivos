@@ -65,9 +65,15 @@ export type RankingCpdRawRow = {
   cpd: number;
 };
 
+export type RankingMetricExclusionRow = {
+  territory_id: string;
+  period_month: string;
+};
+
 type NormalizeResult = {
   rows: KpiLocalYtdRawRow[];
   cpdRows: RankingCpdRawRow[];
+  exclusionRows: RankingMetricExclusionRow[];
   summary: {
     processedRows: number;
     ytdRows: number;
@@ -79,6 +85,7 @@ type NormalizeResult = {
     territoryFallbackRows: number;
     unmatchedRows: number;
     garantiaRows: number;
+    exclusionRows: number;
   };
 };
 
@@ -189,6 +196,34 @@ function yyMmToPeriodMonth(value: string): string | null {
   const month = Number(value.slice(2, 4));
   if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
   return `${year}-${String(month).padStart(2, "0")}-01`;
+}
+
+export function extractRankingMetricExclusions(
+  rows: Array<Record<string, unknown>>,
+  sourcePeriodMonth: string,
+): RankingMetricExclusionRow[] {
+  const targetYear = Number(sourcePeriodMonth.slice(0, 4));
+  if (!Number.isInteger(targetYear) || targetYear < 2000 || targetYear > 2100) return [];
+
+  const exclusionsByKey = new Map<string, RankingMetricExclusionRow>();
+  for (const row of rows) {
+    const territoryId = String(getValueByKeys(row, ["TERRITORIO", "STATUS.TERRITORIO"]) ?? "")
+      .trim()
+      .toUpperCase();
+    const periodCode = toYyMmCode(getValueByKeys(row, ["FECHA", "ANNIO_MES", "ANIO_MES"]));
+    const periodMonth = periodCode ? yyMmToPeriodMonth(periodCode) : null;
+    if (!territoryId || !periodMonth || Number(periodMonth.slice(0, 4)) !== targetYear) continue;
+
+    exclusionsByKey.set(`${territoryId}|${periodMonth}`, {
+      territory_id: territoryId,
+      period_month: periodMonth,
+    });
+  }
+
+  return Array.from(exclusionsByKey.values()).sort((a, b) => {
+    const periodComparison = a.period_month.localeCompare(b.period_month);
+    return periodComparison !== 0 ? periodComparison : a.territory_id.localeCompare(b.territory_id);
+  });
 }
 
 function prepareName(value: string): PreparedName {
@@ -325,7 +360,6 @@ export function normalizeKpiLocalYtdRaw(params: {
   if (!tftReporteRows) throw new Error('No se encontro la pestana "TFT REPORTE".');
 
   const ytdCodes = buildYtdCodes(params.periodMonth, catCalenRows, baseVisitasRows);
-
   const garantiaSet = new Set<string>();
   for (const row of catGarantiaRows) {
     const territorio = String(getValueByKeys(row, ["TERRITORIO", "STATUS.TERRITORIO"]) ?? "")
@@ -335,6 +369,7 @@ export function normalizeKpiLocalYtdRaw(params: {
     if (!territorio || !fechaCode) continue;
     garantiaSet.add(`${territorio}|${fechaCode}`);
   }
+  const exclusionRows = extractRankingMetricExclusions(catGarantiaRows, params.periodMonth);
 
   const statusByTerritory = new Map<string, SalesForceStatusRow>();
   const normalizedStatus = params.salesForceRows
@@ -540,6 +575,7 @@ export function normalizeKpiLocalYtdRaw(params: {
   return {
     rows: outputRows,
     cpdRows,
+    exclusionRows,
     summary: {
       processedRows: baseVisitasRows.length,
       ytdRows,
@@ -551,6 +587,7 @@ export function normalizeKpiLocalYtdRaw(params: {
       territoryFallbackRows,
       unmatchedRows,
       garantiaRows,
+      exclusionRows: exclusionRows.length,
     },
   };
 }

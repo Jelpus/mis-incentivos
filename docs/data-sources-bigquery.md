@@ -66,6 +66,13 @@ Ejemplo para una carga del periodo `2026-06`:
 
 La ventana puede cruzar de anio. Si el archivo trae headers absolutos (`2026-04`, `abr-2026`, etc.), se conserva la fecha indicada por el header. Tanto los headers absolutos como `month01` ... `month12` se normalizan y guardan en `meses` con claves `YYYY-MM`.
 
+### Alias de archivos IQVIA Gobierno
+
+Los archivos cuya clave o nombre logico contiene `IQVIA` usan el normalizador IQVIA.
+La familia `GOV_360` es un alias de esa misma fuente; por ejemplo,
+`GOV_360 ASMA BX` se procesa con las columnas `clue_id`, `molecula_h`, `metric`,
+`fuente_db` y `ytd`, igual que los archivos `GOVIQVIA_*`.
+
 ### Migracion de cargas anteriores
 
 Este cambio de convencion no reescribe automaticamente las filas que ya existen en

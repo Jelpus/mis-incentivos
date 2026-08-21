@@ -5,6 +5,13 @@ import type {
   RankingContest,
   RankingContestComponent,
 } from "@/lib/ranking-contests/types";
+import {
+  formatRankingMetricEvaluationPeriods,
+  getExcludedRankingMetricPeriods,
+  getRankingMetricExclusionFootnote,
+  isRankingMetricPeriodExcluded,
+  type RankingMetricExclusionSnapshot,
+} from "@/lib/ranking-contests/exclusions";
 
 type MetricKey = "cpa_t1" | "documentacion_48h" | "icva" | "cpd";
 
@@ -15,6 +22,7 @@ type TeamMember = {
 };
 
 type KpiAggRow = {
+  period_month: string | null;
   empleado: number | null;
   territorio_individual: string | null;
   tier: string | null;
@@ -23,6 +31,7 @@ type KpiAggRow = {
 };
 
 type IcvaAggRow = {
+  period_month: string | null;
   empleado: number | null;
   territorio_individual: string | null;
   total_calls: number | string | null;
@@ -32,6 +41,7 @@ type IcvaAggRow = {
 };
 
 type CpdRawRow = {
+  period_month: string | null;
   empleado: number | null;
   territorio_individual: string | null;
   visitas: number | string | null;
@@ -208,6 +218,7 @@ async function evaluateCpdMetric(params: {
   component: RankingContestComponent;
   participant: ContestParticipant;
   maxCoveragePeriodMonth: string;
+  exclusionSnapshot: RankingMetricExclusionSnapshot;
 }): Promise<ContestComponentEvaluation> {
   const periods = buildPeriodRange({
     periodStart: params.component.periodStart,
@@ -237,6 +248,16 @@ async function evaluateCpdMetric(params: {
     };
   }
 
+  if (params.exclusionSnapshot.error) {
+    return {
+      ...baseEvaluation(params.component),
+      value: null,
+      passed: false,
+      status: "pending",
+      reason: params.exclusionSnapshot.error,
+    };
+  }
+
   const members = await getParticipantMembers({
     supabase: params.supabase,
     participant: params.participant,
@@ -253,6 +274,17 @@ async function evaluateCpdMetric(params: {
     };
   }
 
+  const excludedPeriods = getExcludedRankingMetricPeriods({
+    snapshot: params.exclusionSnapshot,
+    territoryIds: members.map((member) => member.territorio_individual),
+    evaluationPeriods: periods,
+  });
+  const periodText = formatRankingMetricEvaluationPeriods(periods, excludedPeriods);
+  const exclusionFootnote = getRankingMetricExclusionFootnote({
+    versionNo: params.exclusionSnapshot.versionNo,
+    excludedPeriods,
+  });
+
   const employeeIds = Array.from(new Set(members.map((member) => toNumber(member.empleado)).filter((value): value is number => Boolean(value && value > 0))));
   const territories = Array.from(new Set(members.map((member) => String(member.territorio_individual ?? "").trim()).filter(Boolean)));
   const memberKeys = new Set(members.map(makeMemberKey));
@@ -268,7 +300,7 @@ async function evaluateCpdMetric(params: {
 
   let query = params.supabase
     .from("ranking_cpd_raw")
-    .select("empleado, territorio_individual, visitas, dias_efectivos")
+    .select("period_month, empleado, territorio_individual, visitas, dias_efectivos")
     .in("period_month", periods);
 
   if (employeeIds.length > 0) {
@@ -289,6 +321,11 @@ async function evaluateCpdMetric(params: {
   }
 
   for (const row of (result.data ?? []) as CpdRawRow[]) {
+    if (isRankingMetricPeriodExcluded({
+      snapshot: params.exclusionSnapshot,
+      territoryId: row.territorio_individual,
+      periodMonth: row.period_month,
+    })) continue;
     const key = makeMemberKey({ empleado: row.empleado, territorio_individual: row.territorio_individual });
     if (!memberKeys.has(key)) continue;
     const current = totalsByMember.get(key) ?? { visitas: 0, diasEfectivos: 0 };
@@ -321,8 +358,8 @@ async function evaluateCpdMetric(params: {
       passed: false,
       status: missingObjectiveTeamIds.size > 0 ? "pending" : "passed",
       reason: missingObjectiveTeamIds.size > 0
-        ? `No hay objetivo CPD activo para team_id ${Array.from(missingObjectiveTeamIds).join(", ")}.`
-        : "No hubo dias efectivos validos para calcular CPD.",
+        ? `No hay objetivo CPD activo para team_id ${Array.from(missingObjectiveTeamIds).join(", ")}. Periodos evaluados ${periodText}.${exclusionFootnote}`
+        : `No hubo dias efectivos validos para calcular CPD. Periodos evaluados ${periodText}.${exclusionFootnote}`,
     };
   }
 
@@ -330,7 +367,6 @@ async function evaluateCpdMetric(params: {
   const averageCoverage = cpdCoverageValues.reduce((sum, value) => sum + value, 0) / cpdCoverageValues.length;
   const averageCpd = cpdMeasurements.reduce((sum, item) => sum + item.cpd, 0) / cpdMeasurements.length;
   const averageObjective = cpdMeasurements.reduce((sum, item) => sum + item.objective, 0) / cpdMeasurements.length;
-  const periodText = periods.join(", ");
   const missingObjectiveText = missingObjectiveTeamIds.size > 0
     ? ` ${missingObjectiveTeamIds.size} team_id sin objetivo CPD fueron omitidos.`
     : "";
@@ -342,7 +378,7 @@ async function evaluateCpdMetric(params: {
     displayValue: Math.round(averageCpd * 100) / 100,
     passed: averageCoverage >= threshold,
     status: averageCoverage >= threshold ? "passed" : "failed",
-    reason: `${params.participant.scope === "manager" ? "Promedio de equipo CPD" : "Cobertura CPD"}: ${cpdCoverageValues.length} participante(s) con datos, periodos ${periodText}.${missingObjectiveText}`,
+    reason: `${params.participant.scope === "manager" ? "Promedio de equipo CPD" : "Cobertura CPD"}: ${cpdCoverageValues.length} participante(s) con datos, periodos evaluados ${periodText}.${exclusionFootnote}${missingObjectiveText}`,
   };
 }
 
@@ -352,6 +388,7 @@ async function evaluateCoverageMetric(params: {
   participant: ContestParticipant;
   maxCoveragePeriodMonth: string;
   metric: MetricKey;
+  exclusionSnapshot: RankingMetricExclusionSnapshot;
 }): Promise<ContestComponentEvaluation> {
   const periods = buildPeriodRange({
     periodStart: params.component.periodStart,
@@ -382,6 +419,16 @@ async function evaluateCoverageMetric(params: {
     };
   }
 
+  if (params.exclusionSnapshot.error) {
+    return {
+      ...baseEvaluation(params.component),
+      value: null,
+      passed: false,
+      status: "pending",
+      reason: params.exclusionSnapshot.error,
+    };
+  }
+
   const members = await getParticipantMembers({
     supabase: params.supabase,
     participant: params.participant,
@@ -398,6 +445,20 @@ async function evaluateCoverageMetric(params: {
     };
   }
 
+  const excludedPeriods = getExcludedRankingMetricPeriods({
+    snapshot: params.exclusionSnapshot,
+    territoryIds: members.map((member) => member.territorio_individual),
+    evaluationPeriods,
+  });
+  const evaluationPeriodText = formatRankingMetricEvaluationPeriods(
+    evaluationPeriods,
+    excludedPeriods,
+  );
+  const exclusionFootnote = getRankingMetricExclusionFootnote({
+    versionNo: params.exclusionSnapshot.versionNo,
+    excludedPeriods,
+  });
+
   const employeeIds = Array.from(new Set(members.map((member) => toNumber(member.empleado)).filter((value): value is number => Boolean(value && value > 0))));
   const territories = Array.from(new Set(members.map((member) => String(member.territorio_individual ?? "").trim()).filter(Boolean)));
   const memberKeys = new Set(members.map(makeMemberKey));
@@ -410,7 +471,7 @@ async function evaluateCoverageMetric(params: {
   if (params.metric === "cpa_t1") {
     let query = params.supabase
       .from("ranking_kpi_local_ytd_agg")
-      .select("empleado, territorio_individual, tier, total_visitas_top, total_objetivos")
+      .select("period_month, empleado, territorio_individual, tier, total_visitas_top, total_objetivos")
       .in("period_month", evaluationPeriods);
 
     if (employeeIds.length > 0) {
@@ -432,6 +493,11 @@ async function evaluateCoverageMetric(params: {
 
     for (const row of (result.data ?? []) as KpiAggRow[]) {
       if (normalizeKey(row.tier) !== "T1") continue;
+      if (isRankingMetricPeriodExcluded({
+        snapshot: params.exclusionSnapshot,
+        territoryId: row.territorio_individual,
+        periodMonth: row.period_month,
+      })) continue;
       const key = makeMemberKey({ empleado: row.empleado, territorio_individual: row.territorio_individual });
       if (!memberKeys.has(key)) continue;
       const current = coverageByMember.get(key) ?? { numerator: 0, denominator: 0 };
@@ -442,7 +508,7 @@ async function evaluateCoverageMetric(params: {
   } else {
     let query = params.supabase
       .from("ranking_icva_48hrs_agg")
-      .select("empleado, territorio_individual, total_calls, icva_calls, on_time_call, on_time_icva")
+      .select("period_month, empleado, territorio_individual, total_calls, icva_calls, on_time_call, on_time_icva")
       .in("period_month", evaluationPeriods);
 
     if (employeeIds.length > 0) {
@@ -463,12 +529,17 @@ async function evaluateCoverageMetric(params: {
     }
 
     for (const row of (result.data ?? []) as IcvaAggRow[]) {
+      if (isRankingMetricPeriodExcluded({
+        snapshot: params.exclusionSnapshot,
+        territoryId: row.territorio_individual,
+        periodMonth: row.period_month,
+      })) continue;
       const key = makeMemberKey({ empleado: row.empleado, territorio_individual: row.territorio_individual });
       if (!memberKeys.has(key)) continue;
       const current = coverageByMember.get(key) ?? { numerator: 0, denominator: 0 };
       if (params.metric === "icva") {
-        current.numerator += toPositiveNumber(row.icva_calls);
-        current.denominator += toPositiveNumber(row.total_calls);
+        current.numerator += toPositiveNumber(row.on_time_icva);
+        current.denominator += toPositiveNumber(row.icva_calls);
       } else {
         current.numerator += toPositiveNumber(row.on_time_call);
         current.denominator += toPositiveNumber(row.total_calls);
@@ -487,7 +558,7 @@ async function evaluateCoverageMetric(params: {
       value: null,
       passed: true,
       status: "passed",
-      reason: "No hubo denominadores validos para calcular cobertura.",
+      reason: `No hubo denominadores validos para calcular cobertura. Periodos evaluados ${evaluationPeriodText}.${exclusionFootnote}`,
     };
   }
 
@@ -499,7 +570,7 @@ async function evaluateCoverageMetric(params: {
     value: Math.round(valuePercent * 100) / 100,
     passed: averageCoverage >= threshold,
     status: averageCoverage >= threshold ? "passed" : "failed",
-    reason: `${params.participant.scope === "manager" ? "Promedio de equipo" : "Cobertura individual"}: ${coverages.length} participante(s) con datos, rango configurado ${formatConfiguredPeriodRange(params.component, params.maxCoveragePeriodMonth)}, corte ${params.maxCoveragePeriodMonth}, periodos evaluados ${evaluationPeriods.join(", ")}, threshold ${Math.round(threshold * 10000) / 100}%.`,
+    reason: `${params.participant.scope === "manager" ? "Promedio de equipo" : "Cobertura individual"}: ${coverages.length} participante(s) con datos, rango configurado ${formatConfiguredPeriodRange(params.component, params.maxCoveragePeriodMonth)}, corte ${params.maxCoveragePeriodMonth}, periodos evaluados ${evaluationPeriodText}, threshold ${Math.round(threshold * 10000) / 100}%.${exclusionFootnote}`,
   };
 }
 
@@ -509,6 +580,7 @@ export async function evaluateContestComponent(params: {
   participant: ContestParticipant;
   contest: RankingContest;
   maxCoveragePeriodMonth: string;
+  exclusionSnapshot: RankingMetricExclusionSnapshot;
 }): Promise<ContestComponentEvaluation> {
   const metric = resolveMetricFromComponentName(params.component.componentName);
   if (metric === "cpd") {
@@ -517,6 +589,7 @@ export async function evaluateContestComponent(params: {
       component: params.component,
       participant: params.participant,
       maxCoveragePeriodMonth: params.maxCoveragePeriodMonth,
+      exclusionSnapshot: params.exclusionSnapshot,
     });
   }
 
@@ -527,6 +600,7 @@ export async function evaluateContestComponent(params: {
       participant: params.participant,
       maxCoveragePeriodMonth: params.maxCoveragePeriodMonth,
       metric,
+      exclusionSnapshot: params.exclusionSnapshot,
     });
   }
 

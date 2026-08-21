@@ -679,7 +679,7 @@ function buildPerformanceRows(
       const cpdYtd = safeCoverage(group.cpdVisits, group.cpdEffectiveDays);
       const cpdObjective = group.teamId ? (cpdObjectiveByTeamId.get(group.teamId) ?? 0) : 0;
       const cpdCoverage = safeCoverage(cpdYtd, cpdObjective);
-      const visualCoverage = safeCoverage(group.icvaCalls, group.totalCalls);
+      const visualCoverage = safeCoverage(group.onTimeIcva, group.icvaCalls);
       const docCoverage = safeCoverage(group.onTimeCall, group.totalCalls);
       const metCount =
         (callPlanCoverage >= 0.9 ? 1 : 0) +
@@ -704,8 +704,8 @@ function buildPerformanceRows(
           threshold: 1,
         },
         ayudasVisuales: {
-          numerator: group.icvaCalls,
-          denominator: group.totalCalls,
+          numerator: group.onTimeIcva,
+          denominator: group.icvaCalls,
           coverage: visualCoverage,
           threshold: 0.65,
         },

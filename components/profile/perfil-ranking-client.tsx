@@ -36,7 +36,9 @@ function formatInteger(value: number) {
 function metricFractionLabel(metric: MetricKey) {
   if (metric === "callPlanAdherence") return { numerator: "Visitas realizadas", denominator: "Visitas objetivo" };
   if (metric === "coberturaCpd") return { numerator: "CPD", denominator: "Objetivo CPD" };
-  if (metric === "ayudasVisuales") return { numerator: "Visitas con ayuda visual", denominator: "Total de visitas" };
+  if (metric === "ayudasVisuales") {
+    return { numerator: "iCVA realizadas (on_time_icva)", denominator: "Llamadas iCVA (icva_calls)" };
+  }
   return { numerator: "Documentadas en 48 hrs", denominator: "Total de visitas" };
 }
 
