@@ -327,10 +327,6 @@ function buildDiasCicloByPeriod(rows: DiasCicloRow[]) {
   return byPeriod;
 }
 
-function shouldCountVisitForCpd(tierOk: string | null): boolean {
-  return String(tierOk ?? "").trim().toUpperCase() !== "NC";
-}
-
 export function normalizeKpiLocalYtdRaw(params: {
   fileBuffer: Buffer;
   periodMonth: string;
@@ -542,9 +538,8 @@ export function normalizeKpiLocalYtdRaw(params: {
       nombre,
       visitas: 0,
     };
-    if (shouldCountVisitForCpd(row.tier_ok)) {
-      current.visitas += row.visitas_tot;
-    }
+    // CPD incluye todas las visitas, sin importar el Tier (incluido TIER_OK = NC).
+    current.visitas += row.visitas_tot;
     cpdGroups.set(key, current);
   }
 

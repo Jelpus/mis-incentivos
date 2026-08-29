@@ -1,5 +1,12 @@
 [
   {
+    "sourceKey": "2026-08-27-ranking-cpd-include-nc",
+    "date": "2026-08-27",
+    "route": "/perfil/ranking",
+    "currentState": "La normalizacion de CPD excluia del numerador las visitas con TIER_OK = NC.",
+    "modifiedState": "CPD suma VISITAS_TOT de todos los Tier, incluido NC, y divide el total acumulado entre dias efectivos; los periodos excluidos por garantia conservan el tratamiento vigente."
+  },
+  {
     "sourceKey": "2026-08-21-ranking-qualifier-guarantee-exclusions",
     "date": "2026-08-21",
     "route": "/perfil/ranking",

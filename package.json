@@ -7,6 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:cpd": "node --experimental-strip-types tests/source-ranking-cpd.test.mjs",
+    "ranking:cpd:reprocess:dry-run": "node --env-file=.env.local --experimental-strip-types scripts/reprocess-ranking-cpd.mjs",
+    "ranking:cpd:reprocess:apply": "node --env-file=.env.local --experimental-strip-types scripts/reprocess-ranking-cpd.mjs --apply",
     "changelog:add": "node scripts/platform-change-log.mjs add",
     "changelog:sync": "node scripts/platform-change-log.mjs sync",
     "changelog:sync:dry-run": "node scripts/platform-change-log.mjs sync --dry-run",
@@ -18,6 +21,7 @@
   "dependencies": {
     "@google-cloud/bigquery": "^8.1.1",
     "@supabase/ssr": "^0.9.0",
+    "@supabase/supabase-js": "2.98.0",
     "clsx": "^2.1.1",
     "next": "16.1.6",
     "react": "19.2.3",
