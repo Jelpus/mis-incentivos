@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllSupabaseRows } from "@/lib/supabase/paginated-query";
 import { mapRawRowToTargetFields } from "./mappers";
 import {
   MANAGER_FIELD_CLEANERS,
@@ -19,6 +20,12 @@ type PreviewManagerBatchResult = {
   insertRows: number;
   updateRows: number;
   noopRows: number;
+};
+
+type ImportRowSource = {
+  id: string;
+  row_number: number;
+  raw_data: Record<string, unknown> | null;
 };
 
 function cleanMappedData(mappedData: Record<string, unknown>) {
@@ -75,15 +82,19 @@ export async function previewManagerImportBatch(
 
   const mappingSnapshot = (batch.mapping_snapshot ?? {}) as Record<string, string | null>;
 
-  const { data: rows, error: rowsError } = await supabase
-    .from("import_rows")
-    .select("id, row_number, raw_data")
-    .eq("batch_id", batchId)
-    .order("row_number", { ascending: true });
-
-  if (rowsError) {
-    throw new Error(rowsError.message);
-  }
+  const rows = await fetchAllSupabaseRows<ImportRowSource>({
+    context: `No se pudieron leer las filas del lote ${batchId}`,
+    pageQuery: async (from, to) => {
+      const result = await supabase
+        .from("import_rows")
+        .select("id, row_number, raw_data")
+        .eq("batch_id", batchId)
+        .order("row_number", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to);
+      return { data: (result.data ?? []) as ImportRowSource[], error: result.error };
+    },
+  });
 
   let totalRows = 0;
   let validRows = 0;
@@ -106,7 +117,7 @@ export async function previewManagerImportBatch(
     action_details: Record<string, unknown>;
   }> = [];
 
-  for (const row of rows ?? []) {
+  for (const row of rows) {
     totalRows += 1;
 
     const rawData = (row.raw_data ?? {}) as Record<string, unknown>;

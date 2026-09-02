@@ -1,6 +1,7 @@
 // lib/import-engine/preview-sales-force.ts
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllSupabaseRows } from "@/lib/supabase/paginated-query";
 import { mapRawRowToTargetFields } from "./mappers";
 import {
   SALES_FORCE_FIELD_CLEANERS,
@@ -30,6 +31,12 @@ type ExistingSalesForceRecord = {
   fecha_ingreso: string | null;
   team_id: string | null;
   base_incentivos: number | null;
+};
+
+type ImportRowSource = {
+  id: string;
+  row_number: number;
+  raw_data: Record<string, unknown> | null;
 };
 
 type PreviewSalesForceBatchResult = {
@@ -212,42 +219,51 @@ export async function previewSalesForceImportBatch(
   ) as Record<string, string | null>;
   const hasPuestoMapping = Object.values(mappingSnapshot).includes("puesto");
 
-  const { data: rows, error: rowsError } = await supabase
-    .from("import_rows")
-    .select("id, row_number, raw_data")
-    .eq("batch_id", batchId)
-    .order("row_number", { ascending: true });
-
-  if (rowsError) {
-    throw new Error(rowsError.message);
-  }
-
-  const { data: existingRecords, error: existingRecordsError } = await supabase
-    .from("sales_force_status")
-    .select(`
-      id,
-      linea_principal,
-      parrilla,
-      nombre_completo,
-      no_empleado,
-      territorio_padre,
-      territorio_individual,
-      puesto,
-      correo_electronico,
-      ciudad,
-      fecha_ingreso,
-      team_id,
-      base_incentivos
-    `)
-    .eq("period_month", periodMonth)
-    .eq("is_deleted", false);
-
-  if (existingRecordsError) {
-    throw new Error(existingRecordsError.message);
-  }
+  const [rows, existingRecords] = await Promise.all([
+    fetchAllSupabaseRows<ImportRowSource>({
+      context: `No se pudieron leer las filas del lote ${batchId}`,
+      pageQuery: async (from, to) => {
+        const result = await supabase
+          .from("import_rows")
+          .select("id, row_number, raw_data")
+          .eq("batch_id", batchId)
+          .order("row_number", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to);
+        return { data: (result.data ?? []) as ImportRowSource[], error: result.error };
+      },
+    }),
+    fetchAllSupabaseRows<ExistingSalesForceRecord>({
+      context: `No se pudo leer la fuerza de ventas de ${periodMonth}`,
+      pageQuery: async (from, to) => {
+        const result = await supabase
+          .from("sales_force_status")
+          .select(`
+            id,
+            linea_principal,
+            parrilla,
+            nombre_completo,
+            no_empleado,
+            territorio_padre,
+            territorio_individual,
+            puesto,
+            correo_electronico,
+            ciudad,
+            fecha_ingreso,
+            team_id,
+            base_incentivos
+          `)
+          .eq("period_month", periodMonth)
+          .eq("is_deleted", false)
+          .order("id", { ascending: true })
+          .range(from, to);
+        return { data: (result.data ?? []) as ExistingSalesForceRecord[], error: result.error };
+      },
+    }),
+  ]);
 
   const indexes = buildExistingRecordIndexes(
-    (existingRecords ?? []) as ExistingSalesForceRecord[],
+    existingRecords,
   );
 
   let totalRows = 0;
@@ -270,7 +286,7 @@ export async function previewSalesForceImportBatch(
     action_details: Record<string, unknown>;
   }> = [];
 
-  for (const row of rows ?? []) {
+  for (const row of rows) {
     totalRows += 1;
 
     const rawData = (row.raw_data ?? {}) as Record<string, unknown>;

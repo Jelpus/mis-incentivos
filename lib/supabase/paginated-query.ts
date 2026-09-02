@@ -22,24 +22,31 @@ function buildPaginatedQueryError(context: string, error: SupabaseErrorLike, fal
 }
 
 export async function fetchAllSupabaseRows<T>(params: {
-  countQuery: () => PromiseLike<SupabaseCountResult>;
+  countQuery?: () => PromiseLike<SupabaseCountResult>;
   pageQuery: (from: number, to: number) => PromiseLike<SupabaseRowsResult<T>>;
   pageSize?: number;
   context: string;
 }): Promise<T[]> {
   const pageSize = params.pageSize ?? DEFAULT_PAGE_SIZE;
-  const countResult = await params.countQuery();
-
-  if (countResult.error) {
-    throw buildPaginatedQueryError(params.context, countResult.error, "error al contar filas");
+  if (!Number.isInteger(pageSize) || pageSize <= 0 || pageSize > DEFAULT_PAGE_SIZE) {
+    throw new Error(`${params.context}: pageSize debe ser un entero entre 1 y ${DEFAULT_PAGE_SIZE}`);
   }
 
-  const totalRows = countResult.count ?? 0;
-  if (totalRows <= 0) return [];
+  let totalRows: number | null = null;
+  if (params.countQuery) {
+    const countResult = await params.countQuery();
+
+    if (countResult.error) {
+      throw buildPaginatedQueryError(params.context, countResult.error, "error al contar filas");
+    }
+
+    totalRows = countResult.count ?? 0;
+    if (totalRows <= 0) return [];
+  }
 
   const rows: T[] = [];
-  for (let from = 0; from < totalRows; from += pageSize) {
-    const to = Math.min(from + pageSize - 1, totalRows - 1);
+  for (let from = 0; totalRows === null || from < totalRows; from += pageSize) {
+    const to = totalRows === null ? from + pageSize - 1 : Math.min(from + pageSize - 1, totalRows - 1);
     const pageResult = await params.pageQuery(from, to);
 
     if (pageResult.error) {
@@ -48,7 +55,7 @@ export async function fetchAllSupabaseRows<T>(params: {
 
     const batch = pageResult.data ?? [];
     rows.push(...batch);
-    if (batch.length === 0) break;
+    if (batch.length < to - from + 1) break;
   }
 
   return rows;

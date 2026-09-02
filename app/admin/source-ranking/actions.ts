@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllSupabaseRows } from "@/lib/supabase/paginated-query";
 import {
   getCurrentPeriodMonth,
   getMissingRelationName,
@@ -790,23 +791,30 @@ export async function uploadSourceRankingFileAction(
           processedRows: kpiNormalization.summary.processedRows,
         });
       } else {
-        const kpiReferenceResult = await supabase
-          .from("ranking_kpi_local_ytd_raw")
-          .select("territory_source, status_nombre_source, matched_empleado, matched_nombre")
-          .eq("period_month", periodMonth);
-
         let kpiReferenceRows: IcvaKpiReferenceRow[] = [];
-        if (kpiReferenceResult.error) {
-          if (isMissingRelationError(kpiReferenceResult.error)) {
+        try {
+          kpiReferenceRows = await fetchAllSupabaseRows<IcvaKpiReferenceRow>({
+            context: `No se pudo cargar KPI Local YTD de ${periodMonth} como referencia para ICVA`,
+            pageQuery: async (from, to) => {
+              const result = await supabase
+                .from("ranking_kpi_local_ytd_raw")
+                .select("territory_source, status_nombre_source, matched_empleado, matched_nombre")
+                .eq("period_month", periodMonth)
+                .order("id", { ascending: true })
+                .range(from, to);
+              return { data: (result.data ?? []) as IcvaKpiReferenceRow[], error: result.error };
+            },
+          });
+        } catch (error) {
+          const queryError = error as { code?: string; message?: string };
+          if (isMissingRelationError(queryError)) {
             kpiReferenceRows = [];
           } else {
             return {
               ok: false,
-              message: `No se pudo cargar KPI Local YTD como referencia para ICVA: ${kpiReferenceResult.error.message}`,
+              message: queryError.message ?? "No se pudo cargar KPI Local YTD como referencia para ICVA.",
             };
           }
-        } else {
-          kpiReferenceRows = (kpiReferenceResult.data ?? []) as IcvaKpiReferenceRow[];
         }
 
         icvaNormalization = normalizeIcva48hrsRaw({

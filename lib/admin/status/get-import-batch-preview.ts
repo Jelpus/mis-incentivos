@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllSupabaseRows } from "@/lib/supabase/paginated-query";
 
 export type ImportPreviewRow = {
   id: string;
@@ -48,26 +49,30 @@ export async function getImportBatchPreview(batchId: string): Promise<ImportBatc
     throw new Error(batchError?.message ?? "Batch no encontrado");
   }
 
-  const { data: rows, error: rowsError } = await supabase
-    .from("import_rows")
-    .select(`
-      id,
-      row_number,
-      raw_data,
-      mapped_data,
-      cleaned_data,
-      validation_errors,
-      warnings,
-      action_type,
-      target_record_id,
-      action_details
-    `)
-    .eq("batch_id", batchId)
-    .order("row_number", { ascending: true });
-
-  if (rowsError) {
-    throw new Error(rowsError.message);
-  }
+  const rows = await fetchAllSupabaseRows<ImportPreviewRow>({
+    context: `No se pudieron leer las filas del lote ${batchId}`,
+    pageQuery: async (from, to) => {
+      const result = await supabase
+        .from("import_rows")
+        .select(`
+          id,
+          row_number,
+          raw_data,
+          mapped_data,
+          cleaned_data,
+          validation_errors,
+          warnings,
+          action_type,
+          target_record_id,
+          action_details
+        `)
+        .eq("batch_id", batchId)
+        .order("row_number", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to);
+      return { data: (result.data ?? []) as ImportPreviewRow[], error: result.error };
+    },
+  });
 
   const summary = {
     total_rows: Number((batch.preview_summary as Record<string, unknown> | null)?.total_rows ?? 0),
@@ -80,6 +85,6 @@ export async function getImportBatchPreview(batchId: string): Promise<ImportBatc
 
   return {
     summary,
-    rows: (rows ?? []) as ImportPreviewRow[],
+    rows,
   };
 }

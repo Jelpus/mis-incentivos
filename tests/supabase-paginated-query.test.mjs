@@ -39,3 +39,43 @@ test("conserva el codigo de Supabase al fallar una pagina", async () => {
     },
   );
 });
+
+test("pagina hasta recibir una pagina incompleta cuando no se solicita conteo", async () => {
+  const sourceRows = Array.from({ length: 2_000 }, (_, index) => ({ id: index + 1 }));
+  const requestedRanges = [];
+
+  const rows = await fetchAllSupabaseRows({
+    context: "coleccion sin conteo",
+    pageQuery: async (from, to) => {
+      requestedRanges.push([from, to]);
+      return { data: sourceRows.slice(from, to + 1), error: null };
+    },
+  });
+
+  assert.equal(rows.length, 2_000);
+  assert.deepEqual(requestedRanges, [
+    [0, 999],
+    [1_000, 1_999],
+    [2_000, 2_999],
+  ]);
+});
+
+test("rechaza tamanos de pagina invalidos", async () => {
+  await assert.rejects(
+    fetchAllSupabaseRows({
+      context: "coleccion invalida",
+      pageSize: 0,
+      pageQuery: async () => ({ data: [], error: null }),
+    }),
+    /pageSize debe ser un entero entre 1 y 1000/,
+  );
+
+  await assert.rejects(
+    fetchAllSupabaseRows({
+      context: "coleccion invalida",
+      pageSize: 1_001,
+      pageQuery: async () => ({ data: [], error: null }),
+    }),
+    /pageSize debe ser un entero entre 1 y 1000/,
+  );
+});

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { fetchAllSupabaseRows } from "@/lib/supabase/paginated-query";
 import { normalizeEmail } from "@/lib/auth/email-domain";
 
 export type ManagerPublishRow = {
@@ -176,33 +177,42 @@ function dedupeSales(rows: SalesForcePublishRow[]) {
 }
 
 async function loadRecipients(supabase: SupabaseClient, periodMonth: string) {
-  const [managerResult, salesResult] = await Promise.all([
-    supabase
-      .from("manager_status")
-      .select(
-        "period_month, correo_manager, nombre_manager, team_id, territorio_manager, no_empleado_manager, is_active",
-      )
-      .eq("period_month", periodMonth)
-      .eq("is_deleted", false),
-    supabase
-      .from("sales_force_status")
-      .select(
-        "period_month, correo_electronico, nombre_completo, team_id, territorio_individual, no_empleado, is_active",
-      )
-      .eq("period_month", periodMonth)
-      .eq("is_deleted", false),
+  const [managers, sales] = await Promise.all([
+    fetchAllSupabaseRows<ManagerPublishRow>({
+      context: `No se pudo cargar manager_status de ${periodMonth}`,
+      pageQuery: async (from, to) => {
+        const result = await supabase
+          .from("manager_status")
+          .select(
+            "period_month, correo_manager, nombre_manager, team_id, territorio_manager, no_empleado_manager, is_active",
+          )
+          .eq("period_month", periodMonth)
+          .eq("is_deleted", false)
+          .order("id", { ascending: true })
+          .range(from, to);
+        return { data: (result.data ?? []) as ManagerPublishRow[], error: result.error };
+      },
+    }),
+    fetchAllSupabaseRows<SalesForcePublishRow>({
+      context: `No se pudo cargar sales_force_status de ${periodMonth}`,
+      pageQuery: async (from, to) => {
+        const result = await supabase
+          .from("sales_force_status")
+          .select(
+            "period_month, correo_electronico, nombre_completo, team_id, territorio_individual, no_empleado, is_active",
+          )
+          .eq("period_month", periodMonth)
+          .eq("is_deleted", false)
+          .order("id", { ascending: true })
+          .range(from, to);
+        return { data: (result.data ?? []) as SalesForcePublishRow[], error: result.error };
+      },
+    }),
   ]);
 
-  if (managerResult.error) {
-    throw new Error(`No se pudo cargar manager_status: ${managerResult.error.message}`);
-  }
-  if (salesResult.error) {
-    throw new Error(`No se pudo cargar sales_force_status: ${salesResult.error.message}`);
-  }
-
   return {
-    managers: dedupeManagers((managerResult.data ?? []) as ManagerPublishRow[]),
-    sales: dedupeSales((salesResult.data ?? []) as SalesForcePublishRow[]),
+    managers: dedupeManagers(managers),
+    sales: dedupeSales(sales),
   };
 }
 

@@ -208,5 +208,12 @@
     "route": "/admin/calculo",
     "currentState": "El diagnostico y el calculo solo recibian las primeras 1000 filas de objetivos, generando faltantes falsos cuando una version superaba ese limite.",
     "modifiedState": "Los objetivos se leen completos mediante paginacion estable por id; se conservan representantes y vacantes, y las alertas quedan limitadas a cuotas realmente ausentes o no positivas."
+  },
+  {
+    "sourceKey": "2026-09-02-platform-supabase-pagination-policy",
+    "date": "2026-09-02",
+    "route": "/",
+    "currentState": "Varias lecturas de colecciones podian depender implicitamente del limite de 1000 filas de Supabase y recibir datos incompletos al crecer una tabla o un periodo.",
+    "modifiedState": "Se establece paginacion como regla general con orden estable y un helper compartido; se migran las lecturas de alto volumen de KPI, importaciones y destinatarios, y se documentan las unicas excepciones acotadas."
   }
 ]
