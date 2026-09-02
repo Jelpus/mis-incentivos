@@ -201,5 +201,12 @@
     "route": "/admin/incentive-rules",
     "currentState": "La previsualizacion de archivos fuente no advertia cuando Producto y Product name identificaban productos diferentes.",
     "modifiedState": "La previsualizacion detecta y muestra discrepancias con fila, ruta y valores de ejemplo; la alerta no bloquea la carga y permite confirmar la operacion de forma explicita."
+  },
+  {
+    "sourceKey": "2026-09-02-admin-calculo-objective-pagination",
+    "date": "2026-09-02",
+    "route": "/admin/calculo",
+    "currentState": "El diagnostico y el calculo solo recibian las primeras 1000 filas de objetivos, generando faltantes falsos cuando una version superaba ese limite.",
+    "modifiedState": "Los objetivos se leen completos mediante paginacion estable por id; se conservan representantes y vacantes, y las alertas quedan limitadas a cuotas realmente ausentes o no positivas."
   }
 ]

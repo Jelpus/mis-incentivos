@@ -4,6 +4,7 @@ import {
   isMissingRelationError,
   normalizePeriodMonthInput,
 } from "@/lib/admin/incentive-rules/shared";
+import { fetchAllSupabaseRows } from "@/lib/supabase/paginated-query";
 
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 220;
@@ -405,23 +406,32 @@ export async function getCalculoProcessData(periodMonthInput: string): Promise<C
     const targetVersionId = String(latestTargetVersionResult.data?.id ?? "").trim();
     latestTargetVersionNo = Number(latestTargetVersionResult.data?.version_no ?? 0) || null;
     if (targetVersionId) {
-      const targetRowsResult = await queryWithRetry(() =>
-        supabase
-          .from("team_objective_targets")
-          .select("territorio_individual, product_name, target, brick, cuenta")
-          .eq("version_id", targetVersionId),
-      );
+      try {
+        const targetRows = await fetchAllSupabaseRows<TargetRow>({
+          context: "No se pudieron leer objetivos para process",
+          countQuery: async () => {
+            const result = await queryWithRetry(() =>
+              supabase
+                .from("team_objective_targets")
+                .select("id", { count: "exact", head: true })
+                .eq("version_id", targetVersionId),
+            );
+            return { count: result.count, error: result.error };
+          },
+          pageQuery: async (from, to) => {
+            const result = await queryWithRetry(() =>
+              supabase
+                .from("team_objective_targets")
+                .select("territorio_individual, product_name, target, brick, cuenta")
+                .eq("version_id", targetVersionId)
+                .order("id", { ascending: true })
+                .range(from, to),
+            );
+            return { data: (result.data ?? []) as TargetRow[], error: result.error };
+          },
+        });
 
-      if (targetRowsResult.error) {
-        if (isMissingRelationError(targetRowsResult.error)) {
-          storageReady = false;
-          const tableName = getMissingRelationName(targetRowsResult.error) ?? "team_objective_targets";
-          storageMessages.push(`No existe ${tableName}.`);
-        } else {
-          throw new Error(`No se pudieron leer objetivos para process: ${targetRowsResult.error.message}`);
-        }
-      } else {
-        for (const row of (targetRowsResult.data ?? []) as TargetRow[]) {
+        for (const row of targetRows) {
           const routeKey = normalizeKey(row.territorio_individual);
           const productKey = normalizeKey(row.product_name);
           if (!routeKey || !productKey) continue;
@@ -430,6 +440,15 @@ export async function getCalculoProcessData(periodMonthInput: string): Promise<C
           current.targetTotal += toNumeric(row.target);
           current.detailCount += 1;
           targetsByRouteProduct.set(key, current);
+        }
+      } catch (error) {
+        const targetRowsError = error as { code?: string; message?: string };
+        if (isMissingRelationError(targetRowsError)) {
+          storageReady = false;
+          const tableName = getMissingRelationName(targetRowsError) ?? "team_objective_targets";
+          storageMessages.push(`No existe ${tableName}.`);
+        } else {
+          throw new Error(targetRowsError.message ?? "No se pudieron leer objetivos para process.");
         }
       }
     }

@@ -1,4 +1,5 @@
 type SupabaseErrorLike = {
+  code?: string;
   message?: string;
 } | null;
 
@@ -14,6 +15,12 @@ type SupabaseRowsResult<T> = {
 
 const DEFAULT_PAGE_SIZE = 1000;
 
+function buildPaginatedQueryError(context: string, error: SupabaseErrorLike, fallback: string): Error & { code?: string } {
+  const output = new Error(`${context}: ${error?.message ?? fallback}`) as Error & { code?: string };
+  if (error?.code) output.code = error.code;
+  return output;
+}
+
 export async function fetchAllSupabaseRows<T>(params: {
   countQuery: () => PromiseLike<SupabaseCountResult>;
   pageQuery: (from: number, to: number) => PromiseLike<SupabaseRowsResult<T>>;
@@ -24,7 +31,7 @@ export async function fetchAllSupabaseRows<T>(params: {
   const countResult = await params.countQuery();
 
   if (countResult.error) {
-    throw new Error(`${params.context}: ${countResult.error.message ?? "error al contar filas"}`);
+    throw buildPaginatedQueryError(params.context, countResult.error, "error al contar filas");
   }
 
   const totalRows = countResult.count ?? 0;
@@ -36,7 +43,7 @@ export async function fetchAllSupabaseRows<T>(params: {
     const pageResult = await params.pageQuery(from, to);
 
     if (pageResult.error) {
-      throw new Error(`${params.context}: ${pageResult.error.message ?? "error al leer filas"}`);
+      throw buildPaginatedQueryError(params.context, pageResult.error, "error al leer filas");
     }
 
     const batch = pageResult.data ?? [];

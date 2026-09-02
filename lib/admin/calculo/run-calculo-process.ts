@@ -4,6 +4,7 @@ import { getMissingRelationName, isMissingRelationError } from "@/lib/admin/ince
 import { computeEffectivePeriodCut, isBeforeEffectivePeriodCut, normalizeProductNameKey } from "@/lib/admin/period-settings/effective-period";
 import { loadPeriodSettingsForCalculation } from "@/lib/admin/period-settings/load-period-settings";
 import { isStandaloneNationalScopeMarker } from "@/lib/admin/objetivos/objective-method";
+import { fetchAllSupabaseRows } from "@/lib/supabase/paginated-query";
 import {
   getRollingMonthColumnName,
   ROLLING_MONTH_COLUMN_NAMES,
@@ -643,6 +644,7 @@ export async function runCalculoProcess(
 
   const supabase = createAdminClient();
   if (!supabase) throw new Error("Admin client no disponible.");
+  const adminClient = supabase;
 
   if (!isBigQueryConfigured()) {
     throw new Error("BigQuery no esta configurado.");
@@ -839,15 +841,41 @@ export async function runCalculoProcess(
     throw new Error("No hay version de objetivos para el periodo.");
   }
 
-  const objectiveRowsWithOptionalFieldsResult = await queryWithRetry(() =>
-    supabase
-      .from("team_objective_targets")
-      .select("territorio_individual, team_id, product_name, metodo, plan_type_name, target, brick, cuenta, sales_credity")
-      .eq("version_id", objectiveVersionId),
-  );
+  async function loadObjectiveRows(selectColumns: string): Promise<ObjectiveTargetRow[]> {
+    return fetchAllSupabaseRows<ObjectiveTargetRow>({
+      context: "No se pudieron leer objetivos",
+      countQuery: async () => {
+        const result = await queryWithRetry(() =>
+          adminClient
+            .from("team_objective_targets")
+            .select("id", { count: "exact", head: true })
+            .eq("version_id", objectiveVersionId),
+        );
+        return { count: result.count, error: result.error };
+      },
+      pageQuery: async (from, to) => {
+        const result = await queryWithRetry(() =>
+          adminClient
+            .from("team_objective_targets")
+            .select(selectColumns)
+            .eq("version_id", objectiveVersionId)
+            .order("id", { ascending: true })
+            .range(from, to),
+        );
+        return { data: (result.data ?? []) as unknown as ObjectiveTargetRow[], error: result.error };
+      },
+    });
+  }
 
-  let objectiveRowsError = objectiveRowsWithOptionalFieldsResult.error;
-  let objectiveRowsData = (objectiveRowsWithOptionalFieldsResult.data ?? []) as ObjectiveTargetRow[];
+  let objectiveRowsError: { code?: string; message?: string } | null = null;
+  let objectiveRowsData: ObjectiveTargetRow[] = [];
+  try {
+    objectiveRowsData = await loadObjectiveRows(
+      "territorio_individual, team_id, product_name, metodo, plan_type_name, target, brick, cuenta, sales_credity",
+    );
+  } catch (error) {
+    objectiveRowsError = error as { code?: string; message?: string };
+  }
 
   if (
     objectiveRowsError &&
@@ -856,14 +884,14 @@ export async function runCalculoProcess(
       String(objectiveRowsError.message ?? "").toLowerCase().includes("metodo")
     )
   ) {
-    const objectiveRowsWithoutOptionalResult = await queryWithRetry(() =>
-      supabase
-        .from("team_objective_targets")
-        .select("territorio_individual, team_id, product_name, plan_type_name, target, brick, cuenta")
-        .eq("version_id", objectiveVersionId),
-    );
-    objectiveRowsError = objectiveRowsWithoutOptionalResult.error;
-    objectiveRowsData = (objectiveRowsWithoutOptionalResult.data ?? []) as ObjectiveTargetRow[];
+    try {
+      objectiveRowsData = await loadObjectiveRows(
+        "territorio_individual, team_id, product_name, plan_type_name, target, brick, cuenta",
+      );
+      objectiveRowsError = null;
+    } catch (error) {
+      objectiveRowsError = error as { code?: string; message?: string };
+    }
   }
 
   if (objectiveRowsError) {
