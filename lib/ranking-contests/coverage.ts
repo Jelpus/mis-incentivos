@@ -7,6 +7,7 @@ import type {
   RankingContest,
 } from "@/lib/ranking-contests/types";
 import { findComplementForProduct } from "@/lib/ranking-contests/rankingGroups";
+import { matchesRankingParticipantIdentity } from "@/lib/ranking-contests/participantIdentity";
 
 const LVU_CONTEST_IDS = new Set([
   "fa9423cd-0760-4f35-9ada-2a47222be53b",
@@ -84,15 +85,7 @@ export function buildCoveragePeriods(params: {
 }
 
 export function belongsToParticipant(result: BigQueryCoverageRow, participant: ContestParticipant): boolean {
-  if (participant.scope === "rep") {
-    const employee = normalizeKey(participant.employeeNumber);
-    if (employee && normalizeKey(result.empleado) === employee) return true;
-    const territory = normalizeKey(participant.territory);
-    return Boolean(territory && normalizeKey(result.representante) === territory);
-  }
-
-  const territory = normalizeKey(participant.territory);
-  return Boolean(territory && normalizeKey(result.manager) === territory);
+  return matchesRankingParticipantIdentity(result, participant);
 }
 
 export function calculateCoveragePoints(params: {

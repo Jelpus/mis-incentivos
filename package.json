@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:cpd": "node --experimental-strip-types tests/source-ranking-cpd.test.mjs",
+    "test:ranking-identity": "node --experimental-strip-types tests/ranking-participant-identity.test.mjs",
     "ranking:cpd:reprocess:dry-run": "node --env-file=.env.local --experimental-strip-types scripts/reprocess-ranking-cpd.mjs",
     "ranking:cpd:reprocess:apply": "node --env-file=.env.local --experimental-strip-types scripts/reprocess-ranking-cpd.mjs --apply",
     "changelog:add": "node scripts/platform-change-log.mjs add",

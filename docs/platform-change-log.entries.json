@@ -187,5 +187,12 @@
     "route": "/admin/data-sources",
     "currentState": "Las columnas month01 a month12 se interpretaban como enero a diciembre del año del periodo cargado.",
     "modifiedState": "Las columnas usan una ventana movil: month01 es el periodo cargado, month02 el mes anterior y month12 once meses atras; carga, calculo y debugger comparten la misma convencion."
+  },
+  {
+    "sourceKey": "2026-09-02-perfil-ranking-identidad-representante",
+    "date": "2026-09-02",
+    "route": "/perfil/ranking",
+    "currentState": "El ranking podia relacionar resultados por el territorio actual aunque la fila perteneciera a otro empleado, transfiriendo al nuevo ocupante resultados historicos de la ruta.",
+    "modifiedState": "Los representantes con numero de empleado se relacionan exclusivamente por ese identificador; el territorio solo se usa cuando ambos lados carecen de empleado, conservando resultados propios tras un cambio de ruta sin heredar los del ocupante anterior."
   }
 ]
