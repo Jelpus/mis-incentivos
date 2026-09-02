@@ -21,6 +21,7 @@ import {
   ROLLING_MONTH_COLUMN_NAMES,
   type RollingMonthColumnName,
 } from "@/lib/admin/data-sources/rolling-month-columns";
+import { analyzeProductColumnDiscrepancies } from "@/lib/admin/data-sources/product-column-discrepancies";
 import {
   isBigQueryConfigured,
   loadBigQueryJsonRows,
@@ -96,6 +97,15 @@ type PreviewTeamSourceFileResult =
           missingCount: number;
           missingExamples: string[];
         }>;
+        productDiscrepancies: {
+          count: number;
+          examples: Array<{
+            rowNumber: number;
+            route: string | null;
+            producto: string;
+            productName: string;
+          }>;
+        };
       };
     }
   | {
@@ -3059,6 +3069,7 @@ export async function previewTeamSourceFileAction(
     });
 
     currentPhase = "normalize_rows";
+    const productDiscrepancies = analyzeProductColumnDiscrepancies(sheetRows);
     const normalizedRows = normalizeRowsForBigQuery({
       rows: sheetRows,
       periodMonth,
@@ -3072,6 +3083,7 @@ export async function previewTeamSourceFileAction(
       normalizedRows: normalizedRows.length,
       rowsEligibleForBigQuery: normalizedForBigQuery.rows.length,
       droppedRowsBySchema: normalizedForBigQuery.droppedRows,
+      productDiscrepancies: productDiscrepancies.count,
     });
 
     currentPhase = "validate_team_coverage";
@@ -3132,14 +3144,17 @@ export async function previewTeamSourceFileAction(
       distinctMetrics: distinctMetrics.length,
       distinctFuentes: distinctFuentes.length,
       distinctMoleculas: distinctMoleculas.length,
+      productDiscrepancies: productDiscrepancies.count,
     });
+
+    const hasWarnings = teamAlerts.length > 0 || productDiscrepancies.count > 0;
 
     return {
       ok: true,
       message:
-        teamAlerts.length === 0
+        !hasWarnings
           ? "Validacion completa. El archivo cumple con los requerimientos detectados."
-          : "Validacion con alertas. Revisa requisitos faltantes antes de subir a BigQuery.",
+          : "Validacion con alertas no bloqueantes. Revisa las discrepancias antes de continuar.",
       summary: {
         normalizedRows: normalizedRows.length,
         rowsEligibleForBigQuery: normalizedForBigQuery.rows.length,
@@ -3150,6 +3165,7 @@ export async function previewTeamSourceFileAction(
         distinctFuentes,
         distinctMoleculas,
         teamAlerts,
+        productDiscrepancies,
       },
     };
   } catch (error) {

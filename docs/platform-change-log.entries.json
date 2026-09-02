@@ -194,5 +194,12 @@
     "route": "/perfil/ranking",
     "currentState": "El ranking podia relacionar resultados por el territorio actual aunque la fila perteneciera a otro empleado, transfiriendo al nuevo ocupante resultados historicos de la ruta.",
     "modifiedState": "Los representantes con numero de empleado se relacionan exclusivamente por ese identificador; el territorio solo se usa cuando ambos lados carecen de empleado, conservando resultados propios tras un cambio de ruta sin heredar los del ocupante anterior."
+  },
+  {
+    "sourceKey": "2026-09-02-admin-incentive-rules-product-discrepancies",
+    "date": "2026-09-02",
+    "route": "/admin/incentive-rules",
+    "currentState": "La previsualizacion de archivos fuente no advertia cuando Producto y Product name identificaban productos diferentes.",
+    "modifiedState": "La previsualizacion detecta y muestra discrepancias con fila, ruta y valores de ejemplo; la alerta no bloquea la carga y permite confirmar la operacion de forma explicita."
   }
 ]

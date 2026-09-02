@@ -67,6 +67,15 @@ type PreviewState =
         missingCount: number;
         missingExamples: string[];
       }>;
+      productDiscrepancies: {
+        count: number;
+        examples: Array<{
+          rowNumber: number;
+          route: string | null;
+          producto: string;
+          productName: string;
+        }>;
+      };
     };
   }
   | {
@@ -347,6 +356,30 @@ function TeamSourceFileUploadRowItem({
                 Para BigQuery: <strong>{previewState.summary.rowsEligibleForBigQuery}</strong> filas validas y{" "}
                 <strong>{previewState.summary.droppedRowsBySchema}</strong> filas omitidas por schema minimo (archivo/periodo).
               </p>
+              {previewState.summary.productDiscrepancies.count > 0 ? (
+                <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
+                  <p className="font-semibold">
+                    Existe una discrepancia entre Producto y Product name en{" "}
+                    {previewState.summary.productDiscrepancies.count} fila(s).
+                  </p>
+                  <p className="mt-1 text-amber-900">
+                    La carga no esta bloqueada, pero las filas se normalizaran usando Producto. Revisa estos ejemplos:
+                  </p>
+                  <div className="mt-2 space-y-1">
+                    {previewState.summary.productDiscrepancies.examples.map((example) => (
+                      <p key={`${example.rowNumber}-${example.route ?? "sin-ruta"}`}>
+                        - Fila {example.rowNumber}
+                        {example.route ? `, ruta ${example.route}` : ""}: Producto &quot;{example.producto}&quot; no coincide con Product name &quot;{example.productName}&quot;.
+                      </p>
+                    ))}
+                  </div>
+                  {previewState.summary.productDiscrepancies.count > previewState.summary.productDiscrepancies.examples.length ? (
+                    <p className="mt-2 font-medium">
+                      Se muestran {previewState.summary.productDiscrepancies.examples.length} ejemplos de {previewState.summary.productDiscrepancies.count} discrepancias.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               {previewState.summary.teamAlerts.length > 0 ? (
                 <div className="mt-4 max-h-56 overflow-auto rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
                   {previewState.summary.teamAlerts.map((alert) => (
@@ -368,11 +401,11 @@ function TeamSourceFileUploadRowItem({
                     </div>
                   ))}
                 </div>
-              ) : (
+              ) : previewState.summary.productDiscrepancies.count === 0 ? (
                 <p className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
                   Sin alertas: el archivo cumple con las condiciones detectadas.
                 </p>
-              )}
+              ) : null}
               <p className="mt-4 text-xs text-neutral-600">
                 Si estas conforme, confirma desde este modal para {row.uploaded ? "reemplazar" : "subir"} el archivo.
               </p>
@@ -395,6 +428,8 @@ function TeamSourceFileUploadRowItem({
                       <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/70 border-t-transparent" />
                       {row.uploaded ? "Reemplazando..." : "Subiendo..."}
                     </span>
+                  ) : previewState.summary.teamAlerts.length > 0 || previewState.summary.productDiscrepancies.count > 0 ? (
+                    row.uploaded ? "Reemplazar de todas formas" : "Subir de todas formas"
                   ) : row.uploaded ? (
                     "Confirmar reemplazo"
                   ) : (
