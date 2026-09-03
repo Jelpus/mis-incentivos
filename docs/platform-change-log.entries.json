@@ -215,5 +215,12 @@
     "route": "/",
     "currentState": "Varias lecturas de colecciones podian depender implicitamente del limite de 1000 filas de Supabase y recibir datos incompletos al crecer una tabla o un periodo.",
     "modifiedState": "Se establece paginacion como regla general con orden estable y un helper compartido; se migran las lecturas de alto volumen de KPI, importaciones y destinatarios, y se documentan las unicas excepciones acotadas."
+  },
+  {
+    "sourceKey": "2026-09-03-admin-ajustes-ranking-periodos",
+    "date": "2026-09-03",
+    "route": "/admin/ajustes-ranking",
+    "currentState": "La pagina cargaba solo el ultimo periodo elegible y el selector principal no se mostraba; el filtro interno parecia ofrecer unicamente mayo.",
+    "modifiedState": "Se muestra un selector principal para cambiar entre periodos aprobados o publicados, se elimina el filtro mensual redundante y el servidor bloquea crear o editar ajustes durante borrador o precalculo."
   }
 ]

@@ -96,7 +96,6 @@ export function RankingAdjustmentsCard({
 
   const [query, setQuery] = useState("");
   const [representativeFilter, setRepresentativeFilter] = useState("");
-  const [periodFilter, setPeriodFilter] = useState("");
   const [productFilter, setProductFilter] = useState("");
   const [adjustmentStatus, setAdjustmentStatus] = useState<AdjustmentStatus>("all");
 
@@ -127,11 +126,6 @@ export function RankingAdjustmentsCard({
     () => Array.from(new Set(pointRows.map((row) => row.participantName).filter(Boolean))).sort((a, b) => a.localeCompare(b, "es")),
     [pointRows],
   );
-  const periodOptions = useMemo(
-    () => Array.from(new Map(pointRows.map((row) => [row.periodMonth, row.periodCode])).entries())
-      .sort((a, b) => a[0].localeCompare(b[0])),
-    [pointRows],
-  );
   const productOptions = useMemo(
     () => Array.from(new Map(pointRows.map((row) => [row.productKey, row.productName])).entries())
       .sort((a, b) => a[1].localeCompare(b[1], "es")),
@@ -142,7 +136,6 @@ export function RankingAdjustmentsCard({
     const normalizedQuery = query.trim().toLowerCase();
     return pointRows.filter((row) => {
       if (representativeFilter && row.participantName !== representativeFilter) return false;
-      if (periodFilter && row.periodMonth !== periodFilter) return false;
       if (productFilter && row.productKey !== productFilter) return false;
       if (adjustmentStatus === "adjusted" && row.adjustmentDelta === 0) return false;
       if (adjustmentStatus === "not_adjusted" && row.adjustmentDelta !== 0) return false;
@@ -151,7 +144,7 @@ export function RankingAdjustmentsCard({
         .toLowerCase()
         .includes(normalizedQuery);
     });
-  }, [pointRows, query, representativeFilter, periodFilter, productFilter, adjustmentStatus]);
+  }, [pointRows, query, representativeFilter, productFilter, adjustmentStatus]);
 
   const previewInput = parseInputNumber(formValue);
   const previewDelta = resolveDelta(formOperation, previewInput, formBasePoints);
@@ -220,6 +213,17 @@ export function RankingAdjustmentsCard({
             <p className="mt-2 max-w-4xl text-sm text-neutral-600">
               Audita puntos calculados y suma, resta o define puntos por periodo, territorio y producto.
             </p>
+          </div>
+          <div className="min-w-[220px]">
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+              Periodo a ajustar
+            </p>
+            <StatusPeriodPicker
+              value={periodInput}
+              paramName="period"
+              options={availablePeriodInputs}
+            />
+            <p className="mt-1 text-xs text-neutral-500">Solo aprobados o publicados.</p>
           </div>
         </div>
 
@@ -320,7 +324,7 @@ export function RankingAdjustmentsCard({
           </p>
         </div>
 
-        <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_220px_160px_220px_160px]">
+        <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_220px_220px_160px]">
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -336,18 +340,6 @@ export function RankingAdjustmentsCard({
             {representativeOptions.map((representative) => (
               <option key={representative} value={representative}>
                 {representative}
-              </option>
-            ))}
-          </select>
-          <select
-            value={periodFilter}
-            onChange={(event) => setPeriodFilter(event.target.value)}
-            className="h-10 rounded-xl border border-neutral-300 bg-white px-3 text-sm text-neutral-900"
-          >
-            <option value="">Todos los periodos</option>
-            {periodOptions.map(([month, code]) => (
-              <option key={month} value={month}>
-                {code}
               </option>
             ))}
           </select>

@@ -4,6 +4,8 @@ import {
   type RankingContestRow,
 } from "@/lib/admin/reglas-ranking/get-ranking-contests-data";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllSupabaseRows } from "@/lib/supabase/paginated-query";
+import { RANKING_ADJUSTMENT_PERIOD_STATUSES } from "@/lib/admin/ajustes-ranking/period-status";
 import {
   buildCoveragePeriods,
   calculateCoveragePoints,
@@ -261,22 +263,31 @@ function pointRowFromDetail(params: {
   };
 }
 
-async function getAvailablePublishedPeriods(): Promise<string[]> {
+async function getAvailableCalculationPeriods(): Promise<string[]> {
   const supabase = createAdminClient();
   if (!supabase) return [];
 
-  const result = await supabase
-    .from("team_incentive_calculation_periods")
-    .select("period_month")
-    .in("status", ["final", "publicado"])
-    .order("period_month", { ascending: false })
-    .limit(36);
-
-  if (result.error) return [];
+  let rows: PeriodRow[] = [];
+  try {
+    rows = await fetchAllSupabaseRows<PeriodRow>({
+      context: "No se pudieron cargar los periodos disponibles para ajustes ranking",
+      pageQuery: async (from, to) => {
+        const result = await supabase
+          .from("team_incentive_calculation_periods")
+          .select("period_month")
+          .in("status", [...RANKING_ADJUSTMENT_PERIOD_STATUSES])
+          .order("period_month", { ascending: false })
+          .range(from, to);
+        return { data: (result.data ?? []) as PeriodRow[], error: result.error };
+      },
+    });
+  } catch {
+    return [];
+  }
 
   return Array.from(
     new Set(
-      ((result.data ?? []) as PeriodRow[])
+      rows
         .map((row) => normalizePeriodMonthInput(String(row.period_month ?? "")))
         .filter((period): period is string => Boolean(period)),
     ),
@@ -522,7 +533,7 @@ async function buildPointRows(params: {
 
 export async function getRankingAdjustmentsPageData(requestedPeriod?: string | null): Promise<RankingAdjustmentsPageData> {
   const messages: string[] = [];
-  const availablePeriods = await getAvailablePublishedPeriods();
+  const availablePeriods = await getAvailableCalculationPeriods();
   const normalizedRequested = normalizePeriodMonthInput(requestedPeriod ?? "");
   const periodMonth = normalizedRequested && (availablePeriods.length === 0 || availablePeriods.includes(normalizedRequested))
     ? normalizedRequested

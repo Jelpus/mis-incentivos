@@ -5,6 +5,7 @@ import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { isAdminRole } from "@/lib/auth/impersonation";
 import { getMissingRelationName, isMissingRelationError, normalizePeriodMonthInput } from "@/lib/admin/incentive-rules/shared";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isRankingAdjustmentPeriodStatus } from "@/lib/admin/ajustes-ranking/period-status";
 import { normalizeAdjustmentProduct, periodCodeToMonth } from "@/lib/ranking-contests/pointAdjustments";
 
 type RankingAdjustmentActionResult =
@@ -87,6 +88,32 @@ export async function upsertRankingPointAdjustmentAction(
 
   const supabase = createAdminClient();
   if (!supabase) return { ok: false, message: "Admin client no disponible." };
+
+  const periodStatusResult = await supabase
+    .from("team_incentive_calculation_periods")
+    .select("status")
+    .eq("period_month", periodMonth)
+    .maybeSingle<{ status: string | null }>();
+
+  if (periodStatusResult.error) {
+    if (isMissingRelationError(periodStatusResult.error)) {
+      const tableName = getMissingRelationName(periodStatusResult.error) ?? "team_incentive_calculation_periods";
+      return { ok: false, message: `No existe la tabla ${tableName}.` };
+    }
+    return { ok: false, message: `No se pudo validar el estado del periodo: ${periodStatusResult.error.message}` };
+  }
+
+  if (!periodStatusResult.data) {
+    return { ok: false, message: "El periodo no tiene un proceso de calculo registrado." };
+  }
+
+  if (!isRankingAdjustmentPeriodStatus(periodStatusResult.data.status)) {
+    const currentStatus = normalizeText(periodStatusResult.data.status) || "sin estado";
+    return {
+      ok: false,
+      message: `Solo se pueden ajustar periodos aprobados o publicados. Estado actual: ${currentStatus}.`,
+    };
+  }
 
   const payload = {
     period_month: periodMonth,
