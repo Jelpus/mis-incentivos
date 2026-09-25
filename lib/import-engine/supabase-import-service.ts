@@ -49,7 +49,13 @@ const IGNORED_SOURCE_HEADERS_BY_IMPORT_TYPE: Record<string, string[]> = {
     "valid since period",
     "pago_desde",
     "pago desde",
+    // Metadatos del archivo combinado SVA/SVM que no existen en sales_force_status.
+    "manager",
+    "521",
   ],
+  // La última columna del layout de managers es un identificador de origen sin
+  // campo destino en manager_status. No debe forzar una revisión de mapping.
+  manager_status: ["521"],
 };
 
 export async function createImportBatchFromExcel({

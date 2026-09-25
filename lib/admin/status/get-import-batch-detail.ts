@@ -45,7 +45,10 @@ const IGNORED_SOURCE_HEADERS_BY_IMPORT_TYPE: Record<string, string[]> = {
     "valid since period",
     "pago_desde",
     "pago desde",
+    "manager",
+    "521",
   ],
+  manager_status: ["521"],
 };
 
 export async function getImportBatchDetail(batchId: string) {

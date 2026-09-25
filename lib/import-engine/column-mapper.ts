@@ -18,7 +18,7 @@ export type HeaderMappingResult = {
 
 const FIELD_ALIASES: Record<string, string[]> = {
   linea_principal: ["linea_principal", "linea", "linea principal"],
-  parrilla: ["parrilla"],
+  parrilla: ["parrilla", "parilla"],
   nombre_completo: [
     "nombre_completo",
     "nombre completo",
@@ -39,12 +39,14 @@ const FIELD_ALIASES: Record<string, string[]> = {
     "territorio_padre",
     "ruta_manager",
     "territorio manager",
+    "territorio padre svm",
   ],
   territorio_individual: [
     "territorio_individual",
     "ruta",
     "territorio",
     "territorio individual",
+    "territorio indv",
   ],
   puesto: ["puesto", "cargo", "position"],
   correo_electronico: [
@@ -64,7 +66,7 @@ const FIELD_ALIASES: Record<string, string[]> = {
     "location",
   ],
   fecha_ingreso: ["fecha_ingreso", "fecha ingreso", "ingreso", "fecha_alta"],
-  team_id: ["team_id", "team", "equipo", "crm_team", "id_team"],
+  team_id: ["team_id", "team", "equipo", "crm_team", "id_team", "teamid"],
   base_incentivos: [
     "base_incentivos",
     "base incentivos",
@@ -72,10 +74,27 @@ const FIELD_ALIASES: Record<string, string[]> = {
     "base",
   ],
   is_vacant: ["is_vacant", "vacante", "vacancy", "posicion_vacante", "posición vacante"],
-  territorio_manager: ["territorio_manager", "territorio manager", "manager_territory", "ruta_manager"],
-  nombre_manager: ["nombre_manager", "manager_name", "nombre manager"],
-  correo_manager: ["correo_manager", "email_manager", "mail_manager", "correo manager"],
-  no_empleado_manager: ["no_empleado_manager", "employee_id_manager", "id_manager"],
+  territorio_manager: [
+    "territorio_manager",
+    "territorio manager",
+    "manager_territory",
+    "ruta_manager",
+    "territorio padre svm",
+  ],
+  nombre_manager: ["nombre_manager", "manager_name", "nombre manager", "manager"],
+  correo_manager: [
+    "correo_manager",
+    "email_manager",
+    "mail_manager",
+    "correo manager",
+    "correo electronico",
+  ],
+  no_empleado_manager: [
+    "no_empleado_manager",
+    "employee_id_manager",
+    "id_manager",
+    "no empleado",
+  ],
 };
 
 function buildAliasMap(validTargetFields: string[]): Map<string, string> {
