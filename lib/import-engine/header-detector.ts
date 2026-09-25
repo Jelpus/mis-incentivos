@@ -12,11 +12,18 @@ function scoreRowForHeader(row: unknown[]): number {
 
   if (nonEmpty.length === 0) return 0;
 
-  const uniqueCount = new Set(nonEmpty.map((v) => v.toLowerCase())).size;
+  const normalizedValues = nonEmpty.map((value) => value.toLowerCase());
+  const uniqueCount = new Set(normalizedValues).size;
+  const repeatedValueCount = nonEmpty.length - uniqueCount;
+  const placeholderCount = normalizedValues.filter(
+    (value) => value === "na" || value === "n/a" || value === "n.a." || value === "null",
+  ).length;
 
   let score = 0;
   score += textCells.length * 3;
   score += uniqueCount;
+  score -= repeatedValueCount * 2;
+  score -= placeholderCount * 2;
   score -= Math.max(0, nonEmpty.length - textCells.length); // penaliza demasiados números
 
   return score;
