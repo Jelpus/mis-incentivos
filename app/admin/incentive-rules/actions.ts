@@ -2248,7 +2248,7 @@ export async function uploadTeamRulesFromExcelAction(
 
     if (!hasSameValues) {
       conflictingRankingComplements.push(
-        `Filas ${existing.rowNumber} y ${candidate.rowNumber}: ${teamId} / ${productName} tiene valores distintos de ranking, puntos o peso.`,
+        `Filas ${existing.rowNumber} y ${candidate.rowNumber}: la combinación team_id "${teamId}" y product_name "${productName}" aparece más de una vez y tiene valores distintos de ranking, puntos o peso.`,
       );
     }
   }
@@ -2257,7 +2257,7 @@ export async function uploadTeamRulesFromExcelAction(
     return {
       ok: false,
       message:
-        "El Excel tiene complementos de ranking duplicados con valores distintos. Cada combinación de team_id y product_name debe tener una sola configuración.",
+        "El Excel contiene combinaciones repetidas de team_id y product_name. Cada combinación debe aparecer una sola vez cuando tenga valores distintos de ranking, puntos o peso.",
       validationErrors: conflictingRankingComplements.slice(0, 60),
     };
   }
