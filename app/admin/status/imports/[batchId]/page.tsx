@@ -7,6 +7,7 @@ import { ApplyImportBatchCard } from "@/components/admin/apply-import-batch-card
 import { ImportPreviewIssuesPanel } from "@/components/admin/import-preview-issues-panel";
 import { ImportPreviewSummary } from "@/components/admin/import-preview-summary";
 import { ImportPreviewTable } from "@/components/admin/import-preview-table";
+import { generateImportPreviewAction } from "@/app/admin/status/actions";
 
 
 type PageProps = {
@@ -176,7 +177,27 @@ export default async function StatusImportBatchPage({ params, searchParams }: Pa
                     </section>
                 ) : null}
 
-                {!showPreview && batch.status !== "mapping_required" ? (
+                {batch.status === "ready_for_preview" ? (
+                    <section className="rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm">
+                        <h2 className="text-lg font-semibold text-neutral-950">
+                            Generar preview
+                        </h2>
+                        <p className="mt-1 text-sm text-neutral-600">
+                            El archivo ya tiene todas sus columnas asignadas. Genera el preview para revisar sus filas antes de aplicarlo.
+                        </p>
+                        <form action={generateImportPreviewAction} className="mt-4">
+                            <input type="hidden" name="batch_id" value={batch.id} />
+                            <button
+                                type="submit"
+                                className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
+                            >
+                                Generar preview
+                            </button>
+                        </form>
+                    </section>
+                ) : null}
+
+                {!showPreview && batch.status !== "mapping_required" && batch.status !== "ready_for_preview" ? (
                     <section className="rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm">
                         <h2 className="text-lg font-semibold text-neutral-950">
                             Batch aún sin preview

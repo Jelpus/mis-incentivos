@@ -74,6 +74,21 @@ function revalidateStatusDependentAdminData(): void {
   }
 }
 
+async function generateImportPreviewIfMappingsAreComplete(params: {
+  batchId: string;
+  importTypeCode: "sales_force_status" | "manager_status";
+  unmappedColumns: Array<{ originalHeader: string }>;
+}): Promise<void> {
+  if (params.unmappedColumns.length > 0) return;
+
+  if (params.importTypeCode === "sales_force_status") {
+    await previewSalesForceImportBatch(params.batchId);
+    return;
+  }
+
+  await previewManagerImportBatch(params.batchId);
+}
+
 async function uploadImportByType(
   formData: FormData,
   importTypeCode: "sales_force_status" | "manager_status",
@@ -116,6 +131,12 @@ async function uploadImportByType(
       periodMonth: periodMonth ? `${periodMonth}-01` : null,
       selectedSheetName: sheetName || null,
       userId: user.id,
+    });
+
+    await generateImportPreviewIfMappingsAreComplete({
+      batchId: result.batchId,
+      importTypeCode,
+      unmappedColumns: result.unmappedColumns,
     });
 
     revalidatePath("/admin/status");
@@ -263,6 +284,12 @@ export async function uploadUnifiedStatusImportAction(
       userId: user.id,
     });
     svaBatchId = svaResult.batchId;
+
+    await generateImportPreviewIfMappingsAreComplete({
+      batchId: svaResult.batchId,
+      importTypeCode: "sales_force_status",
+      unmappedColumns: svaResult.unmappedColumns,
+    });
   } catch (error) {
     return {
       ok: false,
@@ -283,6 +310,12 @@ export async function uploadUnifiedStatusImportAction(
       userId: user.id,
     });
     svmBatchId = svmResult.batchId;
+
+    await generateImportPreviewIfMappingsAreComplete({
+      batchId: svmResult.batchId,
+      importTypeCode: "manager_status",
+      unmappedColumns: svmResult.unmappedColumns,
+    });
   } catch (error) {
     revalidatePath("/admin/status");
     return {
@@ -326,6 +359,52 @@ export async function goToStatusImportBatchAction(formData: FormData) {
     redirect("/admin/status");
   }
 
+  redirect(`/admin/status/imports/${batchId}`);
+}
+
+export async function generateImportPreviewAction(formData: FormData) {
+  const { user, role, isActive } = await getCurrentAuthContext();
+
+  if (!user || !isAdminRole(role, isActive)) {
+    redirect("/admin/status");
+  }
+
+  const batchId = String(formData.get("batch_id") ?? "").trim();
+
+  if (!batchId) {
+    redirect("/admin/status");
+  }
+
+  const supabase = createAdminClient();
+
+  if (!supabase) {
+    throw new Error("Admin client no disponible.");
+  }
+
+  const { data: batch, error: batchError } = await supabase
+    .from("import_batches")
+    .select("id, status, import_type:import_types!inner(code)")
+    .eq("id", batchId)
+    .single<{ id: string; status: string; import_type: { code: string } }>();
+
+  if (batchError || !batch) {
+    throw new Error(batchError?.message ?? "No se encontró el batch.");
+  }
+
+  if (batch.status !== "ready_for_preview") {
+    redirect(`/admin/status/imports/${batchId}`);
+  }
+
+  if (batch.import_type.code === "sales_force_status") {
+    await previewSalesForceImportBatch(batchId);
+  } else if (batch.import_type.code === "manager_status") {
+    await previewManagerImportBatch(batchId);
+  } else {
+    throw new Error(`No hay preview configurado para "${batch.import_type.code}".`);
+  }
+
+  revalidatePath("/admin/status");
+  revalidatePath(`/admin/status/imports/${batchId}`);
   redirect(`/admin/status/imports/${batchId}`);
 }
 
