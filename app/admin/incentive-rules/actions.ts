@@ -2210,6 +2210,72 @@ export async function uploadTeamRulesFromExcelAction(
     };
   }
 
+  const rankingComplementByKey = new Map<string, {
+    rowNumber: number;
+    teamId: string;
+    productName: string;
+    ranking: string | null;
+    puntosRankingLvu: number | null;
+    prodWeight: number | null;
+  }>();
+  const conflictingRankingComplements: string[] = [];
+
+  for (const row of validParsedRows) {
+    const teamId = row.teamId;
+    const productName = String(row.rule.product_name ?? "").trim();
+    if (!teamId || !productName) continue;
+
+    const candidate = {
+      rowNumber: row.rowNumber,
+      teamId,
+      productName,
+      ranking: String(row.rule.ranking ?? "").trim() || null,
+      puntosRankingLvu: parseOptionalNumber(row.rule.puntos_ranking_lvu),
+      prodWeight: parseOptionalNumber(row.rule.prod_weight),
+    };
+    const key = `${teamId}|${productName}`;
+    const existing = rankingComplementByKey.get(key);
+
+    if (!existing) {
+      rankingComplementByKey.set(key, candidate);
+      continue;
+    }
+
+    const hasSameValues =
+      existing.ranking === candidate.ranking &&
+      existing.puntosRankingLvu === candidate.puntosRankingLvu &&
+      existing.prodWeight === candidate.prodWeight;
+
+    if (!hasSameValues) {
+      conflictingRankingComplements.push(
+        `Filas ${existing.rowNumber} y ${candidate.rowNumber}: ${teamId} / ${productName} tiene valores distintos de ranking, puntos o peso.`,
+      );
+    }
+  }
+
+  if (conflictingRankingComplements.length > 0) {
+    return {
+      ok: false,
+      message:
+        "El Excel tiene complementos de ranking duplicados con valores distintos. Cada combinación de team_id y product_name debe tener una sola configuración.",
+      validationErrors: conflictingRankingComplements.slice(0, 60),
+    };
+  }
+
+  const rankingComplementRows = Array.from(rankingComplementByKey.values()).map((row) => ({
+    period_month: periodMonth,
+    team_id: row.teamId,
+    product_name: row.productName,
+    ranking: row.ranking,
+    puntos_ranking_lvu: row.puntosRankingLvu,
+    prod_weight: row.prodWeight,
+    source_type: "team_rules_excel_import",
+    source_file_name: file.name,
+    source_sheet_name: finalSheetName,
+    updated_by: user.id,
+    is_active: true,
+  }));
+
   const allStatusTeamsResult = await supabase
     .from("sales_force_status")
     .select("team_id")
@@ -2350,20 +2416,6 @@ export async function uploadTeamRulesFromExcelAction(
     };
   }
 
-  const rankingComplementRows = validParsedRows.map((row) => ({
-    period_month: periodMonth,
-    team_id: row.teamId,
-    product_name: String(row.rule.product_name ?? "").trim(),
-    ranking: String(row.rule.ranking ?? "").trim() || null,
-    puntos_ranking_lvu: parseOptionalNumber(row.rule.puntos_ranking_lvu),
-    prod_weight: parseOptionalNumber(row.rule.prod_weight),
-    source_type: "team_rules_excel_import",
-    source_file_name: file.name,
-    source_sheet_name: finalSheetName,
-    updated_by: user.id,
-    is_active: true,
-  })).filter((row) => row.team_id && row.product_name);
-
   if (rankingComplementRows.length > 0) {
     const complementsResult = await supabase.from("ranking_rule_complements").upsert(
       rankingComplementRows,
@@ -2379,9 +2431,19 @@ export async function uploadTeamRulesFromExcelAction(
         };
       }
 
+      const rawMessage = String(complementsResult.error.message ?? "");
+      if (rawMessage.includes("ON CONFLICT DO UPDATE command cannot affect row a second time")) {
+        return {
+          ok: false,
+          message:
+            "Las reglas se importaron, pero el Excel repite la misma combinación de team_id y product_name en los complementos de ranking. Revisa las filas duplicadas y vuelve a importar.",
+        };
+      }
+
       return {
         ok: false,
-        message: `Reglas importadas, pero no se pudieron sincronizar complementos ranking: ${complementsResult.error.message}`,
+        message:
+          "Las reglas se importaron, pero no se pudieron sincronizar los complementos de ranking. Intenta de nuevo o contacta a soporte si el problema continúa.",
       };
     }
   }
