@@ -310,8 +310,9 @@ export async function updateCalculoStatusAction(
   if (actionInput === "calcular") {
     try {
       const t0 = Date.now();
-      const cached = getCachedState(user.id, periodMonth);
-      const processResult = cached?.processPreview ?? await runCalculoProcess(periodMonth, { persist: false });
+      // Cada corrida solicitada debe reflejar la version vigente de objetivos y el Status actual.
+      clearCachedState(user.id, periodMonth);
+      const processResult = await runCalculoProcess(periodMonth, { persist: false });
       setCachedState(user.id, periodMonth, { processPreview: processResult });
       const elapsedSec = ((Date.now() - t0) / 1000).toFixed(1);
       calculationSummary = {
@@ -326,22 +327,20 @@ export async function updateCalculoStatusAction(
         totalResultado: processResult.totalResultado,
       };
       // Precalienta preview 1.2 para que la UI responda mas rapido.
-      if (!cached?.resultadosPreview) {
-        const resultadosPreview = await buildResultadosV2PreviewWithOptions(periodMonth, {
-          baseAssignments: processResult.previewRows as Array<{
-            ruta: string;
-            teamid: string;
-            plan: string;
-            plan_type_name: string | null;
-            brick: string | null;
-            molecula_producto: string | null;
-            objetivo: number;
-            valor: number;
-            resultado: number;
-          }>,
-        });
-        setCachedState(user.id, periodMonth, { resultadosPreview });
-      }
+      const resultadosPreview = await buildResultadosV2PreviewWithOptions(periodMonth, {
+        baseAssignments: processResult.previewRows as Array<{
+          ruta: string;
+          teamid: string;
+          plan: string;
+          plan_type_name: string | null;
+          brick: string | null;
+          molecula_producto: string | null;
+          objetivo: number;
+          valor: number;
+          resultado: number;
+        }>,
+      });
+      setCachedState(user.id, periodMonth, { resultadosPreview });
       calculationSummary = { ...calculationSummary, _elapsedSec: Number(elapsedSec) } as typeof calculationSummary;
     } catch (error) {
       return {
@@ -481,8 +480,8 @@ export async function previewCalculoProcessAction(
   }
 
   try {
-    const cached = getCachedState(user.id, periodMonth);
-    const preview = cached?.processPreview ?? await runCalculoProcess(periodMonth, { persist: false });
+    clearCachedState(user.id, periodMonth);
+    const preview = await runCalculoProcess(periodMonth, { persist: false });
     setCachedState(user.id, periodMonth, { processPreview: preview });
     return {
       ok: true,
