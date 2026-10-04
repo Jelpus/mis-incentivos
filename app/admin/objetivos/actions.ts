@@ -3,6 +3,7 @@
 import { revalidatePath, revalidateTag } from "next/cache";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllSupabaseRows } from "@/lib/supabase/paginated-query";
 import {
   getMissingRelationName,
   isMissingRelationError,
@@ -20,6 +21,26 @@ import type { DrillDownColumnMapping } from "@/lib/admin/objetivos/drill-down-co
 const MAX_OBJECTIVES_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
 const MAX_OBJECTIVES_COMBINED_SIZE_BYTES = 75 * 1024 * 1024; // keep below Next Server Actions 80MB
 const DEFAULT_OBJECTIVES_FILES_BUCKET = "team-objective-files";
+
+type StatusPreviewRow = {
+  territorio_individual: string | null;
+  team_id: string | null;
+  is_active: boolean | null;
+  is_vacant: boolean | null;
+};
+
+type RuleVersionPreviewRow = {
+  team_id: string | null;
+  version_no: number | null;
+  created_at: string | null;
+  rule_definition_id: string | null;
+};
+
+type RuleItemPreviewRow = {
+  definition_id: string | null;
+  product_name: string | null;
+  plan_type_name: string | null;
+};
 
 type StoredObjectiveFileMetadata = {
   source: "private" | "drilldown";
@@ -39,6 +60,7 @@ export type PreviewObjetivosResult =
     summary: {
       parsedRows: number;
       validRows: number;
+      vacantTargetRows: number;
       invalidRows: number;
       skippedByPeriod: number;
       duplicatedRows: number;
@@ -351,94 +373,71 @@ async function runPreview(params: {
       },
     ]);
 
-    const [statusRowsResult, versionRowsResult] = await Promise.all([
-      supabase
-        .from("sales_force_status")
-        .select("territorio_individual, team_id, is_active, is_vacant")
-        .eq("period_month", periodMonth)
-        .eq("is_deleted", false),
-      supabase
-        .from("team_incentive_rule_versions")
-        .select("team_id, version_no, created_at, rule_definition_id")
-        .eq("period_month", periodMonth),
-    ]);
-
-    if (statusRowsResult.error) {
+    let statusRows: StatusPreviewRow[];
+    let versionRows: RuleVersionPreviewRow[];
+    try {
+      [statusRows, versionRows] = await Promise.all([
+        fetchAllSupabaseRows<StatusPreviewRow>({
+          context: "No se pudo cargar el Status para validar objetivos",
+          pageQuery: (from, to) => supabase
+            .from("sales_force_status")
+            .select("territorio_individual, team_id, is_active, is_vacant")
+            .eq("period_month", periodMonth)
+            .eq("is_deleted", false)
+            .order("id", { ascending: true })
+            .range(from, to),
+        }),
+        fetchAllSupabaseRows<RuleVersionPreviewRow>({
+          context: "No se pudieron cargar las reglas para validar objetivos",
+          pageQuery: (from, to) => supabase
+            .from("team_incentive_rule_versions")
+            .select("team_id, version_no, created_at, rule_definition_id")
+            .eq("period_month", periodMonth)
+            .order("id", { ascending: true })
+            .range(from, to),
+        }),
+      ]);
+    } catch (error) {
       return {
         ok: false as const,
-        message: `No se pudo cargar sales_force_status: ${statusRowsResult.error.message}`,
-      };
-    }
-    if (versionRowsResult.error) {
-      if (isMissingRelationError(versionRowsResult.error)) {
-        const tableName = getMissingRelationName(versionRowsResult.error) ?? "team_incentive_rule_versions";
-        return {
-          ok: false as const,
-          message: `No existe ${tableName}. Sin reglas versionadas no se puede validar cobertura de objetivos.`,
-        };
-      }
-      return {
-        ok: false as const,
-        message: `No se pudieron cargar versiones de reglas: ${versionRowsResult.error.message}`,
+        message: error instanceof Error ? error.message : "No se pudieron validar el Status y las reglas del periodo.",
       };
     }
 
     const definitionIds = Array.from(
       new Set(
-        (versionRowsResult.data ?? [])
+        versionRows
           .map((row) => String(row.rule_definition_id ?? "").trim())
           .filter((value) => value.length > 0),
       ),
     );
 
-    let ruleItemRows: Array<{
-      definition_id: string | null;
-      product_name: string | null;
-      plan_type_name: string | null;
-    }> = [];
+    let ruleItemRows: RuleItemPreviewRow[] = [];
 
     if (definitionIds.length > 0) {
-      const itemRowsResult = await supabase
-        .from("team_rule_definition_items")
-        .select("definition_id, product_name, plan_type_name")
-        .in("definition_id", definitionIds);
-
-      if (itemRowsResult.error) {
-        if (isMissingRelationError(itemRowsResult.error)) {
-          const tableName = getMissingRelationName(itemRowsResult.error) ?? "team_rule_definition_items";
-          return {
-            ok: false as const,
-            message: `No existe ${tableName}. Crea el esquema normalizado de reglas para validar objetivos.`,
-          };
-        }
+      try {
+        ruleItemRows = await fetchAllSupabaseRows<RuleItemPreviewRow>({
+          context: "No se pudieron cargar los productos de las reglas",
+          pageQuery: (from, to) => supabase
+            .from("team_rule_definition_items")
+            .select("definition_id, product_name, plan_type_name")
+            .in("definition_id", definitionIds)
+            .order("id", { ascending: true })
+            .range(from, to),
+        });
+      } catch (error) {
         return {
           ok: false as const,
-          message: `No se pudieron cargar items de reglas: ${itemRowsResult.error.message}`,
+          message: error instanceof Error ? error.message : "No se pudieron cargar los productos de las reglas.",
         };
       }
-
-      ruleItemRows = (itemRowsResult.data ?? []) as Array<{
-        definition_id: string | null;
-        product_name: string | null;
-        plan_type_name: string | null;
-      }>;
     }
 
     const computed = computeObjectivesPreview({
       parsedInput,
       selectedPeriodMonth: periodMonth,
-      statusRows: (statusRowsResult.data ?? []) as Array<{
-        territorio_individual: string | null;
-        team_id: string | null;
-        is_active: boolean | null;
-        is_vacant: boolean | null;
-      }>,
-      ruleVersionRows: (versionRowsResult.data ?? []) as Array<{
-        team_id: string | null;
-        version_no: number | null;
-        created_at: string | null;
-        rule_definition_id: string | null;
-      }>,
+      statusRows,
+      ruleVersionRows: versionRows,
       ruleItemRows,
     });
 

@@ -678,6 +678,13 @@ export function ObjetivosManagementCard({
             </div>
           </div>
 
+          {previewState.summary.vacantTargetRows > 0 ? (
+            <p className="mt-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+              {previewState.summary.vacantTargetRows} cuotas de territorios vacantes se conservaran en la version.
+              No generaran resultados mientras el Status mantenga esas plazas como vacantes.
+            </p>
+          ) : null}
+
           {previewState.summary.sourceBreakdown.length > 0 ? (
             <div className="mt-3 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-800">
               <p className="font-semibold text-neutral-900">Desglose por archivo</p>

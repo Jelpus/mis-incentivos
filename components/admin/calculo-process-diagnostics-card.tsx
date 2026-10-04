@@ -44,7 +44,7 @@ export function CalculoProcessDiagnosticsCard({ data }: Props) {
           <p className="text-xs uppercase tracking-wide text-neutral-500">Miembros elegibles</p>
           <p className="mt-1 text-2xl font-semibold text-neutral-900">{data.summary.eligibleMembers}</p>
           <p className="text-xs text-neutral-500">
-            Status total: {data.summary.totalMembersInStatus} | vacantes excluidos: {data.summary.excludedVacant}
+            Status total: {data.summary.totalMembersInStatus} | vacantes excluidos: {data.summary.excludedVacant} | ingresos posteriores al periodo: {data.summary.excludedFutureHire}
           </p>
         </div>
         <div className="rounded-xl border border-neutral-200 p-3">

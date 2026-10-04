@@ -4,6 +4,7 @@ import { getMissingRelationName, isMissingRelationError } from "@/lib/admin/ince
 import { computeEffectivePeriodCut, isBeforeEffectivePeriodCut, normalizeProductNameKey } from "@/lib/admin/period-settings/effective-period";
 import { loadPeriodSettingsForCalculation } from "@/lib/admin/period-settings/load-period-settings";
 import { isStandaloneNationalScopeMarker } from "@/lib/admin/objetivos/objective-method";
+import { isHiredAfterPeriod } from "@/lib/admin/calculo/member-eligibility";
 import { fetchAllSupabaseRows } from "@/lib/supabase/paginated-query";
 import {
   getRollingMonthColumnName,
@@ -711,21 +712,26 @@ export async function runCalculoProcess(
     parameters: [{ name: "periodo", type: "STRING", value: periodMonth.slice(0, 7) }],
   });
 
-  const statusResult = await queryWithRetry(() =>
-    supabase
-      .from("sales_force_status")
-      .select("territorio_individual, team_id, fecha_ingreso, is_active, is_vacant")
-      .eq("period_month", periodMonth)
-      .eq("is_deleted", false)
-      .eq("is_active", true),
-  );
+  const allStatusRows = await fetchAllSupabaseRows<StatusRow>({
+    context: "No se pudo leer sales_force_status",
+    pageQuery: async (from, to) => {
+      const result = await queryWithRetry(() => supabase
+        .from("sales_force_status")
+        .select("territorio_individual, team_id, fecha_ingreso, is_active, is_vacant")
+        .eq("period_month", periodMonth)
+        .eq("is_deleted", false)
+        .eq("is_active", true)
+        .order("id", { ascending: true })
+        .range(from, to));
+      return { data: (result.data ?? []) as StatusRow[], error: result.error };
+    },
+  });
 
-  if (statusResult.error) {
-    throw new Error(`No se pudo leer sales_force_status: ${statusResult.error.message}`);
-  }
-
-  const statusRows = ((statusResult.data ?? []) as StatusRow[]).filter((row) => {
-    return String(row.territorio_individual ?? "").trim() && String(row.team_id ?? "").trim();
+  const statusRows = allStatusRows.filter((row) => {
+    return row.is_vacant !== true
+      && !isHiredAfterPeriod(row.fecha_ingreso, periodMonth)
+      && String(row.territorio_individual ?? "").trim()
+      && String(row.team_id ?? "").trim();
   });
 
   const periodSettings = await loadPeriodSettingsForCalculation(periodMonth);
@@ -735,23 +741,21 @@ export async function runCalculoProcess(
 
   const uniqueTeamIds = Array.from(new Set(statusRows.map((row) => String(row.team_id ?? "").trim())));
 
-  const ruleVersionsResult = await queryWithRetry(() =>
-    supabase
-      .from("team_incentive_rule_versions")
-      .select("team_id, version_no, created_at, rule_definition_id")
-      .eq("period_month", periodMonth)
-      .in("team_id", uniqueTeamIds),
-  );
+  const ruleVersionRows = await fetchAllSupabaseRows<RuleVersionRow>({
+    context: "No se pudieron leer versiones de reglas",
+    pageQuery: async (from, to) => {
+      const result = await queryWithRetry(() => supabase
+        .from("team_incentive_rule_versions")
+        .select("team_id, version_no, created_at, rule_definition_id")
+        .eq("period_month", periodMonth)
+        .in("team_id", uniqueTeamIds)
+        .order("id", { ascending: true })
+        .range(from, to));
+      return { data: (result.data ?? []) as RuleVersionRow[], error: result.error };
+    },
+  });
 
-  if (ruleVersionsResult.error) {
-    if (isMissingRelationError(ruleVersionsResult.error)) {
-      const tableName = getMissingRelationName(ruleVersionsResult.error) ?? "team_incentive_rule_versions";
-      throw new Error(`No existe ${tableName}.`);
-    }
-    throw new Error(`No se pudieron leer versiones de reglas: ${ruleVersionsResult.error.message}`);
-  }
-
-  const latestRuleByTeam = pickLatestRuleByTeam((ruleVersionsResult.data ?? []) as RuleVersionRow[]);
+  const latestRuleByTeam = pickLatestRuleByTeam(ruleVersionRows);
   const definitionIds = Array.from(
     new Set(
       Array.from(latestRuleByTeam.values())
@@ -764,22 +768,18 @@ export async function runCalculoProcess(
   const sourcesByItemId = new Map<number, RuleItemSourceRow[]>();
 
   if (definitionIds.length > 0) {
-    const itemRowsResult = await queryWithRetry(() =>
-      supabase
-        .from("team_rule_definition_items")
-        .select("id, definition_id, product_name, plan_type_name, prod_weight")
-        .in("definition_id", definitionIds),
-    );
-
-    if (itemRowsResult.error) {
-      if (isMissingRelationError(itemRowsResult.error)) {
-        const tableName = getMissingRelationName(itemRowsResult.error) ?? "team_rule_definition_items";
-        throw new Error(`No existe ${tableName}.`);
-      }
-      throw new Error(`No se pudieron leer items de reglas: ${itemRowsResult.error.message}`);
-    }
-
-    const itemRows = (itemRowsResult.data ?? []) as RuleItemRow[];
+    const itemRows = await fetchAllSupabaseRows<RuleItemRow>({
+      context: "No se pudieron leer items de reglas",
+      pageQuery: async (from, to) => {
+        const result = await queryWithRetry(() => supabase
+          .from("team_rule_definition_items")
+          .select("id, definition_id, product_name, plan_type_name, prod_weight")
+          .in("definition_id", definitionIds)
+          .order("id", { ascending: true })
+          .range(from, to));
+        return { data: (result.data ?? []) as RuleItemRow[], error: result.error };
+      },
+    });
     for (const row of itemRows) {
       const definitionId = String(row.definition_id ?? "").trim();
       if (!definitionId) continue;
@@ -793,22 +793,20 @@ export async function runCalculoProcess(
       .filter((value) => Number.isFinite(value) && value > 0);
 
     if (itemIds.length > 0) {
-      const itemSourcesResult = await queryWithRetry(() =>
-        supabase
-          .from("team_rule_definition_item_sources")
-          .select("item_id, source_order, file_code, file_display, fuente, metric, molecula_producto")
-          .in("item_id", itemIds),
-      );
+      const itemSources = await fetchAllSupabaseRows<RuleItemSourceRow>({
+        context: "No se pudieron leer fuentes de reglas",
+        pageQuery: async (from, to) => {
+          const result = await queryWithRetry(() => supabase
+            .from("team_rule_definition_item_sources")
+            .select("item_id, source_order, file_code, file_display, fuente, metric, molecula_producto")
+            .in("item_id", itemIds)
+            .order("id", { ascending: true })
+            .range(from, to));
+          return { data: (result.data ?? []) as RuleItemSourceRow[], error: result.error };
+        },
+      });
 
-      if (itemSourcesResult.error) {
-        if (isMissingRelationError(itemSourcesResult.error)) {
-          const tableName = getMissingRelationName(itemSourcesResult.error) ?? "team_rule_definition_item_sources";
-          throw new Error(`No existe ${tableName}.`);
-        }
-        throw new Error(`No se pudieron leer fuentes de reglas: ${itemSourcesResult.error.message}`);
-      }
-
-      for (const sourceRow of (itemSourcesResult.data ?? []) as RuleItemSourceRow[]) {
+      for (const sourceRow of itemSources) {
         const itemId = Number(sourceRow.item_id ?? 0);
         if (!Number.isFinite(itemId) || itemId <= 0) continue;
         const current = sourcesByItemId.get(itemId) ?? [];

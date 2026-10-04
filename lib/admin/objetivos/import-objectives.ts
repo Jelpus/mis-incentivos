@@ -103,6 +103,7 @@ type ValidatedRow = ParsedInputRow & {
 export type ObjectivesPreviewSummary = {
   parsedRows: number;
   validRows: number;
+  vacantTargetRows: number;
   invalidRows: number;
   skippedByPeriod: number;
   duplicatedRows: number;
@@ -872,10 +873,10 @@ export function computeObjectivesPreview(params: {
     if (!route) continue;
 
     const routeKey = toRouteKey(route);
-    if (isVacant) {
-      vacantRoutes.add(routeKey);
-    }
-    if (!teamId || !isActive || isVacant) continue;
+    if (!teamId || !isActive) continue;
+    if (isVacant) vacantRoutes.add(routeKey);
+    // Guardar la cuota territorial aunque la plaza este vacante hoy: puede
+    // asignarse despues sin volver a recibir los archivos originales.
     routeToTeam.set(routeKey, { route, teamId });
   }
 
@@ -949,12 +950,6 @@ export function computeObjectivesPreview(params: {
     const routeKey = toRouteKey(row.territorioIndividual);
     const productKey = toProductKey(row.productName);
     const status = routeToTeam.get(routeKey);
-
-    // Si la ruta existe en status pero el periodo la marca como vacante,
-    // no se considera advertencia y tampoco se intenta insertar.
-    if (!status && vacantRoutes.has(routeKey)) {
-      continue;
-    }
 
     // Excluir placeholders de ruta para evitar ruido de advertencias.
     if (!status && isIgnoredRoutePlaceholder(row.territorioIndividual)) {
@@ -1072,6 +1067,7 @@ export function computeObjectivesPreview(params: {
 
   const expectedProductsByRoute = new Map<string, { teamId: string; products: Set<string> }>();
   for (const [routeKey, status] of routeToTeam.entries()) {
+    if (vacantRoutes.has(routeKey)) continue;
     const requiredProducts = requiredProductsByTeam.get(status.teamId);
     if (!requiredProducts || requiredProducts.size === 0) continue;
     expectedProductsByRoute.set(routeKey, { teamId: status.teamId, products: requiredProducts });
@@ -1143,6 +1139,7 @@ export function computeObjectivesPreview(params: {
   const summary: ObjectivesPreviewSummary = {
     parsedRows: params.parsedInput.rowsForPeriod.length,
     validRows: validRowsForInsert.length,
+    vacantTargetRows: validRowsForInsert.filter((row) => vacantRoutes.has(toRouteKey(row.territorioIndividual))).length,
     invalidRows: params.parsedInput.invalidRows.length + invalidRowsComputed.length,
     skippedByPeriod: params.parsedInput.skippedByPeriod,
     duplicatedRows,

@@ -1,6 +1,8 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isMissingRelationError } from "@/lib/admin/incentive-rules/shared";
 import { runCalculoProcess } from "@/lib/admin/calculo/run-calculo-process";
+import { isHiredAfterPeriod } from "@/lib/admin/calculo/member-eligibility";
+import { fetchAllSupabaseRows } from "@/lib/supabase/paginated-query";
 
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 220;
@@ -55,6 +57,8 @@ type StatusRow = {
   no_empleado: number | null;
   base_incentivos: number | null;
   territorio_padre: string | null;
+  is_vacant: boolean | null;
+  fecha_ingreso: string | null;
 };
 
 type AssignmentLike = {
@@ -384,34 +388,36 @@ export async function buildResultadosV2PreviewWithOptions(
   }
   const assignments = Array.from(assignmentMap.values());
 
-  const guaranteesResult = await queryWithRetry(() =>
-    supabase
-      .from("team_incentive_guarantees")
-      .select(
-        "scope_type, scope_value, rule_scope, rule_key, target_coverage, guarantee_payment_preference, is_active",
-      )
-      .eq("is_active", true)
-      .lte("guarantee_start_month", periodMonth)
-      .gte("guarantee_end_month", periodMonth),
-  );
-  if (guaranteesResult.error && !isMissingRelationError(guaranteesResult.error)) {
-    throw new Error(`No se pudo leer team_incentive_guarantees: ${guaranteesResult.error.message}`);
+  let guarantees: GuaranteeRow[] = [];
+  try {
+    guarantees = await fetchAllSupabaseRows<GuaranteeRow>({
+      context: "No se pudo leer team_incentive_guarantees",
+      pageQuery: (from, to) => queryWithRetry(() => supabase
+        .from("team_incentive_guarantees")
+        .select("id, scope_type, scope_value, rule_scope, rule_key, target_coverage, guarantee_payment_preference, is_active")
+        .eq("is_active", true)
+        .lte("guarantee_start_month", periodMonth)
+        .gte("guarantee_end_month", periodMonth)
+        .order("id", { ascending: true })
+        .range(from, to)),
+    });
+  } catch (error) {
+    if (!isMissingRelationError(error instanceof Error ? { message: error.message } : null)) throw error;
   }
-  const guarantees = (guaranteesResult.data ?? []) as GuaranteeRow[];
 
-  const statusResult = await queryWithRetry(() =>
-    supabase
+  const statusRows = (await fetchAllSupabaseRows<StatusRow>({
+    context: "No se pudo leer sales_force_status",
+    pageQuery: (from, to) => queryWithRetry(() => supabase
       .from("sales_force_status")
-      .select("territorio_individual, team_id, linea_principal, nombre_completo, no_empleado, base_incentivos, territorio_padre")
+      .select("id, territorio_individual, team_id, linea_principal, nombre_completo, no_empleado, base_incentivos, territorio_padre, is_vacant, fecha_ingreso")
       .eq("period_month", periodMonth)
       .eq("is_deleted", false)
-      .eq("is_active", true),
-  );
-  if (statusResult.error) {
-    throw new Error(`No se pudo leer sales_force_status: ${statusResult.error.message}`);
-  }
-  const statusRows = ((statusResult.data ?? []) as StatusRow[]).filter((row) => {
-    return String(row.territorio_individual ?? "").trim() && String(row.team_id ?? "").trim();
+      .eq("is_active", true)
+      .order("id", { ascending: true })
+      .range(from, to)),
+  })).filter((row) => {
+    return row.is_vacant !== true && !isHiredAfterPeriod(row.fecha_ingreso, periodMonth) &&
+      String(row.territorio_individual ?? "").trim() && String(row.team_id ?? "").trim();
   });
   const statusByRoute = new Map<string, StatusRow>();
   for (const row of statusRows) {
@@ -426,17 +432,17 @@ export async function buildResultadosV2PreviewWithOptions(
       ...statusRows.map((row) => String(row.team_id ?? "").trim()),
     ].filter((value) => value.length > 0)),
   );
-  const ruleVersionsResult = await queryWithRetry(() =>
-    supabase
+  const ruleVersions = teamIds.length > 0 ? await fetchAllSupabaseRows<RuleVersionRow>({
+    context: "No se pudieron leer versiones de reglas",
+    pageQuery: (from, to) => queryWithRetry(() => supabase
       .from("team_incentive_rule_versions")
-      .select("team_id, version_no, created_at, rule_definition_id")
+      .select("id, team_id, version_no, created_at, rule_definition_id")
       .eq("period_month", periodMonth)
-      .in("team_id", teamIds),
-  );
-  if (ruleVersionsResult.error) {
-    throw new Error(`No se pudieron leer versiones de reglas: ${ruleVersionsResult.error.message}`);
-  }
-  const latestRuleByTeam = pickLatestRuleByTeam((ruleVersionsResult.data ?? []) as RuleVersionRow[]);
+      .in("team_id", teamIds)
+      .order("id", { ascending: true })
+      .range(from, to)),
+  }) : [];
+  const latestRuleByTeam = pickLatestRuleByTeam(ruleVersions);
   const definitionIds = Array.from(
     new Set(
       Array.from(latestRuleByTeam.values())
@@ -456,19 +462,20 @@ export async function buildResultadosV2PreviewWithOptions(
   if (definitionIds.length > 0) {
     const itemChunks = chunkArray(definitionIds, IN_CHUNK_SIZE);
     const itemResults = await mapChunksWithConcurrency(itemChunks, (definitionChunk) =>
-      queryWithRetry(() =>
+      fetchAllSupabaseRows<RuleItemRow>({
+        context: "No se pudieron leer team_rule_definition_items",
+        pageQuery: (from, to) => queryWithRetry(() =>
         supabase
           .from("team_rule_definition_items")
-          .select("definition_id, product_name, plan_type_name, prod_weight, agrupador, elemento, calcular_en_valores, precio_promedio, curva_pago")
-          .in("definition_id", definitionChunk),
-      ),
+          .select("id, definition_id, product_name, plan_type_name, prod_weight, agrupador, elemento, calcular_en_valores, precio_promedio, curva_pago")
+          .in("definition_id", definitionChunk)
+          .order("id", { ascending: true })
+          .range(from, to)),
+      }),
     );
 
     for (const itemsResult of itemResults) {
-      if (itemsResult.error) {
-        throw new Error(`No se pudieron leer team_rule_definition_items: ${itemsResult.error.message}`);
-      }
-      for (const item of (itemsResult.data ?? []) as RuleItemRow[]) {
+      for (const item of itemsResult) {
         const definitionId = String(item.definition_id ?? "").trim();
         if (!definitionId) continue;
         const teamId = teamIdByDefinitionId.get(definitionId);
@@ -508,18 +515,19 @@ export async function buildResultadosV2PreviewWithOptions(
   const pointsByCurveId = new Map<string, Array<{ cobertura: number; pago: number }>>();
   const curveMetaChunks = chunkArray(referencedCurveIds, IN_CHUNK_SIZE);
   const curveMetaResults = await mapChunksWithConcurrency(curveMetaChunks, (curveChunk) =>
-    queryWithRetry(() =>
+    fetchAllSupabaseRows<PayCurveRow>({
+      context: "No se pudieron leer curvas de pago",
+      pageQuery: (from, to) => queryWithRetry(() =>
       supabase
         .from("team_incentive_pay_curves")
         .select("id, curve_name")
-        .in("id", curveChunk),
-    ),
+        .in("id", curveChunk)
+        .order("id", { ascending: true })
+        .range(from, to)),
+    }),
   );
   for (const curveMetaResult of curveMetaResults) {
-    if (curveMetaResult.error) {
-      throw new Error(`No se pudieron leer curvas de pago: ${curveMetaResult.error.message}`);
-    }
-    for (const curve of (curveMetaResult.data ?? []) as PayCurveRow[]) {
+    for (const curve of curveMetaResult) {
       const curveId = String(curve.id ?? "").trim();
       if (!curveId) continue;
       curveNameById.set(curveId, String(curve.curve_name ?? "").trim() || curveId);
@@ -527,18 +535,19 @@ export async function buildResultadosV2PreviewWithOptions(
   }
   const curveChunks = chunkArray(referencedCurveIds, IN_CHUNK_SIZE);
   const pointsResults = await mapChunksWithConcurrency(curveChunks, (curveChunk) =>
-    queryWithRetry(() =>
+    fetchAllSupabaseRows<PayCurvePointRow>({
+      context: "No se pudieron leer puntos de curvas",
+      pageQuery: (from, to) => queryWithRetry(() =>
       supabase
         .from("team_incentive_pay_curve_points")
-        .select("curve_id, cobertura, pago")
-        .in("curve_id", curveChunk),
-    ),
+        .select("id, curve_id, cobertura, pago")
+        .in("curve_id", curveChunk)
+        .order("id", { ascending: true })
+        .range(from, to)),
+    }),
   );
   for (const pointsResult of pointsResults) {
-    if (pointsResult.error) {
-      throw new Error(`No se pudieron leer puntos de curvas: ${pointsResult.error.message}`);
-    }
-    for (const point of (pointsResult.data ?? []) as PayCurvePointRow[]) {
+    for (const point of pointsResult) {
       const curveId = String(point.curve_id ?? "").trim();
       if (!curveId) continue;
       const bucket = pointsByCurveId.get(curveId) ?? [];

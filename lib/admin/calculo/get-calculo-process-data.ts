@@ -5,6 +5,7 @@ import {
   normalizePeriodMonthInput,
 } from "@/lib/admin/incentive-rules/shared";
 import { fetchAllSupabaseRows } from "@/lib/supabase/paginated-query";
+import { isHiredAfterPeriod } from "@/lib/admin/calculo/member-eligibility";
 
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 220;
@@ -16,6 +17,7 @@ type SalesForceMemberRow = {
   team_id: string | null;
   is_vacant: boolean | null;
   is_active: boolean | null;
+  fecha_ingreso: string | null;
 };
 
 type RuleVersionRow = {
@@ -94,6 +96,7 @@ export type CalculoProcessData = {
     totalMembersInStatus: number;
     eligibleMembers: number;
     excludedVacant: number;
+    excludedFutureHire: number;
     excludedMissingRouteOrTeam: number;
     teamsDetected: number;
     teamsWithRules: number;
@@ -187,27 +190,33 @@ export async function getCalculoProcessData(periodMonthInput: string): Promise<C
   const storageMessages: string[] = [];
   let storageReady = true;
 
-  const membersResult = await queryWithRetry(() =>
-    supabase
-      .from("sales_force_status")
-      .select("no_empleado, nombre_completo, territorio_individual, team_id, is_vacant, is_active")
-      .eq("period_month", periodMonth)
-      .eq("is_deleted", false)
-      .eq("is_active", true),
-  );
-
-  if (membersResult.error) {
-    throw new Error(`No se pudo leer sales_force_status: ${membersResult.error.message}`);
-  }
-
-  const allMembers = (membersResult.data ?? []) as SalesForceMemberRow[];
+  const allMembers = await fetchAllSupabaseRows<SalesForceMemberRow>({
+    context: "No se pudo leer sales_force_status",
+    pageQuery: async (from, to) => {
+      const result = await queryWithRetry(() => supabase
+        .from("sales_force_status")
+        .select("no_empleado, nombre_completo, territorio_individual, team_id, is_vacant, is_active, fecha_ingreso")
+        .eq("period_month", periodMonth)
+        .eq("is_deleted", false)
+        .eq("is_active", true)
+        .order("id", { ascending: true })
+        .range(from, to));
+      return { data: (result.data ?? []) as SalesForceMemberRow[], error: result.error };
+    },
+  });
   const eligibleMembersRaw: SalesForceMemberRow[] = [];
   let excludedVacant = 0;
+  let excludedFutureHire = 0;
   let excludedMissingRouteOrTeam = 0;
 
   for (const row of allMembers) {
     if (row.is_vacant === true) {
       excludedVacant += 1;
+      continue;
+    }
+    if (isHiredAfterPeriod(row.fecha_ingreso, periodMonth)) {
+      excludedFutureHire += 1;
+      continue;
     }
     const route = String(row.territorio_individual ?? "").trim();
     const teamId = String(row.team_id ?? "").trim();
@@ -536,6 +545,7 @@ export async function getCalculoProcessData(periodMonthInput: string): Promise<C
       totalMembersInStatus: allMembers.length,
       eligibleMembers: eligibleMembersRaw.length,
       excludedVacant,
+      excludedFutureHire,
       excludedMissingRouteOrTeam,
       teamsDetected,
       teamsWithRules,

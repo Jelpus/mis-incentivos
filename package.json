@@ -11,6 +11,7 @@
     "test:ranking-identity": "node --experimental-strip-types tests/ranking-participant-identity.test.mjs",
     "test:ranking-adjustment-periods": "node --experimental-strip-types --test tests/ranking-adjustment-period-status.test.mjs",
     "test:supabase-pagination": "node --experimental-strip-types --test tests/supabase-paginated-query.test.mjs",
+    "test:objectives-vacant-route": "node --experimental-strip-types --experimental-loader ./tests/ts-paths-loader.mjs --test tests/objectives-vacant-route.test.mjs",
     "ranking:cpd:reprocess:dry-run": "node --env-file=.env.local --experimental-strip-types scripts/reprocess-ranking-cpd.mjs",
     "ranking:cpd:reprocess:apply": "node --env-file=.env.local --experimental-strip-types scripts/reprocess-ranking-cpd.mjs --apply",
     "changelog:add": "node scripts/platform-change-log.mjs add",
