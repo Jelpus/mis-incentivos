@@ -9,6 +9,7 @@ import { createImportBatchFromExcel } from "@/lib/import-engine/supabase-import-
 import { previewSalesForceImportBatch } from "@/lib/import-engine/preview-sales-force";
 import { previewManagerImportBatch } from "@/lib/import-engine/preview-manager";
 import { tryParseFlexibleDate } from "@/lib/import-engine/cleaners";
+import { getImportErrorFeedback } from "@/lib/admin/status/get-import-error-feedback";
 import {
   ADMIN_STATUS_DEPENDENT_CACHE_TAGS,
   ADMIN_STATUS_DEPENDENT_PATHS,
@@ -49,7 +50,7 @@ type ResolveMappingsResult =
 
 type ApplyImportBatchResult =
   | { ok: true; message: string; batchId: string }
-  | { ok: false; message: string; batchId?: string };
+  | { ok: false; message: string; batchId?: string; issues?: string[]; technicalDetails?: string };
 
 type SaveSalesForceStatusResult =
   | { ok: true; message: string }
@@ -750,7 +751,7 @@ export async function applyImportBatchAction(
 
   const { data: batch, error: batchError } = await supabase
     .from("import_batches")
-    .select("id, status, preview_summary")
+    .select("id, status, preview_summary, period_month, import_type:import_types!inner(code)")
     .eq("id", batchId)
     .single();
 
@@ -762,10 +763,23 @@ export async function applyImportBatchAction(
     };
   }
 
+  const batchImportType = batch.import_type as unknown as { code: string };
+  if (batchImportType.code !== importTypeCode) {
+    return {
+      ok: false,
+      message: "El tipo de carga no coincide con el lote. Recarga esta página y vuelve a intentarlo.",
+      batchId,
+    };
+  }
+
   if (batch.status !== "preview_ready") {
     return {
       ok: false,
-      message: `El batch no está listo para aplicar. Estado actual: ${batch.status}.`,
+      message: batch.status === "applied"
+        ? "Esta carga ya fue aplicada. Vuelve a Status para consultar los registros guardados."
+        : batch.status === "mapping_required"
+          ? "Antes de aplicar la carga, completa la asignación de columnas y genera la vista previa."
+          : "Esta carga todavía no está lista para aplicarse. Recarga la página y genera o revisa la vista previa antes de continuar.",
       batchId,
     };
   }
@@ -805,7 +819,7 @@ export async function applyImportBatchAction(
   if (invalidRows > 0) {
     return {
       ok: false,
-      message: "No se puede aplicar el batch porque existen filas inválidas.",
+      message: `No se puede aplicar la carga porque hay ${invalidRows} filas con errores. Abre «Ver incidencias detectadas» para consultar las filas y los campos que debes corregir; después vuelve a cargar el Excel corregido.`,
       batchId,
     };
   }
@@ -836,7 +850,13 @@ export async function applyImportBatchAction(
   if (applyError) {
     return {
       ok: false,
-      message: applyError.message,
+      ...await getImportErrorFeedback({
+        supabase,
+        error: applyError,
+        batchId,
+        importTypeCode,
+        periodMonth: batch.period_month,
+      }),
       batchId,
     };
   }

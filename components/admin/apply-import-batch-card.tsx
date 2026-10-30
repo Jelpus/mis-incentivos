@@ -20,7 +20,7 @@ type Props = {
 
 type ActionState =
   | { ok: true; message: string; batchId: string }
-  | { ok: false; message: string; batchId?: string }
+  | { ok: false; message: string; batchId?: string; issues?: string[]; technicalDetails?: string }
   | null;
 
 export function ApplyImportBatchCard({
@@ -137,6 +137,7 @@ export function ApplyImportBatchCard({
 
           {state ? (
             <div
+              role={state.ok ? "status" : "alert"}
               className={`mt-4 rounded-2xl px-4 py-3 text-sm ${
                 state.ok
                   ? "bg-emerald-50 text-emerald-700"
@@ -144,6 +145,20 @@ export function ApplyImportBatchCard({
               }`}
             >
               <p>{state.message}</p>
+              {!state.ok && state.issues?.length ? (
+                <div className="mt-3">
+                  <p className="font-medium">Registros relacionados con el error:</p>
+                  <ul className="mt-2 list-disc space-y-2 break-words pl-5">
+                    {state.issues.map((issue, index) => <li key={index}>{issue}</li>)}
+                  </ul>
+                </div>
+              ) : null}
+              {!state.ok && state.technicalDetails ? (
+                <details className="mt-3">
+                  <summary className="cursor-pointer font-medium">Detalle técnico para soporte</summary>
+                  <pre className="mt-2 whitespace-pre-wrap break-words text-xs">{state.technicalDetails}</pre>
+                </details>
+              ) : null}
               {state.ok ? (
                 <p className="mt-1">
                   {nextBatchId

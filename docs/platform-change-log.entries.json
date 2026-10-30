@@ -222,5 +222,12 @@
     "route": "/admin/ajustes-ranking",
     "currentState": "La pagina cargaba solo el ultimo periodo elegible y el selector principal no se mostraba; el filtro interno parecia ofrecer unicamente mayo.",
     "modifiedState": "Se muestra un selector principal para cambiar entre periodos aprobados o publicados, se elimina el filtro mensual redundante y el servidor bloquea crear o editar ajustes durante borrador o precalculo."
+  },
+  {
+    "sourceKey": "2026-10-30-admin-status-5f55dc38ee",
+    "date": "2026-10-30",
+    "route": "/admin/status",
+    "currentState": "Al aplicar una carga de Status se mostraban errores tecnicos sin identificar claramente los datos relacionados ni como corregirlos.",
+    "modifiedState": "Los errores de carga explican el campo y valor rechazados, muestran personas y filas relacionadas cuando hay informacion suficiente, indican como corregir la carga y conservan un detalle tecnico desplegable para soporte."
   }
 ]
