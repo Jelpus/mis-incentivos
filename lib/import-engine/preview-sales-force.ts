@@ -16,6 +16,7 @@ import {
 } from "./validators";
 
 import { inferVacancyFromName } from "./vacancy";
+import { getRetiredStatusTerritories, getStatusSnapshotDuplicateIssues, statusTerritoryKey } from "./status-snapshot";
 
 type ExistingSalesForceRecord = {
   id: string;
@@ -31,6 +32,8 @@ type ExistingSalesForceRecord = {
   fecha_ingreso: string | null;
   team_id: string | null;
   base_incentivos: number | null;
+  is_vacant: boolean;
+  is_active: boolean;
 };
 
 type ImportRowSource = {
@@ -121,9 +124,11 @@ function comparableSalesForceData(data: {
   team_id?: unknown;
   base_incentivos?: unknown;
   is_vacant?: unknown;
+  is_active?: unknown;
 }) {
   return {
     is_vacant: data.is_vacant ?? false,
+    is_active: data.is_active ?? true,
     linea_principal: data.linea_principal ?? null,
     parrilla: data.parrilla ?? null,
     nombre_completo: data.nombre_completo ?? null,
@@ -139,12 +144,6 @@ function comparableSalesForceData(data: {
   };
 }
 
-function keyFromUnknown(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  const normalized = String(value).trim().toLowerCase();
-  return normalized.length > 0 ? normalized : null;
-}
-
 function chunk<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
 
@@ -156,36 +155,23 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 function buildExistingRecordIndexes(records: ExistingSalesForceRecord[]) {
-  const byNoEmpleado = new Map<string, ExistingSalesForceRecord>();
   const byTerritorio = new Map<string, ExistingSalesForceRecord>();
-  const byCorreo = new Map<string, ExistingSalesForceRecord>();
 
   for (const record of records) {
-    const noEmpleadoKey = keyFromUnknown(record.no_empleado);
-    const territorioKey = keyFromUnknown(record.territorio_individual);
-    const correoKey = keyFromUnknown(record.correo_electronico);
-
-    if (noEmpleadoKey && !byNoEmpleado.has(noEmpleadoKey)) {
-      byNoEmpleado.set(noEmpleadoKey, record);
-    }
+    const territorioKey = statusTerritoryKey(record.territorio_individual);
 
     if (territorioKey && !byTerritorio.has(territorioKey)) {
       byTerritorio.set(territorioKey, record);
     }
-
-    if (correoKey && !byCorreo.has(correoKey)) {
-      byCorreo.set(correoKey, record);
-    }
   }
 
-  return { byNoEmpleado, byTerritorio, byCorreo };
+  return { byTerritorio };
 }
 
 export async function previewSalesForceImportBatch(
   batchId: string,
+  supabase = createAdminClient(),
 ): Promise<PreviewSalesForceBatchResult> {
-  const supabase = createAdminClient();
-
   if (!supabase) {
     throw new Error("Admin client not available");
   }
@@ -251,7 +237,9 @@ export async function previewSalesForceImportBatch(
             ciudad,
             fecha_ingreso,
             team_id,
-            base_incentivos
+            base_incentivos,
+            is_vacant,
+            is_active
           `)
           .eq("period_month", periodMonth)
           .eq("is_deleted", false)
@@ -360,15 +348,8 @@ export async function previewSalesForceImportBatch(
       actionType = "invalid";
       invalidRows += 1;
     } else {
-      const noEmpleadoKey = keyFromUnknown(cleanedData.no_empleado);
-      const territorioKey = keyFromUnknown(cleanedData.territorio_individual);
-      const correoKey = keyFromUnknown(cleanedData.correo_electronico);
-
-      const existingRecord =
-        (noEmpleadoKey ? indexes.byNoEmpleado.get(noEmpleadoKey) : null) ??
-        (territorioKey ? indexes.byTerritorio.get(territorioKey) : null) ??
-        (correoKey ? indexes.byCorreo.get(correoKey) : null) ??
-        null;
+      const territorioKey = statusTerritoryKey(cleanedData.territorio_individual);
+      const existingRecord = territorioKey ? indexes.byTerritorio.get(territorioKey) : null;
 
       if (!existingRecord) {
         actionType = "insert";
@@ -421,6 +402,22 @@ export async function previewSalesForceImportBatch(
     });
   }
 
+  const duplicateIssues = getStatusSnapshotDuplicateIssues(pendingRowUpdates, "sales_force_status");
+  for (const row of pendingRowUpdates) {
+    const issues = duplicateIssues.get(row.id);
+    if (!issues) continue;
+    if (row.action_type !== "invalid") {
+      validRows -= 1;
+      invalidRows += 1;
+      if (row.action_type === "insert") insertRows -= 1;
+      if (row.action_type === "update") updateRows -= 1;
+      if (row.action_type === "noop") noopRows -= 1;
+    }
+    row.action_type = "invalid";
+    row.validation_errors.push(...issues);
+  }
+  const retiredRecords = getRetiredStatusTerritories(pendingRowUpdates, existingRecords, "sales_force_status");
+
   for (const updateChunk of chunk(pendingRowUpdates, 500)) {
     const { error: updateRowsError } = await supabase
       .from("import_rows")
@@ -432,6 +429,8 @@ export async function previewSalesForceImportBatch(
   }
 
   const previewSummary = {
+    apply_mode: "full_period",
+    retired_rows: retiredRecords.length,
     total_rows: totalRows,
     valid_rows: validRows,
     invalid_rows: invalidRows,

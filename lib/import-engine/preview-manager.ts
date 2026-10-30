@@ -11,6 +11,18 @@ import {
   type ValidationIssue,
 } from "./validators";
 import { inferVacancyFromName } from "./vacancy";
+import { getRetiredStatusTerritories, getStatusSnapshotDuplicateIssues, statusTerritoryKey } from "./status-snapshot";
+
+type ExistingManager = {
+  id: string;
+  territorio_manager: string;
+  nombre_manager: string;
+  correo_manager: string | null;
+  no_empleado_manager: number | null;
+  team_id: string | null;
+  is_active: boolean;
+  is_vacant: boolean;
+};
 
 type PreviewManagerBatchResult = {
   batchId: string;
@@ -55,9 +67,8 @@ function hasText(value: unknown): boolean {
 
 export async function previewManagerImportBatch(
   batchId: string,
+  supabase = createAdminClient(),
 ): Promise<PreviewManagerBatchResult> {
-  const supabase = createAdminClient();
-
   if (!supabase) {
     throw new Error("Admin client not available");
   }
@@ -95,13 +106,21 @@ export async function previewManagerImportBatch(
       return { data: (result.data ?? []) as ImportRowSource[], error: result.error };
     },
   });
+  const existingRecords = await fetchAllSupabaseRows<ExistingManager>({
+    context: `No se pudieron leer los managers de ${batch.period_month}`,
+    pageQuery: async (from, to) => supabase.from("manager_status")
+      .select("id, territorio_manager, nombre_manager, correo_manager, no_empleado_manager, team_id, is_active, is_vacant")
+      .eq("period_month", batch.period_month).eq("is_deleted", false)
+      .order("id", { ascending: true }).range(from, to),
+  });
+  const byTerritory = new Map(existingRecords.map((record) => [statusTerritoryKey(record.territorio_manager), record]));
 
   let totalRows = 0;
   let validRows = 0;
   let invalidRows = 0;
   let insertRows = 0;
-  const updateRows = 0;
-  const noopRows = 0;
+  let updateRows = 0;
+  let noopRows = 0;
 
   const pendingRowUpdates: Array<{
     id: string;
@@ -178,14 +197,21 @@ export async function previewManagerImportBatch(
       });
     }
 
-    const actionType: "insert" | "update" | "noop" | "invalid" =
-      validationErrors.length > 0 ? "invalid" : "insert";
+    const existing = byTerritory.get(statusTerritoryKey(cleanedData.territorio_manager));
+    const sameData = existing && ["nombre_manager", "correo_manager", "no_empleado_manager", "team_id", "is_active", "is_vacant"].every((field) => {
+      const incoming = cleanedData[field] ?? (field === "is_active" ? true : field === "is_vacant" ? false : null);
+      return incoming === existing[field as keyof ExistingManager];
+    });
+    const actionType: "insert" | "update" | "noop" | "invalid" = validationErrors.length > 0
+      ? "invalid" : !existing ? "insert" : sameData ? "noop" : "update";
 
     if (actionType === "invalid") {
       invalidRows += 1;
     } else {
       validRows += 1;
-      insertRows += 1;
+      if (actionType === "insert") insertRows += 1;
+      if (actionType === "update") updateRows += 1;
+      if (actionType === "noop") noopRows += 1;
     }
 
     pendingRowUpdates.push({
@@ -198,10 +224,26 @@ export async function previewManagerImportBatch(
       validation_errors: validationErrors,
       warnings,
       action_type: actionType,
-      target_record_id: null,
-      action_details: {},
+      target_record_id: existing?.id ?? null,
+      action_details: existing ? { existing_status_id: existing.id } : {},
     });
   }
+
+  const duplicateIssues = getStatusSnapshotDuplicateIssues(pendingRowUpdates, "manager_status");
+  for (const row of pendingRowUpdates) {
+    const issues = duplicateIssues.get(row.id);
+    if (!issues) continue;
+    if (row.action_type !== "invalid") {
+      validRows -= 1;
+      invalidRows += 1;
+      if (row.action_type === "insert") insertRows -= 1;
+      if (row.action_type === "update") updateRows -= 1;
+      if (row.action_type === "noop") noopRows -= 1;
+    }
+    row.action_type = "invalid";
+    row.validation_errors.push(...issues);
+  }
+  const retiredRecords = getRetiredStatusTerritories(pendingRowUpdates, existingRecords, "manager_status");
 
   for (const updateChunk of chunk(pendingRowUpdates, 500)) {
     const { error: updateRowsError } = await supabase
@@ -214,6 +256,8 @@ export async function previewManagerImportBatch(
   }
 
   const previewSummary = {
+    apply_mode: "full_period",
+    retired_rows: retiredRecords.length,
     total_rows: totalRows,
     valid_rows: validRows,
     invalid_rows: invalidRows,

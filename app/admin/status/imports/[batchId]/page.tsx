@@ -162,6 +162,7 @@ export default async function StatusImportBatchPage({ params, searchParams }: Pa
                             insertRows={previewData.summary.insert_rows}
                             updateRows={previewData.summary.update_rows}
                             noopRows={previewData.summary.noop_rows}
+                            retiredRows={previewData.summary.retired_rows}
                             nextBatchId={nextBatchId}
                             flowStep={flowStep}
                             flowTotal={flowTotal}

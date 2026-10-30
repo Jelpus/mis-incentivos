@@ -784,19 +784,16 @@ export async function applyImportBatchAction(
     };
   }
 
-  if (importTypeCode === "sales_force_status") {
-    try {
+  try {
+    if (importTypeCode === "sales_force_status") {
       await previewSalesForceImportBatch(batchId);
-    } catch (error) {
-      return {
-        ok: false,
-        message:
-          error instanceof Error
-            ? `No se pudo regenerar preview SVA antes de aplicar: ${error.message}`
-            : "No se pudo regenerar preview SVA antes de aplicar.",
-        batchId,
-      };
+    } else if (importTypeCode === "manager_status") {
+      await previewManagerImportBatch(batchId);
     }
+  } catch (error) {
+    return { ok: false, message: error instanceof Error
+      ? `No se pudo actualizar la vista previa antes de aplicar: ${error.message}`
+      : "No se pudo actualizar la vista previa antes de aplicar.", batchId };
   }
 
   const { data: refreshedBatch, error: refreshedBatchError } = await supabase
@@ -824,14 +821,7 @@ export async function applyImportBatchAction(
     };
   }
 
-  const applyRpcName =
-    importTypeCode === "sales_force_status"
-      ? "apply_import_batch_sales_force_status"
-      : importTypeCode === "manager_status"
-        ? "apply_import_batch_manager_status"
-        : null;
-
-  if (!applyRpcName) {
+  if (importTypeCode !== "sales_force_status" && importTypeCode !== "manager_status") {
     return {
       ok: false,
       message: `Todavía no existe apply para el import type "${importTypeCode}".`,
@@ -840,7 +830,7 @@ export async function applyImportBatchAction(
   }
 
   const { data: applyResult, error: applyError } = await supabase.rpc(
-    applyRpcName,
+    "apply_import_batch_status_snapshot",
     {
       p_batch_id: batchId,
       p_actor_user_id: user.id,
@@ -848,6 +838,12 @@ export async function applyImportBatchAction(
   );
 
   if (applyError) {
+    if (applyError.code === "PGRST202") {
+      return { ok: false, batchId, message: "La sustitución completa de Status todavía no está habilitada en la base de datos. Solicita al administrador que aplique la actualización antes de reintentar esta carga." };
+    }
+    if (applyError.code === "P0001") {
+      return { ok: false, batchId, message: applyError.message };
+    }
     return {
       ok: false,
       ...await getImportErrorFeedback({

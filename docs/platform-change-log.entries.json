@@ -229,5 +229,12 @@
     "route": "/admin/status",
     "currentState": "Al aplicar una carga de Status se mostraban errores tecnicos sin identificar claramente los datos relacionados ni como corregirlos.",
     "modifiedState": "Los errores de carga explican el campo y valor rechazados, muestran personas y filas relacionadas cuando hay informacion suficiente, indican como corregir la carga y conservan un detalle tecnico desplegable para soporte."
+  },
+  {
+    "sourceKey": "2026-10-30-admin-status-4e40aed1a7",
+    "date": "2026-10-30",
+    "route": "/admin/status",
+    "currentState": "Una recarga del mismo periodo podia elegir el registro por empleado y chocar con una vacante; conservaba las rutas ausentes del archivo.",
+    "modifiedState": "Cada carga sustituye el Status completo del periodo por territorio, admite reasignaciones y vacantes, retira rutas ausentes con historial y actualiza los vinculos de usuarios de forma transaccional."
   }
 ]

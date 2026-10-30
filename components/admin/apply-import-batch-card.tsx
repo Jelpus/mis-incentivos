@@ -13,6 +13,7 @@ type Props = {
   insertRows: number;
   updateRows: number;
   noopRows: number;
+  retiredRows?: number;
   nextBatchId?: string | null;
   flowStep?: number | null;
   flowTotal?: number | null;
@@ -31,6 +32,7 @@ export function ApplyImportBatchCard({
   insertRows,
   updateRows,
   noopRows,
+  retiredRows = 0,
   nextBatchId = null,
   flowStep = null,
   flowTotal = null,
@@ -71,7 +73,8 @@ export function ApplyImportBatchCard({
             Aplicar batch
           </h2>
           <p className="mt-1 text-sm text-neutral-600">
-            Esto insertará y actualizará los registros válidos en la tabla final.
+            El Excel sustituye el Status completo de este período. Se actualizarán las rutas existentes,
+            se crearán las nuevas y se retirarán las que no aparezcan en el archivo, conservando su historial.
           </p>
 
           <div className="mt-4 grid gap-2 sm:grid-cols-3">
@@ -90,6 +93,10 @@ export function ApplyImportBatchCard({
               <p className="mt-1 font-medium text-neutral-900">{noopRows}</p>
             </div>
           </div>
+
+          <p className="mt-3 text-sm font-medium text-amber-800">
+            Rutas que se retirarán del período: {retiredRows}. Comprueba que cargaste el Excel completo antes de aplicar.
+          </p>
 
           {!canApply ? (
             <p className="mt-4 text-sm text-amber-700">

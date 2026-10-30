@@ -28,6 +28,7 @@ export type ImportBatchPreviewData = {
     insert_rows: number;
     update_rows: number;
     noop_rows: number;
+    retired_rows: number;
   };
   rows: ImportPreviewRow[];
 };
@@ -81,6 +82,7 @@ export async function getImportBatchPreview(batchId: string): Promise<ImportBatc
     insert_rows: Number((batch.preview_summary as Record<string, unknown> | null)?.insert_rows ?? 0),
     update_rows: Number((batch.preview_summary as Record<string, unknown> | null)?.update_rows ?? 0),
     noop_rows: Number((batch.preview_summary as Record<string, unknown> | null)?.noop_rows ?? 0),
+    retired_rows: Number((batch.preview_summary as Record<string, unknown> | null)?.retired_rows ?? 0),
   };
 
   return {
