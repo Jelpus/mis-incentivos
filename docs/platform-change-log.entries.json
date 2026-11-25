@@ -236,5 +236,19 @@
     "route": "/admin/status",
     "currentState": "Una recarga del mismo periodo podia elegir el registro por empleado y chocar con una vacante; conservaba las rutas ausentes del archivo.",
     "modifiedState": "Cada carga sustituye el Status completo del periodo por territorio, admite reasignaciones y vacantes, retira rutas ausentes con historial y actualiza los vinculos de usuarios de forma transaccional."
+  },
+  {
+    "sourceKey": "2026-11-25-admin-source-ranking-bb6c931418",
+    "date": "2026-11-25",
+    "route": "/admin/source-ranking",
+    "currentState": "Las fuentes de ranking solo incluyen cargas mensuales de KPI e ICVA.",
+    "modifiedState": "Se incorpora Oficial Certificaciones con carga anual, historial de versiones, descarga del original y revision de vinculaciones por empleado y territorio."
+  },
+  {
+    "sourceKey": "2026-11-25-perfil-ranking-f3208f5993",
+    "date": "2026-11-25",
+    "route": "/perfil/ranking",
+    "currentState": "Certificacion anual y Conocimiento cientifico no tenian evaluador conectado a una fuente oficial.",
+    "modifiedState": "Ambos criterios usan las notas de la ultima version del anio y los umbrales configurados. Las notas o vinculaciones ausentes quedan pendientes."
   }
 ]

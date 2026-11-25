@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { evaluateAnnualCertification, resolveAnnualCertificationMetric, type AnnualCertificationLoader } from "@/lib/ranking-contests/annual-certifications";
 import type {
   ContestComponentEvaluation,
   ContestParticipant,
@@ -581,7 +582,10 @@ export async function evaluateContestComponent(params: {
   contest: RankingContest;
   maxCoveragePeriodMonth: string;
   exclusionSnapshot: RankingMetricExclusionSnapshot;
+  loadAnnualSnapshot?: AnnualCertificationLoader;
 }): Promise<ContestComponentEvaluation> {
+  const annualMetric = resolveAnnualCertificationMetric(params.component.componentName);
+  if (annualMetric) return evaluateAnnualCertification({ ...params, metric: annualMetric });
   const metric = resolveMetricFromComponentName(params.component.componentName);
   if (metric === "cpd") {
     return evaluateCpdMetric({

@@ -2,10 +2,14 @@ import { redirect } from "next/navigation";
 import { getCurrentAuthContext } from "@/lib/auth/current-user";
 import { getSourceRankingPageData } from "@/lib/admin/source-ranking/get-source-ranking-page-data";
 import { SourceRankingFilesCard } from "@/components/admin/source-ranking-files-card";
+import { SourceRankingCertificationsCard } from "@/components/admin/source-ranking-certifications-card";
+import { getCertificationYears, loadAnnualCertificationsData, validCertificationYear } from "@/lib/admin/source-ranking/certifications-data";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 type PageProps = {
   searchParams?: Promise<{
     period?: string;
+    certYear?: string;
   }>;
 };
 
@@ -28,7 +32,14 @@ export default async function AdminSourceRankingPage({ searchParams }: PageProps
   }
 
   const params = searchParams ? await searchParams : {};
-  const data = await getSourceRankingPageData(params?.period ?? null);
+  const requestedYear = Number(params.certYear ?? params.period?.slice(0, 4));
+  const year = validCertificationYear(requestedYear) ? requestedYear : getCertificationYears()[0];
+  const supabase = createAdminClient();
+  if (!supabase) throw new Error("Admin client no disponible.");
+  const [data, certifications] = await Promise.all([
+    getSourceRankingPageData(params?.period ?? null),
+    loadAnnualCertificationsData(supabase, year),
+  ]);
 
   return (
     <main className="min-h-screen bg-neutral-50">
@@ -44,6 +55,7 @@ export default async function AdminSourceRankingPage({ searchParams }: PageProps
         </header>
 
         <SourceRankingFilesCard sourceFiles={data.sourceFiles} />
+        <SourceRankingCertificationsCard key={year} data={certifications} />
       </div>
     </main>
   );

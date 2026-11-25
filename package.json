@@ -9,6 +9,8 @@
     "lint": "eslint",
     "test:cpd": "node --experimental-strip-types tests/source-ranking-cpd.test.mjs",
     "test:ranking-identity": "node --experimental-strip-types tests/ranking-participant-identity.test.mjs",
+    "test:ranking-certifications": "node --experimental-strip-types --experimental-loader ./tests/ts-paths-loader.mjs --test tests/ranking-certifications.test.mjs",
+    "test:ranking-certifications-db": "node --test tests/ranking-certifications-db.test.mjs",
     "test:ranking-adjustment-periods": "node --experimental-strip-types --test tests/ranking-adjustment-period-status.test.mjs",
     "test:supabase-pagination": "node --experimental-strip-types --test tests/supabase-paginated-query.test.mjs",
     "test:status-import-errors": "node --experimental-strip-types --experimental-loader ./tests/ts-paths-loader.mjs --test tests/status-import-errors.test.mjs",

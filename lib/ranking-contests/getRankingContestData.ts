@@ -8,6 +8,7 @@ import {
 } from "@/lib/ranking-contests/pointAdjustments";
 import { getContestParticipants } from "@/lib/ranking-contests/participants";
 import { evaluateContestComponent, resolveQualification } from "@/lib/ranking-contests/qualification";
+import { createAnnualCertificationLoader } from "@/lib/ranking-contests/annual-certifications";
 import { loadLatestRankingMetricExclusions } from "@/lib/ranking-contests/exclusions";
 import { attachRankingGroupsToParticipants, getLatestRankingComplementsByTeamIds, normalizeTeamKey } from "@/lib/ranking-contests/rankingGroups";
 import type {
@@ -459,6 +460,7 @@ async function loadRankingContestData(params?: GetRankingContestDataParams): Pro
   if (!supabase) {
     return { ok: false, maxCoveragePeriodMonth: null, contests: [], rows: [], messages: ["Admin client de Supabase no disponible."] };
   }
+  const loadAnnualSnapshot = createAnnualCertificationLoader(supabase);
 
   const [resolvedMaxCoveragePeriodMonth, contestDefinitions, exclusionSnapshot] = await Promise.all([
     params?.maxCoveragePeriodMonth
@@ -563,6 +565,7 @@ async function loadRankingContestData(params?: GetRankingContestDataParams): Pro
     const contestRows = await mapWithConcurrency(targetParticipants, 12, async (participant): Promise<ContestRankingRow> => {
       const componentEvaluations = await mapWithConcurrency(contest.components, 3, (component) =>
         evaluateContestComponent({
+          loadAnnualSnapshot,
           supabase,
           component,
           participant,
